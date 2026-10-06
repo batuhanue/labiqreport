@@ -293,3 +293,6 @@ export const PEOPLE = [
 ];
 
 export const areaByCode = (code: string) => AREAS.find((a) => a.code === code);
+
+/** Temaya duyarlı açık zemin: alan rengini kart rengiyle karıştırır. */
+export const tintOf = (color: string, pct = 16) => `color-mix(in srgb, ${color} ${pct}%, var(--color-card))`;

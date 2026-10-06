@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* data-theme="dark" → Tailwind dark: varyantı */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 @theme {
   --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
   --color-ink: #1f2330;
@@ -7,6 +10,18 @@
   --color-ink-3: #8a8fa0;
   --color-paper: #f4f1ec;
   --color-card: #fbfaf7;
+  --color-pressed: #f1ede7;
+  --color-mark: #f8f6f2;
+  --color-track: rgba(0, 0, 0, 0.06);
+  --color-line: rgba(0, 0, 0, 0.08);
+  --color-line-strong: #ddd6cc;
+  --color-chip: rgba(255, 255, 255, 0.8);
+  --color-scrim: rgba(42, 38, 32, 0.3);
+  --color-tint-info: #e8edff;
+  --color-tint-warn: #fff1e3;
+  --color-tint-fail: #ffe8ec;
+  --color-tint-yellow: #fff7dd;
+  --color-tint-coral: #ffebe4;
   --color-blue: #5b7cff;
   --color-blue-2: #3f5ef0;
   --color-ok: #34c26b;
@@ -16,6 +31,7 @@
 }
 
 :root {
+  color-scheme: light;
   --clay-shadow:
     10px 12px 24px rgba(150, 136, 118, 0.22),
     -8px -8px 18px rgba(255, 255, 255, 0.95),
@@ -29,6 +45,69 @@
   --clay-pressed:
     inset 4px 4px 9px rgba(150, 136, 118, 0.25),
     inset -4px -4px 9px rgba(255, 255, 255, 0.9);
+  --bg-glow-1: rgba(91, 124, 255, 0.14);
+  --bg-glow-2: rgba(255, 159, 67, 0.12);
+  --bg-glow-3: rgba(46, 196, 182, 0.12);
+  --celebrate-bg: linear-gradient(180deg, #fff4e6 0%, #f3eefe 45%, #fbfaf7 75%);
+
+  /* liquid glass */
+  --glass-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.34));
+  --glass-strong: linear-gradient(160deg, rgba(255, 255, 255, 0.86), rgba(251, 250, 247, 0.74));
+  --glass-edge: rgba(255, 255, 255, 0.75);
+  --glass-shadow:
+    0 18px 40px -16px rgba(60, 45, 30, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.25);
+  --glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 48%);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-ink: #eef0f6;
+  --color-ink-2: #b6bbca;
+  --color-ink-3: #7e8497;
+  --color-paper: #111319;
+  --color-card: #1b1e27;
+  --color-pressed: #15171e;
+  --color-mark: #232733;
+  --color-track: rgba(255, 255, 255, 0.08);
+  --color-line: rgba(255, 255, 255, 0.09);
+  --color-line-strong: #3a3f4d;
+  --color-chip: rgba(255, 255, 255, 0.1);
+  --color-scrim: rgba(0, 0, 0, 0.5);
+  --color-tint-info: #232a45;
+  --color-tint-warn: #352a1d;
+  --color-tint-fail: #3a2027;
+  --color-tint-yellow: #342f1b;
+  --color-tint-coral: #38241f;
+  --color-blue: #6f8cff;
+
+  --clay-shadow:
+    10px 14px 28px rgba(0, 0, 0, 0.5),
+    -6px -6px 16px rgba(255, 255, 255, 0.025),
+    inset 1px 1px 1px rgba(255, 255, 255, 0.07),
+    inset -3px -4px 8px rgba(0, 0, 0, 0.28);
+  --clay-shadow-sm:
+    5px 7px 14px rgba(0, 0, 0, 0.45),
+    -3px -3px 9px rgba(255, 255, 255, 0.02),
+    inset 1px 1px 1px rgba(255, 255, 255, 0.07),
+    inset -2px -2px 5px rgba(0, 0, 0, 0.25);
+  --clay-pressed:
+    inset 4px 4px 9px rgba(0, 0, 0, 0.5),
+    inset -3px -3px 8px rgba(255, 255, 255, 0.04);
+  --bg-glow-1: rgba(91, 124, 255, 0.16);
+  --bg-glow-2: rgba(255, 159, 67, 0.07);
+  --bg-glow-3: rgba(46, 196, 182, 0.08);
+  --celebrate-bg: linear-gradient(180deg, #2a2219 0%, #221f33 45%, #1b1e27 75%);
+
+  --glass-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.04));
+  --glass-strong: linear-gradient(160deg, rgba(36, 40, 52, 0.88), rgba(24, 27, 35, 0.8));
+  --glass-edge: rgba(255, 255, 255, 0.14);
+  --glass-shadow:
+    0 20px 44px -16px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+  --glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 45%);
 }
 
 html {
@@ -38,12 +117,15 @@ html {
 body {
   background-color: var(--color-paper);
   background-image:
-    radial-gradient(900px 500px at 110% -10%, rgba(91, 124, 255, 0.14), transparent 60%),
-    radial-gradient(700px 500px at -20% 30%, rgba(255, 159, 67, 0.12), transparent 60%),
-    radial-gradient(800px 600px at 50% 120%, rgba(46, 196, 182, 0.12), transparent 60%);
+    radial-gradient(900px 500px at 110% -10%, var(--bg-glow-1), transparent 60%),
+    radial-gradient(700px 500px at -20% 30%, var(--bg-glow-2), transparent 60%),
+    radial-gradient(800px 600px at 50% 120%, var(--bg-glow-3), transparent 60%);
   background-attachment: fixed;
   color: var(--color-ink);
   min-height: 100dvh;
+  transition:
+    background-color 0.35s ease,
+    color 0.35s ease;
 }
 
 @layer components {
@@ -58,7 +140,7 @@ body {
     box-shadow: var(--clay-shadow-sm);
   }
   .clay-pressed {
-    background: #f1ede7;
+    background: var(--color-pressed);
     box-shadow: var(--clay-pressed);
   }
   /* renkli clay: arka plan rengi inline verilir */
@@ -77,10 +159,70 @@ body {
       inset 2px 3px 5px rgba(255, 255, 255, 0.14),
       inset -3px -4px 8px rgba(0, 0, 0, 0.35);
   }
+  /* koyu temada ana düğmeler ters döner (Apple tarzı) */
+  [data-theme="dark"] .clay-dark {
+    background: linear-gradient(180deg, #f4f5f9, #d8dbe4);
+    color: #15171e;
+    box-shadow:
+      0 14px 26px -12px rgba(0, 0, 0, 0.7),
+      inset 2px 3px 5px rgba(255, 255, 255, 0.8),
+      inset -3px -4px 8px rgba(0, 0, 0, 0.12);
+  }
+
+  /* ---------- Liquid glass: yalnızca yüzen katmanlarda ---------- */
+  .glass,
+  .glass-strong,
+  .glass-chip {
+    position: relative;
+    isolation: isolate;
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid var(--glass-edge);
+    box-shadow: var(--glass-shadow);
+  }
+  .glass {
+    background: var(--glass-fill);
+  }
+  .glass-strong {
+    background: var(--glass-strong);
+    -webkit-backdrop-filter: blur(30px) saturate(190%);
+    backdrop-filter: blur(30px) saturate(190%);
+  }
+  .glass-chip {
+    background: var(--glass-fill);
+    -webkit-backdrop-filter: blur(14px) saturate(170%);
+    backdrop-filter: blur(14px) saturate(170%);
+    box-shadow:
+      0 6px 16px -8px rgba(0, 0, 0, 0.25),
+      inset 0 1px 0 var(--glass-edge);
+  }
+  /* üst parlama (specular) */
+  .glass::before,
+  .glass-strong::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--glass-sheen);
+    pointer-events: none;
+    z-index: -1;
+  }
+  /* renkli yüzeyin üstünde (hero) beyaz cam */
+  .glass-on-color {
+    position: relative;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.1));
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    backdrop-filter: blur(12px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.5),
+      0 8px 20px -10px rgba(20, 30, 90, 0.45);
+  }
+
   .field {
     width: 100%;
     border-radius: 16px;
-    background: #f1ede7;
+    background: var(--color-pressed);
     box-shadow: var(--clay-pressed);
     padding: 12px 14px;
     font-size: 15px;
@@ -97,6 +239,16 @@ body {
   }
   .no-scrollbar {
     scrollbar-width: none;
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass,
+  .glass-chip {
+    background: var(--color-card);
+  }
+  .glass-strong {
+    background: var(--color-card);
   }
 }
 

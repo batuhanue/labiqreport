@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import { AppShell } from "@/components/AppShell";
 import { PeriodProvider } from "@/components/PeriodProvider";
+import { themeScript } from "@/components/Theme";
 import "./globals.css";
 
 const jakarta = Plus_Jakarta_Sans({
@@ -21,12 +22,18 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#f4f1ec",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f4f1ec" },
+    { media: "(prefers-color-scheme: dark)", color: "#111319" },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="tr" className={jakarta.variable}>
+    <html lang="tr" className={jakarta.variable} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="font-sans antialiased">
         <PeriodProvider>
           <AppShell>{children}</AppShell>

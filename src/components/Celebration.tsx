@@ -42,10 +42,10 @@ export function Celebration({
     <AnimatePresence>
       {area && (
         <motion.div className="fixed inset-0 z-50 grid place-items-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-          <div className="absolute inset-0 bg-[#2a2620]/30 backdrop-blur-[3px]" onClick={onClose} />
+          <div className="absolute inset-0 bg-scrim backdrop-blur-[3px]" onClick={onClose} />
           <motion.div
             className="relative w-full max-w-md overflow-hidden rounded-[36px] p-7 pb-6 text-center"
-            style={{ background: "linear-gradient(180deg,#fff4e6 0%,#f3eefe 45%,#fbfaf7 75%)", boxShadow: "0 30px 60px -20px rgba(40,30,20,.35)" }}
+            style={{ background: "var(--celebrate-bg)", boxShadow: "0 30px 60px -20px rgba(0,0,0,.45)" }}
             initial={{ scale: 0.8, y: 40 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.9, y: 30, opacity: 0 }}
@@ -115,7 +115,7 @@ export function Celebration({
                       className="grid h-6 w-6 place-items-center rounded-full"
                       style={{
                         background: done ? "#34C26B" : "transparent",
-                        border: done ? "none" : `2.5px solid ${partial ? "#5B7CFF" : "#ddd6cc"}`,
+                        border: done ? "none" : `2.5px solid ${partial ? "#5B7CFF" : "var(--color-line-strong)"}`,
                       }}
                     >
                       {done && <Icon name="check" size={13} stroke={3.5} className="text-white" />}

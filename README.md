@@ -15,6 +15,7 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
 - **Excel çıktısı:** `templates/kontrol-sablonu.xlsx` şablonu XML seviyesinde doldurulur; biçim, renkler,
   açılır listeler, `03_Durum_Panosu` formülleri ve grafikleri korunur (açılışta yeniden hesaplanır).
 
+- **Tema:** Sağ üstteki düğme Sistem → Açık → Koyu arasında geçer (cihazda hatırlanır). Alt menü, üst bar, paneller ve bildirim baloncukları "liquid glass"; kartlar clay.
 - **Push bildirimleri:** Sağ üstteki zil → "Bildirimleri aç". Her sabah 09:00'da (Vercel Cron) aktif dönem için:
   yaklaşan/geçen rapor alanı terminleri, termini gelen/geciken aksiyonlar, Cuma 12:00 toplantı özeti ve ay başı
   hatırlatması. Zil menüsü aynı hatırlatmaları uygulama içinde de gösterir; hangi bildirimlerin geleceği oradan seçilir.

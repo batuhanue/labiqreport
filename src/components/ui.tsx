@@ -1,7 +1,8 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 type IconName =
   | "home" | "chart" | "history" | "flag" | "check" | "x" | "minus" | "note" | "plus" | "download"
@@ -99,7 +100,7 @@ export function Ring({
 
 export function Bar({ value, color, height = 8 }: { value: number; color: string; height?: number }) {
   return (
-    <div className="w-full overflow-hidden rounded-full bg-black/[0.06]" style={{ height }}>
+    <div className="w-full overflow-hidden rounded-full bg-track" style={{ height }}>
       <motion.div
         className="h-full rounded-full"
         style={{ background: color }}
@@ -137,21 +138,26 @@ export function Sheet({
     };
   }, [open, onClose]);
 
-  return (
+  // cam (backdrop-filter) katmanların içinde fixed konum bozulmasın diye body'ye taşınır
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-          <motion.div className="absolute inset-0 bg-[#2a2620]/30 backdrop-blur-[3px]" onClick={onClose} />
+          <motion.div className="absolute inset-0 bg-scrim backdrop-blur-[3px]" onClick={onClose} />
           <motion.div
             role="dialog"
             aria-modal
-            className={`relative max-h-[92dvh] w-full overflow-y-auto rounded-t-[32px] bg-[var(--color-card)] p-5 pb-8 shadow-2xl sm:rounded-[32px] sm:p-7 ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"}`}
+            className={`relative max-h-[92dvh] w-full overflow-y-auto glass-strong rounded-t-[32px] border-b-0 p-5 pb-8 sm:border-b sm:rounded-[32px] sm:p-7 ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"}`}
             initial={{ y: 60, opacity: 0, scale: 0.98 }}
             animate={{ y: 0, opacity: 1, scale: 1 }}
             exit={{ y: 60, opacity: 0, scale: 0.98 }}
             transition={{ type: "spring", stiffness: 320, damping: 30 }}
           >
-            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-black/10 sm:hidden" />
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-line-strong sm:hidden" />
             {title && (
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div className="text-xl font-extrabold tracking-tight">{title}</div>
@@ -164,7 +170,8 @@ export function Sheet({
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }
 

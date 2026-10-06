@@ -7,6 +7,7 @@ import { useState } from "react";
 import { periodLabel, periodShort } from "@/lib/period";
 import { NotificationBell } from "./Notifications";
 import { PeriodPicker } from "./PeriodPicker";
+import { ThemeToggle } from "./Theme";
 import { usePeriod } from "./PeriodProvider";
 import { Icon } from "./ui";
 
@@ -78,17 +79,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <main className="min-w-0 flex-1 pb-36 lg:pb-12">
         {/* Üst bilgi */}
-        <header className="mb-5 flex items-center gap-3">
-          <div className="lg:hidden">
+        <header className="glass sticky top-2 z-30 -mx-1 mb-5 flex items-center gap-2 rounded-[26px] py-2 pl-4 pr-2 sm:gap-3 lg:top-4">
+          <div className="hidden sm:block lg:hidden">
             <Logo />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-ink-3">Merhaba Batuhan,</div>
+            <div className="truncate text-xs font-semibold text-ink-3 sm:text-sm">Merhaba Batuhan,</div>
             <div className="truncate text-lg font-extrabold tracking-tight sm:text-2xl">
               {pathname === "/" ? "Bugün neler var?" : NAV.find((n) => n.href !== "/" && pathname.startsWith(n.href))?.label}
             </div>
           </div>
           <SaveDot />
+          <ThemeToggle className="clay-sm" />
           <NotificationBell />
           <motion.button
             whileTap={{ scale: 0.95 }}
@@ -109,7 +111,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="clay-sm mb-5 flex flex-wrap items-center gap-3 bg-[#FFF4E2] px-4 py-3">
+              <div className="clay-sm mb-5 flex flex-wrap items-center gap-3 bg-tint-warn px-4 py-3">
                 <span className="text-xl">🕰️</span>
                 <div className="min-w-0 flex-1 text-sm">
                   <b>Geçmiş dönem görüntüleniyor.</b> Yaptığın değişiklikler bu döneme kaydedilir.
@@ -125,7 +127,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </AnimatePresence>
 
         {error && !booting && (
-          <div className="clay-sm mb-5 flex items-start gap-3 bg-[#FFE9EC] px-4 py-3 text-sm">
+          <div className="clay-sm mb-5 flex items-start gap-3 bg-tint-fail px-4 py-3 text-sm">
             <Icon name="alert" className="mt-0.5 shrink-0 text-fail" />
             <div>{error}</div>
           </div>
@@ -136,12 +138,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Mobil / tablet alt menü */}
       <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 px-4 pb-3 lg:hidden">
-        <div className="clay mx-auto flex max-w-xl items-center justify-between gap-1 p-2">
+        <div className="glass mx-auto flex max-w-xl items-center justify-between gap-1 rounded-[30px] p-2">
           {NAV.map((n) => {
             const active = n.href === "/" ? pathname === "/" : pathname.startsWith(n.href);
             return (
               <Link key={n.href} href={n.href} className="relative flex flex-1 flex-col items-center gap-0.5 rounded-[20px] py-2.5">
-                {active && <motion.span layoutId="bottom-nav" className="clay-pressed absolute inset-0 rounded-[20px]" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}
+                {active && (
+                  <motion.span
+                    layoutId="bottom-nav"
+                    className="glass-chip absolute inset-0 rounded-[22px]"
+                    style={{ background: "color-mix(in srgb, var(--color-blue) 16%, transparent)" }}
+                    transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                  />
+                )}
                 <span className={`relative ${active ? "text-blue" : "text-ink-3"}`}>
                   <Icon name={n.icon} size={24} />
                 </span>
@@ -161,7 +170,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             initial={{ y: -30, opacity: 0, x: "-50%" }}
             animate={{ y: 0, opacity: 1, x: "-50%" }}
             exit={{ y: -30, opacity: 0, x: "-50%" }}
-            className="clay-dark fixed left-1/2 top-4 z-[60] rounded-full px-5 py-3 text-sm font-bold"
+            className="glass-strong fixed left-1/2 top-4 z-[60] rounded-full px-5 py-3 text-sm font-bold"
           >
             {toastMsg}
           </motion.div>

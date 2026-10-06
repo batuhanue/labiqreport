@@ -7,7 +7,7 @@ import { Celebration } from "@/components/Celebration";
 import { ItemCard } from "@/components/ItemCard";
 import { usePeriod, type Focus } from "@/components/PeriodProvider";
 import { Bar, Chip, Icon, Ring, Segmented } from "@/components/ui";
-import { AREAS, TOTAL_ITEMS, areaByCode, type Area } from "@/lib/checklist";
+import { AREAS, TOTAL_ITEMS, areaByCode, tintOf, type Area } from "@/lib/checklist";
 import { areaProgress, deadlineInfo, defaultPeriod, MONTHS_SHORT, overallProgress, periodLabel, toPeriod } from "@/lib/period";
 import type { PeriodData } from "@/lib/types";
 
@@ -208,7 +208,7 @@ function Audit({ data }: { data: PeriodData }) {
             { l: "Bursa", v: prog.bursa, n: prog.b.ok + prog.b.na },
             { l: "Başakşehir", v: prog.basaksehir, n: prog.k.ok + prog.k.na },
           ].map((x) => (
-            <div key={x.l} className="rounded-2xl bg-white/15 px-3 py-2.5 backdrop-blur-sm">
+            <div key={x.l} className="glass-on-color rounded-2xl px-3 py-2.5">
               <div className="flex justify-between text-xs font-bold">
                 <span>{x.l}</span>
                 <span>
@@ -224,7 +224,7 @@ function Audit({ data }: { data: PeriodData }) {
         {nextDeadline && (
           <button
             onClick={() => openArea(nextDeadline.a.code)}
-            className="relative mt-4 flex max-w-md items-center gap-2 rounded-full bg-white/95 py-2 pl-3 pr-2 text-left text-sm font-bold text-ink"
+            className="relative mt-4 flex max-w-md items-center gap-2 glass-on-color rounded-full py-2 pl-3 pr-2 text-left text-sm font-bold text-white"
           >
             <span>{nextDeadline.a.emoji}</span>
             <span className="min-w-0 flex-1 truncate">
@@ -343,7 +343,7 @@ function AreaCard({ area, data, index, selected, onClick }: { area: Area; data: 
     >
       <div
         className="clay-color grid h-14 w-14 shrink-0 place-items-center text-[28px]"
-        style={{ background: `linear-gradient(145deg, ${area.tint}, ${area.color}55)`, borderRadius: 20, ["--glow" as string]: area.color + "55" }}
+        style={{ background: `linear-gradient(145deg, ${tintOf(area.color)}, ${area.color}55)`, borderRadius: 20, ["--glow" as string]: area.color + "55" }}
       >
         {area.emoji}
       </div>
@@ -353,9 +353,9 @@ function AreaCard({ area, data, index, selected, onClick }: { area: Area; data: 
             {area.code}
           </span>
           {area.priority && <span title="Öncelikli alan" className="text-xs">🔥</span>}
-          {p.fails > 0 && <span className="rounded-full bg-[#FFE9EC] px-1.5 text-[10px] font-extrabold text-fail">{p.fails} sorun</span>}
+          {p.fails > 0 && <span className="rounded-full bg-tint-fail px-1.5 text-[10px] font-extrabold text-fail">{p.fails} sorun</span>}
         </div>
-        <div className="truncate font-extrabold">{area.title}</div>
+        <div className="line-clamp-2 font-extrabold leading-tight">{area.title}</div>
         <div className="mt-2 grid grid-cols-2 gap-2">
           {[
             { l: "BRS", v: p.bursa },
@@ -417,16 +417,16 @@ function AreaDetail({
 
   return (
     <motion.div initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ type: "spring", stiffness: 300, damping: 30 }} className="space-y-4">
-      <div className="clay-color relative overflow-hidden p-5 sm:p-6" style={{ background: `linear-gradient(140deg, ${area.tint} 0%, ${area.color}66 100%)`, ["--glow" as string]: area.color + "55" }}>
+      <div className="clay-color relative overflow-hidden p-5 sm:p-6" style={{ background: `linear-gradient(140deg, ${tintOf(area.color)} 0%, ${area.color}66 100%)`, ["--glow" as string]: area.color + "55" }}>
         <div className="pointer-events-none absolute -right-4 -top-6 select-none text-[120px] opacity-30">{area.emoji}</div>
         <div className="relative flex items-center gap-3">
           <button onClick={onBack} className="clay-sm grid h-11 w-11 place-items-center rounded-full lg:hidden" aria-label="Geri">
             <Icon name="back" size={20} />
           </button>
-          <span className="rounded-full bg-white/80 px-3 py-1 text-sm font-extrabold" style={{ color: area.color }}>
+          <span className="rounded-full glass-chip px-3 py-1 text-sm font-extrabold" style={{ color: area.color }}>
             ● {area.code}
           </span>
-          {area.priority && <span className="rounded-full bg-white/80 px-3 py-1 text-sm font-bold text-fail">🔥 Öncelikli</span>}
+          {area.priority && <span className="rounded-full glass-chip px-3 py-1 text-sm font-bold text-fail">🔥 Öncelikli</span>}
           <button onClick={() => setInfo((s) => !s)} className="clay-sm ml-auto grid h-11 w-11 place-items-center rounded-full" aria-label="Alan bilgisi">
             <Icon name="info" size={20} />
           </button>
@@ -434,21 +434,21 @@ function AreaDetail({
         <h2 className="relative mt-4 text-2xl font-extrabold tracking-tight sm:text-3xl">{area.title}</h2>
         <p className="relative mt-1 max-w-xl text-sm text-ink-2">{area.content}</p>
         <div className="relative mt-4 flex flex-wrap gap-2 text-sm">
-          <span className="flex items-center gap-1.5 rounded-full bg-white/80 px-3 py-1.5 font-bold">
+          <span className="flex items-center gap-1.5 rounded-full glass-chip px-3 py-1.5 font-bold">
             <Icon name="calendar" size={16} /> {area.deadlineLabel}
             {dl.dateText && <span className="text-ink-3">· {dl.dateText}</span>}
           </span>
           {dl.days != null && p.both < p.total && (
             <span className={`rounded-full px-3 py-1.5 font-bold text-white ${dl.days < 0 ? "bg-fail" : dl.days <= 2 ? "bg-warn" : "bg-ok"}`}>{dl.text}</span>
           )}
-          <span className="rounded-full bg-white/80 px-3 py-1.5 font-bold">
+          <span className="rounded-full glass-chip px-3 py-1.5 font-bold">
             BRS {p.bursa}/{p.total} · BŞK {p.basaksehir}/{p.total}
           </span>
         </div>
         <AnimatePresence>
           {info && (
             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="relative overflow-hidden">
-              <div className="mt-4 grid gap-2 rounded-2xl bg-white/80 p-4 text-sm sm:grid-cols-2">
+              <div className="mt-4 grid gap-2 rounded-2xl glass-chip p-4 text-sm sm:grid-cols-2">
                 <div><b>Hazırlayan:</b> {area.preparer}</div>
                 <div><b>Kontrol:</b> {area.control}</div>
                 <div><b>Ön onay:</b> {area.preApproval}</div>

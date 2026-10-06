@@ -90,12 +90,12 @@ function Analysis({ data }: { data: PeriodData }) {
 
       {/* Özet kutuları */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
-        <Tile delay={0} emoji="🎯" tint="#E8EDFF" label="Genel tamamlanma" value={`%${Math.round(prog.overall * 100)}`} sub={`${prog.remaining} işaret kaldı`} />
-        <Tile delay={0.04} emoji="🏥" tint="#E8EDFF" label="Bursa" value={`%${Math.round(prog.bursa * 100)}`} sub={`${prog.b.ok + prog.b.na}/${TOTAL_ITEMS} madde`} />
-        <Tile delay={0.08} emoji="🏥" tint="#FFF1E3" label="Başakşehir" value={`%${Math.round(prog.basaksehir * 100)}`} sub={`${prog.k.ok + prog.k.na}/${TOTAL_ITEMS} madde`} />
-        <Tile delay={0.12} emoji="⚠️" tint="#FFE6EC" label="Sorunlu işaret" value={String(prog.fails)} sub={`BRS ${prog.b.fail} · BŞK ${prog.k.fail}`} />
-        <Tile delay={0.16} emoji="🚩" tint="#FFF7DD" label="Açık aksiyon" value={String(openActions.length)} sub={`toplam ${data.actions.length}`} />
-        <Tile delay={0.2} emoji="⏰" tint="#FFEBE4" label="Geciken alan" value={String(overdue.length)} sub={overdue.map((x) => x.a.code).join(", ") || "yok"} />
+        <Tile delay={0} emoji="🎯" tint="var(--color-tint-info)" label="Genel tamamlanma" value={`%${Math.round(prog.overall * 100)}`} sub={`${prog.remaining} işaret kaldı`} />
+        <Tile delay={0.04} emoji="🏥" tint="var(--color-tint-info)" label="Bursa" value={`%${Math.round(prog.bursa * 100)}`} sub={`${prog.b.ok + prog.b.na}/${TOTAL_ITEMS} madde`} />
+        <Tile delay={0.08} emoji="🏥" tint="var(--color-tint-warn)" label="Başakşehir" value={`%${Math.round(prog.basaksehir * 100)}`} sub={`${prog.k.ok + prog.k.na}/${TOTAL_ITEMS} madde`} />
+        <Tile delay={0.12} emoji="⚠️" tint="var(--color-tint-fail)" label="Sorunlu işaret" value={String(prog.fails)} sub={`BRS ${prog.b.fail} · BŞK ${prog.k.fail}`} />
+        <Tile delay={0.16} emoji="🚩" tint="var(--color-tint-yellow)" label="Açık aksiyon" value={String(openActions.length)} sub={`toplam ${data.actions.length}`} />
+        <Tile delay={0.2} emoji="⏰" tint="var(--color-tint-coral)" label="Geciken alan" value={String(overdue.length)} sub={overdue.map((x) => x.a.code).join(", ") || "yok"} />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
@@ -127,7 +127,7 @@ function Analysis({ data }: { data: PeriodData }) {
                           onMouseLeave={() => setHover(null)}
                           onBlur={() => setHover(null)}
                         >
-                          <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-black/[0.05]">
+                          <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-track">
                             <motion.div
                               className="h-full rounded-r"
                               style={{ background: SERIES[h.id], borderRadius: 4 }}
@@ -262,8 +262,8 @@ function Analysis({ data }: { data: PeriodData }) {
           <>
             <div className="relative h-52">
               {[0, 0.5, 1].map((g) => (
-                <div key={g} className="absolute inset-x-0 border-t border-dashed border-black/[0.07]" style={{ bottom: `${g * 100}%` }}>
-                  <span className="absolute -top-2.5 left-0 bg-[var(--color-card)] pr-1 text-[10px] font-bold text-ink-3">%{g * 100}</span>
+                <div key={g} className="absolute inset-x-0 border-t border-dashed border-line" style={{ bottom: `${g * 100}%` }}>
+                  <span className="absolute -top-2.5 left-0 bg-card pr-1 text-[10px] font-bold text-ink-3">%{g * 100}</span>
                 </div>
               ))}
               <div className="absolute inset-0 flex items-end gap-3 pl-8 sm:gap-5">
@@ -317,7 +317,7 @@ function Analysis({ data }: { data: PeriodData }) {
                 </thead>
                 <tbody>
                   {[...trend].reverse().map((s) => (
-                    <tr key={s.period} className="border-t border-black/[0.06]">
+                    <tr key={s.period} className="border-t border-line">
                       <td className="py-2 font-bold">{periodLabel(s.period)}</td>
                       <td className="text-ink-2">{s.status}</td>
                       <td className="text-right tabular-nums">{s.bursaOk}/{TOTAL_ITEMS}</td>

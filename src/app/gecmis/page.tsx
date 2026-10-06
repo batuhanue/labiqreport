@@ -204,14 +204,14 @@ function ImportSheet({ open, onClose }: { open: boolean; onClose: () => void }) 
           }}
         />
       </div>
-      {exists && <div className="mt-3 rounded-2xl bg-[#FFF4E2] px-3 py-2 text-sm">⚠️ {periodLabel(period)} zaten kayıtlı; içe aktarım üzerine yazar.</div>}
+      {exists && <div className="mt-3 rounded-2xl bg-tint-warn px-3 py-2 text-sm">⚠️ {periodLabel(period)} zaten kayıtlı; içe aktarım üzerine yazar.</div>}
 
       <input ref={fileRef} type="file" accept=".xlsx" className="hidden" onChange={(e) => e.target.files?.[0] && read(e.target.files[0])} />
       <button onClick={() => fileRef.current?.click()} disabled={busy} className="clay-pressed mt-4 flex w-full flex-col items-center gap-2 rounded-[24px] py-8 font-bold text-ink-2">
         <Icon name="upload" size={30} />
         {busy ? "Okunuyor…" : "Excel dosyası seç (.xlsx)"}
       </button>
-      {err && <div className="mt-3 rounded-2xl bg-[#FFE9EC] px-3 py-2 text-sm text-fail">{err}</div>}
+      {err && <div className="mt-3 rounded-2xl bg-tint-fail px-3 py-2 text-sm text-fail">{err}</div>}
 
       {preview && counts && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="clay mt-4 p-4">

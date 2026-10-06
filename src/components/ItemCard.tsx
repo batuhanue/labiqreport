@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { HOSPITALS, type Area, type CheckItem, type Hospital } from "@/lib/checklist";
+import { HOSPITALS, tintOf, type Area, type CheckItem, type Hospital } from "@/lib/checklist";
 import type { ItemState, Mark } from "@/lib/types";
 import { usePeriod } from "./PeriodProvider";
 import { Icon } from "./ui";
@@ -28,10 +28,10 @@ function MarkButton({ m, selected, onClick, big }: { m: (typeof MARKS)[number]; 
       <motion.span
         className="absolute inset-0 rounded-full"
         animate={{
-          background: selected ? m.color : "#f8f6f2",
+          background: selected ? m.color : "var(--color-mark)",
           boxShadow: selected
             ? `0 10px 18px -6px ${m.color}aa, inset 3px 4px 7px rgba(255,255,255,.45), inset -4px -5px 9px rgba(0,0,0,.15)`
-            : "5px 6px 12px rgba(150,136,118,.22), -4px -4px 9px rgba(255,255,255,.95), inset 1px 1px 2px rgba(255,255,255,.9)",
+            : "var(--clay-shadow-sm)",
         }}
         transition={{ duration: 0.25 }}
       />
@@ -137,7 +137,7 @@ export function ItemCard({
           <AnimatePresence>
             {showHint && item.hint && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                <div className="mt-2 rounded-2xl px-3 py-2 text-sm text-ink-2" style={{ background: area.tint }}>
+                <div className="mt-2 rounded-2xl px-3 py-2 text-sm text-ink-2" style={{ background: tintOf(area.color) }}>
                   💡 {item.hint}
                 </div>
               </motion.div>
@@ -185,7 +185,7 @@ export function ItemCard({
           Bulgu ekle
         </button>
         {actionCount > 0 && (
-          <span className="rounded-full bg-[#FFE9EC] px-3 py-1.5 text-xs font-extrabold text-fail">{actionCount} aksiyon</span>
+          <span className="rounded-full bg-tint-fail px-3 py-1.5 text-xs font-extrabold text-fail">{actionCount} aksiyon</span>
         )}
       </div>
     </motion.div>

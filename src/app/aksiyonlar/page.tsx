@@ -62,7 +62,7 @@ export default function AksiyonlarPage() {
           </Chip>
         ))}
         <Chip active={status === "all"} onClick={() => setStatus("all")}>Tümü</Chip>
-        <span className="mx-1 w-px shrink-0 bg-black/10" />
+        <span className="mx-1 w-px shrink-0 bg-line" />
         <Chip active={hospital === "all"} onClick={() => setHospital("all")}>İki hastane</Chip>
         {HOSPITALS.map((h) => (
           <Chip key={h.id} active={hospital === h.id} onClick={() => setHospital(h.id)}>{h.label}</Chip>

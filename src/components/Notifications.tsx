@@ -29,7 +29,7 @@ function deviceName() {
   return [os, br].filter(Boolean).join(" · ");
 }
 
-const LEVEL: Record<NotifyMessage["level"], string> = { info: "#E8EDFF", warn: "#FFF1E3", alert: "#FFE6EC" };
+const LEVEL: Record<NotifyMessage["level"], string> = { info: "var(--color-tint-info)", warn: "var(--color-tint-warn)", alert: "var(--color-tint-fail)" };
 
 function Toggle({ on, onChange, label, sub }: { on: boolean; onChange: (v: boolean) => void; label: string; sub?: string }) {
   return (
