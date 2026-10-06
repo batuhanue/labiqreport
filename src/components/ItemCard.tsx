@@ -67,14 +67,15 @@ function HospitalMarks({ hospital, value, onChange, big }: { hospital: Hospital;
   const h = HOSPITALS.find((x) => x.id === hospital)!;
   const cur = MARKS.find((m) => m.v === value);
   return (
-    <div className="clay-pressed flex items-center gap-3 rounded-[24px] px-3 py-2.5 sm:px-4">
-      <div className="min-w-0 flex-1">
-        <div className="text-[11px] font-bold uppercase tracking-wider text-ink-3">{h.label}</div>
-        <div className="text-sm font-extrabold" style={{ color: cur?.color ?? "var(--color-ink-3)" }}>
+    <div className="clay-pressed flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[24px] px-3 py-2.5 sm:px-4">
+      {/* dar alanda butonlar yazının üstüne binmez, alt satıra iner */}
+      <div className="min-w-[6.5rem] flex-1">
+        <div className="truncate text-[11px] font-bold uppercase tracking-wider text-ink-3">{h.label}</div>
+        <div className="truncate text-sm font-extrabold" style={{ color: cur?.color ?? "var(--color-ink-3)" }}>
           {cur ? cur.label : "Bekliyor"}
         </div>
       </div>
-      <div className="flex items-center gap-2.5 sm:gap-3">
+      <div className="ml-auto flex shrink-0 items-center gap-2.5 sm:gap-3">
         {MARKS.map((m) => (
           <MarkButton key={m.v} m={m} big={big} selected={value === m.v} onClick={() => onChange(value === m.v ? null : m.v)} />
         ))}
@@ -151,10 +152,13 @@ export function ItemCard({
         )}
       </div>
 
-      <div className={`mt-4 grid gap-3 ${hospitals.length === 2 ? "xl:grid-cols-2" : ""}`}>
+      {/* yan yana yalnızca kartın kendisi yeterince genişse (container query) */}
+      <div className={`@container mt-4`}>
+        <div className={`grid gap-3 ${hospitals.length === 2 ? "@2xl:grid-cols-2" : ""}`}>
         {hospitals.map((h) => (
           <HospitalMarks key={h} hospital={h} value={state[h]} big={hospitals.length === 1} onChange={(m) => setMark(h, m)} />
         ))}
+        </div>
       </div>
 
       <AnimatePresence>

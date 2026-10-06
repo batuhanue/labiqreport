@@ -259,7 +259,7 @@ function Audit({ data }: { data: PeriodData }) {
       </div>
       </div>
 
-      <div className="lg:grid lg:grid-cols-[minmax(300px,380px)_1fr] lg:items-start lg:gap-6">
+      <div className="lg:grid lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)] lg:items-start lg:gap-6">
         {/* Alan listesi */}
         <div className={`${area ? "hidden lg:block" : ""} lg:sticky lg:top-6`}>
           <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)]">
