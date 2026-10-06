@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { periodLabel, periodShort } from "@/lib/period";
 import { NotificationBell } from "./Notifications";
 import { PeriodPicker } from "./PeriodPicker";
@@ -43,34 +43,44 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[1400px] gap-6 px-4 pt-4 sm:px-6 lg:px-8 lg:pt-6">
-      {/* Masaüstü yan menü */}
-      <aside className="sticky top-6 hidden h-[calc(100dvh-48px)] w-64 shrink-0 flex-col gap-3 lg:flex">
-        <div className="clay flex items-center gap-3 p-4">
+      {/* Masaüstü yan menü — açılır/kapanır (kapalıyken ikon şeridi). Durum <html data-sidebar> üzerinde tutulur. */}
+      <aside className="sticky top-6 hidden h-[calc(100dvh-48px)] w-64 shrink-0 flex-col gap-3 transition-[width] duration-300 ease-out lg:flex in-data-[sidebar=closed]:w-[84px]">
+        <div className="clay relative flex items-center gap-3 overflow-hidden p-4 in-data-[sidebar=closed]:flex-col in-data-[sidebar=closed]:px-2">
           <Logo />
-          <div>
+          <div className="min-w-0 flex-1 whitespace-nowrap in-data-[sidebar=closed]:hidden">
             <div className="text-lg font-extrabold leading-tight">LabIQ Kontrol</div>
             <div className="text-xs font-semibold text-ink-3">Diacore · Aylık Kapanış</div>
           </div>
+          <SidebarToggle />
         </div>
-        <nav className="clay flex flex-col gap-1.5 p-3">
+        <nav className="clay flex flex-col gap-1.5 p-3 in-data-[sidebar=closed]:px-2">
           {NAV.map((n) => {
             const active = n.href === "/" ? pathname === "/" : pathname.startsWith(n.href);
             return (
-              <Link key={n.href} href={n.href} className="relative flex items-center gap-3 rounded-2xl px-4 py-3 font-bold">
+              <Link
+                key={n.href}
+                href={n.href}
+                title={n.label}
+                className="relative flex items-center gap-3 rounded-2xl px-4 py-3 font-bold in-data-[sidebar=closed]:justify-center in-data-[sidebar=closed]:px-0"
+              >
                 {active && <motion.span layoutId="side-nav" className="clay-pressed absolute inset-0 rounded-2xl" transition={{ type: "spring", stiffness: 400, damping: 34 }} />}
                 <span className={`relative ${active ? "text-blue" : "text-ink-2"}`}>
                   <Icon name={n.icon} />
                 </span>
-                <span className={`relative ${active ? "text-blue" : "text-ink-2"}`}>{n.label}</span>
+                <span className={`relative whitespace-nowrap in-data-[sidebar=closed]:hidden ${active ? "text-blue" : "text-ink-2"}`}>{n.label}</span>
               </Link>
             );
           })}
         </nav>
-        <button onClick={() => setPicker(true)} className="clay mt-auto flex items-center gap-3 p-4 text-left">
-          <div className="clay-color grid h-11 w-11 place-items-center bg-blue text-white" style={{ borderRadius: 16 }}>
+        <button
+          onClick={() => setPicker(true)}
+          title={data ? periodLabel(data.period) : "Dönem seç"}
+          className="clay mt-auto flex items-center gap-3 overflow-hidden p-4 text-left in-data-[sidebar=closed]:justify-center in-data-[sidebar=closed]:px-2"
+        >
+          <div className="clay-color grid h-11 w-11 shrink-0 place-items-center bg-blue text-white" style={{ borderRadius: 16 }}>
             <Icon name="calendar" size={20} />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 whitespace-nowrap in-data-[sidebar=closed]:hidden">
             <div className="text-xs font-semibold text-ink-3">{isHistory ? "Görüntülenen dönem" : "Aktif dönem"}</div>
             <div className="truncate font-extrabold">{data ? periodLabel(data.period) : "Seçilmedi"}</div>
           </div>
@@ -177,6 +187,43 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/** Masaüstü yan menüyü açar/kapatır; tercih cihazda hatırlanır. Kısayol: Ctrl/⌘ + B */
+function SidebarToggle() {
+  const [closed, setClosed] = useState(false);
+  useEffect(() => {
+    setClosed(document.documentElement.dataset.sidebar === "closed");
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const toggle = () => {
+    const next = document.documentElement.dataset.sidebar === "closed" ? "open" : "closed";
+    document.documentElement.dataset.sidebar = next;
+    setClosed(next === "closed");
+    try {
+      localStorage.setItem("lq:sidebar", next);
+    } catch {}
+  };
+  return (
+    <motion.button
+      whileTap={{ scale: 0.9 }}
+      onClick={toggle}
+      className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink-3 transition-colors hover:text-ink"
+      aria-label={closed ? "Menüyü aç" : "Menüyü kapat"}
+      title={`${closed ? "Menüyü aç" : "Menüyü kapat"} (Ctrl+B)`}
+    >
+      <span className="transition-transform duration-300 in-data-[sidebar=closed]:rotate-180">
+        <Icon name="sidebar" size={20} />
+      </span>
+    </motion.button>
   );
 }
 

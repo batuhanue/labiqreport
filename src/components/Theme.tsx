@@ -7,7 +7,7 @@ export type ThemePref = "system" | "light" | "dark";
 const KEY = "lq:theme";
 
 /** İlk boyamadan önce temayı uygular (yanıp sönmeyi önler). */
-export const themeScript = `(function(){try{var p=localStorage.getItem("${KEY}")||"system";var d=p==="dark"||(p==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.dataset.theme=d?"dark":"light";}catch(e){}})();`;
+export const themeScript = `(function(){try{var p=localStorage.getItem("${KEY}")||"system";var d=p==="dark"||(p==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.dataset.theme=d?"dark":"light";document.documentElement.dataset.sidebar=localStorage.getItem("lq:sidebar")==="closed"?"closed":"open";}catch(e){}})();`;
 
 function apply(pref: ThemePref) {
   const dark = pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
