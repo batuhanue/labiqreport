@@ -6,7 +6,7 @@ export async function proxy(req: NextRequest) {
   const pw = process.env.APP_PASSWORD;
   if (!pw) return NextResponse.next();
   const { pathname } = req.nextUrl;
-  if (pathname === "/giris" || pathname === "/api/login") return NextResponse.next();
+  if (pathname === "/giris" || pathname === "/api/login" || pathname.startsWith("/api/cron/")) return NextResponse.next();
   const cookie = req.cookies.get(AUTH_COOKIE)?.value;
   if (cookie && cookie === (await tokenFor(pw))) return NextResponse.next();
   if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Giriş gerekli" }, { status: 401 });
@@ -17,5 +17,5 @@ export async function proxy(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|manifest.webmanifest).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|manifest.webmanifest|sw.js|icons/).*)"],
 };

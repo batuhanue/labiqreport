@@ -18,6 +18,18 @@ interface Store {
   deletePeriod(period: string): Promise<void>;
   getState(): Promise<AppState>;
   setState(s: AppState): Promise<void>;
+  getKV<T>(key: string): Promise<T | null>;
+  setKV(key: string, value: unknown): Promise<void>;
+  listSubs(): Promise<StoredSub[]>;
+  addSub(sub: StoredSub): Promise<void>;
+  removeSub(endpoint: string): Promise<void>;
+}
+
+export interface StoredSub {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  device: string;
+  createdAt: string;
 }
 
 // ---------------------------------------------------------------- Postgres
@@ -33,6 +45,11 @@ function pg(): NeonQueryFunction<false, false> {
     await sql`CREATE TABLE IF NOT EXISTS app_state (
       key text PRIMARY KEY,
       value jsonb NOT NULL
+    )`;
+    await sql`CREATE TABLE IF NOT EXISTS push_subscriptions (
+      endpoint text PRIMARY KEY,
+      data jsonb NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
     )`;
   })().catch((e) => {
     ready = null;
@@ -77,6 +94,35 @@ const pgStore: Store = {
     await sql`INSERT INTO app_state (key, value) VALUES ('app', ${JSON.stringify(s)}::jsonb)
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
   },
+  async getKV<T>(key: string) {
+    const sql = pg();
+    await ready;
+    const rows = (await sql`SELECT value FROM app_state WHERE key = ${key}`) as { value: T }[];
+    return rows[0]?.value ?? null;
+  },
+  async setKV(key, value) {
+    const sql = pg();
+    await ready;
+    await sql`INSERT INTO app_state (key, value) VALUES (${key}, ${JSON.stringify(value)}::jsonb)
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
+  },
+  async listSubs() {
+    const sql = pg();
+    await ready;
+    const rows = (await sql`SELECT data FROM push_subscriptions`) as { data: StoredSub }[];
+    return rows.map((r) => r.data);
+  },
+  async addSub(sub) {
+    const sql = pg();
+    await ready;
+    await sql`INSERT INTO push_subscriptions (endpoint, data) VALUES (${sub.endpoint}, ${JSON.stringify(sub)}::jsonb)
+      ON CONFLICT (endpoint) DO UPDATE SET data = EXCLUDED.data`;
+  },
+  async removeSub(endpoint) {
+    const sql = pg();
+    await ready;
+    await sql`DELETE FROM push_subscriptions WHERE endpoint = ${endpoint}`;
+  },
 };
 
 // ---------------------------------------------------------------- Yerel dosya
@@ -117,6 +163,21 @@ const fileStore: Store = {
     return (await readJson<AppState>(path.join(dir, "state.json"))) ?? { activePeriod: null };
   },
   setState: (s) => writeJson(path.join(dir, "state.json"), s),
+  async getKV<T>(key: string) {
+    return readJson<T>(path.join(dir, `kv-${key}.json`));
+  },
+  setKV: (key, value) => writeJson(path.join(dir, `kv-${key}.json`), value),
+  async listSubs() {
+    return (await readJson<StoredSub[]>(path.join(dir, "subs.json"))) ?? [];
+  },
+  async addSub(sub) {
+    const all = (await fileStore.listSubs()).filter((x) => x.endpoint !== sub.endpoint);
+    await writeJson(path.join(dir, "subs.json"), [...all, sub]);
+  },
+  async removeSub(endpoint) {
+    const all = (await fileStore.listSubs()).filter((x) => x.endpoint !== endpoint);
+    await writeJson(path.join(dir, "subs.json"), all);
+  },
 };
 
 export class StorageNotConfigured extends Error {}

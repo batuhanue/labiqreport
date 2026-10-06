@@ -13,6 +13,7 @@ const jakarta = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   title: "LabIQ Kontrol",
   description: "Diacore aylık kapanış kontrol listesi — Bursa & Başakşehir",
+  icons: { apple: "/icons/apple-touch-icon.png" },
   appleWebApp: { capable: true, title: "LabIQ Kontrol", statusBarStyle: "default" },
 };
 

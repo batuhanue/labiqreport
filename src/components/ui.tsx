@@ -6,7 +6,7 @@ import { useEffect } from "react";
 type IconName =
   | "home" | "chart" | "history" | "flag" | "check" | "x" | "minus" | "note" | "plus" | "download"
   | "upload" | "back" | "close" | "chevron" | "calendar" | "info" | "trash" | "cloud" | "alert"
-  | "flame" | "user" | "clock" | "share" | "play" | "edit" | "spark";
+  | "flame" | "user" | "clock" | "share" | "play" | "edit" | "spark" | "bell";
 
 const P: Record<IconName, React.ReactNode> = {
   home: <path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z" />,
@@ -34,6 +34,7 @@ const P: Record<IconName, React.ReactNode> = {
   share: <path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M5 13v7h14v-7" />,
   play: <path d="M7 4.5v15l12-7.5z" />,
   edit: <path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" />,
+  bell: <><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z" /><path d="M10 20.5a2 2 0 0 0 4 0" /></>,
   spark: <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8" />,
 };
 

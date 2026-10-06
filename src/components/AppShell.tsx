@@ -4,7 +4,8 @@ import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { periodLabel } from "@/lib/period";
+import { periodLabel, periodShort } from "@/lib/period";
+import { NotificationBell } from "./Notifications";
 import { PeriodPicker } from "./PeriodPicker";
 import { usePeriod } from "./PeriodProvider";
 import { Icon } from "./ui";
@@ -88,13 +89,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <SaveDot />
+          <NotificationBell />
           <motion.button
             whileTap={{ scale: 0.95 }}
             onClick={() => setPicker(true)}
-            className="clay-sm flex items-center gap-2 rounded-full px-4 py-2.5 font-bold"
+            className="clay-sm flex items-center gap-2 rounded-full px-3 py-2.5 font-bold sm:px-4"
           >
             <Icon name="calendar" size={18} className="text-blue" />
-            <span className="whitespace-nowrap text-sm">{data ? periodLabel(data.period) : "Dönem seç"}</span>
+            <span className="whitespace-nowrap text-sm sm:hidden">{data ? periodShort(data.period) : "Dönem"}</span>
+            <span className="hidden whitespace-nowrap text-sm sm:inline">{data ? periodLabel(data.period) : "Dönem seç"}</span>
           </motion.button>
         </header>
 
