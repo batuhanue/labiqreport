@@ -403,3 +403,28 @@ export const InkCanvas = forwardRef<InkCanvasHandle, Props>(function InkCanvas({
     </div>
   );
 });
+
+const EXPORT_COLORS: Record<InkColor, string> = { ink: "#111318", blue: "#2347d9", red: "#d42a3f", green: "#16823f", orange: "#c86a10", yellow: "#e0b000" };
+
+/** El yazısı notu beyaz zeminli JPEG'e çevirir (yapay zekâ asistanına göndermek için). */
+export function inkToJpeg(ink: NoteInk, width = 900): { data: string; mime: "image/jpeg" } | null {
+  if (!ink.strokes.length) return null;
+  let maxY = 0;
+  for (const s of ink.strokes) for (let i = 1; i < s.pts.length; i += 3) maxY = Math.max(maxY, s.pts[i]);
+  const scale = width / LOGICAL_W;
+  const h = Math.min(Math.ceil((maxY + 60) * scale), 4000);
+  const c = document.createElement("canvas");
+  c.width = width;
+  c.height = Math.max(200, h);
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, c.width, c.height);
+  for (const s of ink.strokes) {
+    const path = outlineToPath(getStroke(toInput(s.pts, scale), strokeOptions(s, scale, true)));
+    ctx.globalAlpha = s.tool === "marker" ? 0.38 : 1;
+    ctx.fillStyle = EXPORT_COLORS[s.color];
+    ctx.fill(path);
+  }
+  ctx.globalAlpha = 1;
+  return { data: c.toDataURL("image/jpeg", 0.82).split(",")[1], mime: "image/jpeg" };
+}

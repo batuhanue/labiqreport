@@ -33,6 +33,12 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   El yazısı: kalem basıncına duyarlı, düşük gecikmeli (tahmini noktalar, ayrı çizim katmanı); kalem algılanınca avuç içi
   çizmez, parmak kaydırır; iki parmak her zaman kaydırır. Araçlar: kalem, fosforlu, silgi, 6 renk, 3 kalınlık, çizgili/kareli/boş kâğıt.
   Kısayollar: `N` yeni not · `T` yazı · `P` kalem · `H` fosforlu · `E` silgi · `1–6` renk · `⌘/Ctrl+Z` geri al · `⌘/Ctrl+Shift+Z` yinele · `Esc` kapat.
+- **Yapay zekâ asistanı (Gemini 3.8 Flash):** Üst bardaki ✨ düğmesi ya da **J** / **Alt+J**. Her soruda
+  `knowledge/asistan.md` (iş tanımı, önemi, ilkeler, yapılacaklar — uygulama içinden düzenlenebilir veya yeni .md
+  yüklenebilir) ile canlı veriyi birlikte okur: 10 başlığın iki hastane için güncel durumu, madde notları / anomaliler,
+  aksiyonlar, dönem notları (el yazısı notlar görüntü olarak gönderilir), kişisel görevler, terminler ve geçmiş dönem özeti.
+  Yanıtlar akışla gelir; önerdiği görevler tek tuşla Görevler'e eklenir. Alan sayfasında "✨ Asistana sor" düğmesi var.
+  Kurulum: Vercel'e `GEMINI_API_KEY` (Google AI Studio → API key) ekleyin; model `GEMINI_MODEL` ile değiştirilebilir.
 - **Push bildirimleri:** Sağ üstteki zil → "Bildirimleri aç". Her sabah 09:00'da (Vercel Cron) aktif dönem için:
   yaklaşan/geçen rapor alanı terminleri, termini gelen/geciken aksiyonlar, Cuma 12:00 toplantı özeti ve ay başı
   hatırlatması. Zil menüsü aynı hatırlatmaları uygulama içinde de gösterir; hangi bildirimlerin geleceği oradan seçilir.

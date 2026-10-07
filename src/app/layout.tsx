@@ -5,6 +5,7 @@ import { PeriodProvider } from "@/components/PeriodProvider";
 import { themeScript } from "@/components/Theme";
 import { NotesProvider } from "@/components/notes/NotesPanel";
 import { TodoProvider } from "@/components/todos/TodoProvider";
+import { AssistantProvider } from "@/components/assistant/AssistantPanel";
 import "./globals.css";
 
 const jakarta = Plus_Jakarta_Sans({
@@ -40,7 +41,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <PeriodProvider>
           <TodoProvider>
             <NotesProvider>
-              <AppShell>{children}</AppShell>
+              <AssistantProvider>
+                <AppShell>{children}</AppShell>
+              </AssistantProvider>
             </NotesProvider>
           </TodoProvider>
         </PeriodProvider>

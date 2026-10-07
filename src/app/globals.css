@@ -308,3 +308,87 @@ body {
   animation: none;
   mix-blend-mode: normal;
 }
+
+/* ---------- Asistan yanıtları (Markdown) ---------- */
+.md > * + * {
+  margin-top: 0.6em;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  font-weight: 800;
+  line-height: 1.25;
+  margin-top: 0.9em;
+}
+.md h1 {
+  font-size: 1.25em;
+}
+.md h2 {
+  font-size: 1.15em;
+}
+.md h3,
+.md h4 {
+  font-size: 1.02em;
+}
+.md ul,
+.md ol {
+  padding-left: 1.25em;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li + li {
+  margin-top: 0.25em;
+}
+.md strong {
+  font-weight: 800;
+}
+.md a {
+  color: var(--color-blue);
+  text-decoration: underline;
+}
+.md code {
+  background: var(--color-track);
+  border-radius: 6px;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+.md pre {
+  background: var(--color-pressed);
+  border-radius: 14px;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+}
+.md pre code {
+  background: none;
+  padding: 0;
+}
+.md table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.md th,
+.md td {
+  border-bottom: 1px solid var(--color-line);
+  padding: 0.4em 0.7em;
+  text-align: left;
+  vertical-align: top;
+}
+.md th {
+  font-weight: 800;
+}
+.md blockquote {
+  border-left: 3px solid var(--color-blue);
+  padding-left: 0.8em;
+  color: var(--color-ink-2);
+}
+.md hr {
+  border: none;
+  border-top: 1px solid var(--color-line);
+}

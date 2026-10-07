@@ -6,6 +6,7 @@ import { ActionEditor, type ActionDraft } from "@/components/ActionEditor";
 import { Celebration } from "@/components/Celebration";
 import { ItemCard } from "@/components/ItemCard";
 import { PenGlyph, useNotes } from "@/components/notes/NotesPanel";
+import { useAssistant } from "@/components/assistant/AssistantPanel";
 import { usePeriod, type Focus } from "@/components/PeriodProvider";
 import { Bar, Chip, Icon, Ring, Segmented } from "@/components/ui";
 import { AnimatedNumber } from "@/components/fx";
@@ -425,6 +426,7 @@ function AreaDetail({
 }) {
   const { update, focus } = usePeriod();
   const { openNotes } = useNotes();
+  const { ask: askAssistant } = useAssistant();
   const p = areaProgress(data, area);
   const dl = deadlineInfo(data.period, area);
   const [info, setInfo] = useState(false);
@@ -501,6 +503,12 @@ function AreaDetail({
       ))}
 
       <div className="flex flex-wrap gap-3 pt-1">
+        <button
+          onClick={() => askAssistant(`${area.code} ${area.title} alanının iki hastane için güncel durumunu, ✗ bulguları, N/A/boş kalan maddeleri ve anomali notlarını özetle; kime ne sormalıyım?`)}
+          className="clay-sm flex items-center gap-2 rounded-full px-5 py-3 font-bold text-ink-2"
+        >
+          ✨ Asistana sor
+        </button>
         <button onClick={() => openNotes({ areaCode: area.code })} className="clay-sm flex items-center gap-2 rounded-full px-5 py-3 font-bold text-ink-2">
           <PenGlyph /> {area.code} için not al
         </button>

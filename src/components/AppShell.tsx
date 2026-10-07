@@ -9,6 +9,7 @@ import { NotificationBell } from "./Notifications";
 import { PeriodPicker } from "./PeriodPicker";
 import { ThemeToggle } from "./Theme";
 import { PenGlyph, useNotes } from "./notes/NotesPanel";
+import { useAssistant } from "./assistant/AssistantPanel";
 import { usePeriod } from "./PeriodProvider";
 import { Icon } from "./ui";
 import { ScrollProgress, Skeleton, SwapText, useRippleDelegation } from "./fx";
@@ -113,7 +114,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <SaveDot />
-          <ThemeToggle className="clay-sm" />
+          <AssistantButton />
+          <ThemeToggle className="clay-sm hidden sm:grid" />
           <NotesButton />
           <NotificationBell />
           <motion.button
@@ -223,6 +225,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </AnimatePresence>
     </div>
     </MotionConfig>
+  );
+}
+
+function AssistantButton() {
+  const { toggle } = useAssistant();
+  return (
+    <motion.button
+      whileTap={{ scale: 0.9 }}
+      whileHover={{ y: -2, rotate: -6 }}
+      onClick={toggle}
+      className="clay-color grid h-11 w-11 shrink-0 place-items-center rounded-full text-lg text-white"
+      style={{ background: "linear-gradient(135deg,#8b5cf6,#5b7cff 60%,#2ec4b6)", ["--glow" as string]: "rgba(139,92,246,.45)" }}
+      aria-label="Asistan"
+      title="Asistan (J · Alt+J)"
+    >
+      ✨
+    </motion.button>
   );
 }
 

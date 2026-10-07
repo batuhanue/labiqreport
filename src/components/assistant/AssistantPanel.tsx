@@ -1,0 +1,577 @@
+"use client";
+
+import { Marked } from "marked";
+import { AnimatePresence, motion } from "motion/react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { dueLabel, newTodo, parseQuick, PRIORITY } from "@/lib/todo";
+import { periodLabel } from "@/lib/period";
+import { inkToJpeg } from "../notes/InkCanvas";
+import { usePeriod } from "../PeriodProvider";
+import { useTodos } from "../todos/TodoProvider";
+import { Icon } from "../ui";
+import { spring } from "@/lib/motion";
+
+/* ------------------------------------------------------------------ bağlam */
+interface AssistantCtx {
+  open: boolean;
+  ask: (prompt?: string) => void;
+  toggle: () => void;
+  close: () => void;
+}
+const Ctx = createContext<AssistantCtx | null>(null);
+export const useAssistant = () => useContext(Ctx)!;
+
+interface Msg {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  error?: boolean;
+  at: string;
+}
+
+const LS_CHAT = "lq:chat";
+const LS_PREFS = "lq:assistant";
+
+const isTyping = (t: EventTarget | null) => {
+  const el = t as HTMLElement | null;
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+};
+
+export function AssistantProvider({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [seed, setSeed] = useState<{ text: string; n: number } | null>(null);
+  const ask = useCallback((prompt?: string) => {
+    if (prompt) setSeed((s) => ({ text: prompt, n: (s?.n ?? 0) + 1 }));
+    setOpen(true);
+  }, []);
+  const toggle = useCallback(() => setOpen((v) => !v), []);
+  const close = useCallback(() => setOpen(false), []);
+
+  // Kısayol: J (yazı alanında değilken) veya Alt/Option + J
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "KeyJ" || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.altKey || !isTyping(e.target)) {
+        e.preventDefault();
+        setOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const value = useMemo(() => ({ open, ask, toggle, close }), [open, ask, toggle, close]);
+  return (
+    <Ctx.Provider value={value}>
+      {children}
+      <AssistantPanel open={open} onClose={close} seed={seed} />
+    </Ctx.Provider>
+  );
+}
+
+/* ------------------------------------------------------------------ markdown */
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const md = new Marked({
+  gfm: true,
+  breaks: true,
+  renderer: {
+    // ham HTML asla çalıştırılmaz
+    html(t) {
+      return esc(t.text ?? t.raw ?? "");
+    },
+    link(t) {
+      const href = /^(https?:|mailto:)/i.test(t.href) ? t.href : "#";
+      return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(t.text)}</a>`;
+    },
+    image(t) {
+      return esc(t.text ?? "");
+    },
+  },
+});
+
+/** Yanıttan ```gorevler bloklarını ayırır. */
+function splitTasks(text: string) {
+  const tasks: string[] = [];
+  const body = text.replace(/```gorevler\s*\n([\s\S]*?)(```|$)/g, (_, block: string) => {
+    for (const l of block.split("\n")) {
+      const t = l.replace(/^[-*•\d.)\s]+/, "").trim();
+      if (t) tasks.push(t);
+    }
+    return "";
+  });
+  return { body: body.trim(), tasks };
+}
+
+/* ------------------------------------------------------------------ panel */
+function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () => void; seed: { text: string; n: number } | null }) {
+  const { data } = usePeriod();
+  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [deep, setDeep] = useState(false);
+  const [sendInk, setSendInk] = useState(true);
+  const [status, setStatus] = useState<{ configured: boolean; model: string } | null>(null);
+  const [view, setView] = useState<"chat" | "knowledge">("chat");
+  const [mounted, setMounted] = useState(false);
+  const abort = useRef<AbortController | null>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setMounted(true);
+    try {
+      setMsgs(JSON.parse(localStorage.getItem(LS_CHAT) || "[]"));
+      const p = JSON.parse(localStorage.getItem(LS_PREFS) || "{}");
+      if (typeof p.deep === "boolean") setDeep(p.deep);
+      if (typeof p.sendInk === "boolean") setSendInk(p.sendInk);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    if (!mounted) return;
+    try {
+      localStorage.setItem(LS_CHAT, JSON.stringify(msgs.slice(-60)));
+      localStorage.setItem(LS_PREFS, JSON.stringify({ deep, sendInk }));
+    } catch {}
+  }, [msgs, deep, sendInk, mounted]);
+
+  useEffect(() => {
+    if (!open || status) return;
+    fetch("/api/assistant", { cache: "no-store" })
+      .then((r) => r.json())
+      .then(setStatus)
+      .catch(() => setStatus({ configured: false, model: "" }));
+  }, [open, status]);
+
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 250);
+  }, [open]);
+
+  const scrollDown = () => requestAnimationFrame(() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }));
+
+  const send = useCallback(
+    async (text: string) => {
+      const q = text.trim();
+      if (!q || busy) return;
+      const user: Msg = { id: crypto.randomUUID(), role: "user", text: q, at: new Date().toISOString() };
+      const bot: Msg = { id: crypto.randomUUID(), role: "assistant", text: "", at: new Date().toISOString() };
+      const history = [...msgs, user];
+      setMsgs([...history, bot]);
+      setInput("");
+      setBusy(true);
+      scrollDown();
+
+      // el yazısı notları görüntü olarak
+      const images: { mime: string; data: string; label: string }[] = [];
+      if (sendInk && data?.notes) {
+        for (const n of data.notes.filter((x) => x.ink.strokes.length).slice(-6)) {
+          const img = inkToJpeg(n.ink);
+          if (img) images.push({ ...img, label: `${n.title || "El yazısı not"}${n.areaCode ? ` (${n.areaCode})` : ""}` });
+        }
+      }
+
+      const ctrl = new AbortController();
+      abort.current = ctrl;
+      try {
+        const res = await fetch("/api/assistant", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: history.filter((m) => !m.error).map((m) => ({ role: m.role, text: m.text })), period: data?.period, images, deep }),
+          signal: ctrl.signal,
+        });
+        if (!res.ok || !res.body) {
+          const err = await res.json().catch(() => ({ error: `Hata ${res.status}` }));
+          throw new Error(err.error || `Hata ${res.status}`);
+        }
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let acc = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          acc += dec.decode(value, { stream: true });
+          setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: acc } : x)));
+          scrollDown();
+        }
+        if (!acc.trim()) setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: "_(boş yanıt)_" } : x)));
+      } catch (e) {
+        const aborted = (e as Error).name === "AbortError";
+        setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: aborted ? x.text + "\n\n_(durduruldu)_" : (e as Error).message, error: !aborted } : x)));
+      } finally {
+        setBusy(false);
+        abort.current = null;
+      }
+    },
+    [busy, msgs, data, deep, sendInk],
+  );
+
+  // dışarıdan gelen soru (ör. "Asistana sor")
+  const lastSeed = useRef(0);
+  useEffect(() => {
+    if (open && seed && seed.n !== lastSeed.current) {
+      lastSeed.current = seed.n;
+      setView("chat");
+      send(seed.text);
+    }
+  }, [open, seed, send]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (busy) abort.current?.abort();
+        else onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, busy, onClose]);
+
+  const p = data ? periodLabel(data.period) : "bu dönem";
+  const SUGGEST = [
+    "Bugün ne yapmalıyım? Öncelik sırasıyla söyle.",
+    `${p} kapanışının durumu ne? Hangi alanlar geride?`,
+    "Açık bulguları ve anomali notlarını sorumlulara göre listele.",
+    "Cuma toplantısı için tek sayfa özet hazırla.",
+    "Termini geçen veya yaklaşan alanlar için görev öner.",
+    "R-05'te hangi kontroller eksik, neye dikkat etmeliyim?",
+  ];
+
+  if (!mounted) return null;
+
+  return createPortal(
+    <AnimatePresence>
+      {open && (
+        <motion.div className="fixed inset-0 z-[56] flex justify-end" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+          <div className="absolute inset-0 bg-scrim" onClick={onClose} />
+          <motion.aside
+            role="dialog"
+            aria-label="Asistan"
+            className="glass-strong relative flex h-dvh w-full flex-col overflow-hidden sm:m-3 sm:h-[calc(100dvh-24px)] sm:max-w-[720px] sm:rounded-[32px]"
+            initial={{ x: 80, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 80, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 340, damping: 34 }}
+          >
+            {/* başlık */}
+            <div className="flex items-center gap-3 border-b border-line px-4 pb-3 pt-[max(14px,env(safe-area-inset-top))]">
+              <motion.div
+                className="clay-color grid h-11 w-11 place-items-center text-xl text-white"
+                style={{ borderRadius: 16, background: "linear-gradient(135deg,#8b5cf6,#5b7cff 60%,#2ec4b6)", ["--glow" as string]: "rgba(139,92,246,.5)" }}
+                animate={busy ? { rotate: [0, 8, -8, 0], scale: [1, 1.06, 1] } : {}}
+                transition={{ repeat: busy ? Infinity : 0, duration: 1.2 }}
+              >
+                ✨
+              </motion.div>
+              <div className="min-w-0 flex-1">
+                <div className="text-lg font-extrabold leading-tight">Asistan</div>
+                <div className="truncate text-xs font-semibold text-ink-3">
+                  {status?.model || "Gemini"} · {data ? periodLabel(data.period) : "dönem seçili değil"} verisiyle
+                </div>
+              </div>
+              <button onClick={() => setView(view === "chat" ? "knowledge" : "chat")} className={`grid h-10 w-10 place-items-center rounded-full ${view === "knowledge" ? "clay-pressed text-blue" : "clay-sm"}`} title="Bilgi dosyası (.md)" aria-label="Bilgi dosyası">
+                <Icon name="note" size={18} />
+              </button>
+              {msgs.length > 0 && view === "chat" && (
+                <button onClick={() => !busy && setMsgs([])} className="clay-sm grid h-10 w-10 place-items-center rounded-full" title="Yeni sohbet" aria-label="Yeni sohbet">
+                  <Icon name="plus" size={18} />
+                </button>
+              )}
+              <button onClick={onClose} className="clay-sm grid h-10 w-10 place-items-center rounded-full" aria-label="Kapat (Esc)">
+                <Icon name="close" size={18} />
+              </button>
+            </div>
+
+            {view === "knowledge" ? (
+              <KnowledgeEditor />
+            ) : (
+              <>
+                {/* mesajlar */}
+                <div ref={scroller} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
+                  {status && !status.configured && (
+                    <div className="clay-sm bg-tint-warn p-4 text-sm">
+                      <b>Gemini anahtarı tanımlı değil.</b> Vercel → Settings → Environment Variables'a <code>GEMINI_API_KEY</code> ekleyip yeniden dağıtın.
+                      Anahtarı <a className="font-bold text-blue underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>'dan alabilirsiniz.
+                    </div>
+                  )}
+                  {msgs.length === 0 && (
+                    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="pt-4 text-center">
+                      <div className="text-4xl">👋</div>
+                      <div className="mt-2 text-xl font-extrabold">Merhaba Batuhan</div>
+                      <p className="mx-auto mt-1 max-w-md text-sm text-ink-2">
+                        İş tanımını, 10 başlığın güncel durumunu, anomali notlarını, aksiyonları, notlarını ve görevlerini okuyarak yanıt veririm.
+                      </p>
+                      <div className="mt-5 grid gap-2 text-left sm:grid-cols-2">
+                        {SUGGEST.map((s, i) => (
+                          <motion.button
+                            key={s}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.05 * i, ...spring.enter }}
+                            whileHover={{ y: -2 }}
+                            whileTap={{ scale: 0.97 }}
+                            onClick={() => send(s)}
+                            className="clay-sm rounded-2xl px-4 py-3 text-sm font-semibold"
+                          >
+                            {s}
+                          </motion.button>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                  {msgs.map((m, i) => (
+                    <Bubble key={m.id} m={m} streaming={busy && i === msgs.length - 1} />
+                  ))}
+                </div>
+
+                {/* giriş */}
+                <div className="border-t border-line px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 sm:px-5">
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-bold text-ink-3">
+                    <button onClick={() => setDeep((v) => !v)} className={`rounded-full px-3 py-1.5 ${deep ? "bg-blue text-white" : "bg-track"}`} title="Daha uzun düşünür, daha yavaş yanıt verir">
+                      🧠 Derin düşün {deep ? "açık" : "kapalı"}
+                    </button>
+                    <button onClick={() => setSendInk((v) => !v)} className={`rounded-full px-3 py-1.5 ${sendInk ? "bg-blue text-white" : "bg-track"}`} title="Dönemdeki el yazısı notları görüntü olarak gönderilir">
+                      ✍️ El yazısı notları {sendInk ? "dahil" : "hariç"}
+                    </button>
+                    <span className="ml-auto hidden sm:inline">Enter gönder · Shift+Enter satır · Esc kapat</span>
+                  </div>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      send(input);
+                    }}
+                    className="clay-pressed flex items-end gap-2 rounded-[24px] p-2"
+                  >
+                    <textarea
+                      ref={inputRef}
+                      rows={1}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                          e.preventDefault();
+                          send(input);
+                        }
+                      }}
+                      placeholder="Sor: “R-02'deki anomaliler ne, kime yazmalıyım?”"
+                      className="max-h-40 min-h-[44px] flex-1 resize-none bg-transparent px-3 py-2.5 text-[15px] outline-none placeholder:text-ink-3"
+                      style={{ fieldSizing: "content" } as React.CSSProperties}
+                    />
+                    {busy ? (
+                      <motion.button type="button" whileTap={{ scale: 0.9 }} onClick={() => abort.current?.abort()} className="clay-sm grid h-11 w-11 shrink-0 place-items-center rounded-full text-fail" aria-label="Durdur">
+                        <span className="h-3.5 w-3.5 rounded-sm bg-current" />
+                      </motion.button>
+                    ) : (
+                      <motion.button type="submit" whileTap={{ scale: 0.9 }} disabled={!input.trim()} className="clay-dark grid h-11 w-11 shrink-0 place-items-center rounded-full disabled:opacity-40" aria-label="Gönder">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 19V5M5 12l7-7 7 7" />
+                        </svg>
+                      </motion.button>
+                    )}
+                  </form>
+                </div>
+              </>
+            )}
+          </motion.aside>
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body,
+  );
+}
+
+/* ------------------------------------------------------------------ mesaj balonu */
+function Bubble({ m, streaming }: { m: Msg; streaming: boolean }) {
+  const { body, tasks } = useMemo(() => (m.role === "assistant" ? splitTasks(m.text) : { body: m.text, tasks: [] }), [m]);
+  const html = useMemo(() => (m.role === "assistant" ? md.parse(body) : ""), [m.role, body]);
+  const [copied, setCopied] = useState(false);
+
+  if (m.role === "user") {
+    return (
+      <motion.div initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring.enter} className="flex justify-end">
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-[22px] rounded-br-md bg-blue px-4 py-2.5 text-[15px] font-medium text-white shadow-md">{m.text}</div>
+      </motion.div>
+    );
+  }
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring.enter} className="flex gap-2.5">
+      <div className="mt-1 grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm text-white" style={{ background: "linear-gradient(135deg,#8b5cf6,#5b7cff)" }}>
+        ✨
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className={`clay-sm rounded-[22px] rounded-tl-md px-4 py-3 ${m.error ? "bg-tint-fail" : ""}`}>
+          {!m.text && streaming ? (
+            <div className="flex gap-1.5 py-1.5">
+              {[0, 1, 2].map((i) => (
+                <motion.span key={i} className="h-2 w-2 rounded-full bg-ink-3" animate={{ y: [0, -5, 0], opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 0.9, delay: i * 0.15 }} />
+              ))}
+            </div>
+          ) : m.error ? (
+            <div className="text-sm font-semibold text-fail">⚠️ {m.text}</div>
+          ) : (
+            <div className="md text-[15px] leading-relaxed" dangerouslySetInnerHTML={{ __html: html }} />
+          )}
+          {streaming && m.text && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-blue align-middle" />}
+        </div>
+        {tasks.length > 0 && !streaming && <TaskSuggestions tasks={tasks} />}
+        {!streaming && m.text && !m.error && (
+          <button
+            onClick={() => {
+              navigator.clipboard?.writeText(m.text);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }}
+            className="mt-1 px-2 text-xs font-bold text-ink-3 hover:text-ink"
+          >
+            {copied ? "Kopyalandı ✓" : "Kopyala"}
+          </button>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function TaskSuggestions({ tasks }: { tasks: string[] }) {
+  const { add } = useTodos();
+  const { toast } = usePeriod();
+  const [added, setAdded] = useState<Set<number>>(new Set());
+  const parsed = useMemo(() => tasks.map((t) => parseQuick(t)), [tasks]);
+  const addOne = (i: number) => {
+    if (added.has(i) || !parsed[i].title) return;
+    add(newTodo({ ...parsed[i] }));
+    setAdded((s) => new Set(s).add(i));
+  };
+  return (
+    <div className="clay-sm mt-2 rounded-[22px] p-3">
+      <div className="mb-2 flex items-center justify-between px-1">
+        <span className="text-xs font-extrabold uppercase tracking-wide text-ink-3">Önerilen görevler</span>
+        {added.size < parsed.length && (
+          <button
+            onClick={() => {
+              parsed.forEach((_, i) => addOne(i));
+              toast(`${parsed.length - added.size} görev eklendi`);
+            }}
+            className="rounded-full bg-blue px-3 py-1 text-xs font-bold text-white"
+          >
+            Hepsini ekle
+          </button>
+        )}
+      </div>
+      <div className="space-y-1.5">
+        {parsed.map((p, i) => (
+          <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }} className="flex items-center gap-2 rounded-2xl bg-track px-3 py-2">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold">{p.title}</div>
+              <div className="flex flex-wrap gap-x-2 text-[11px] font-semibold text-ink-3">
+                {p.due && <span>📅 {dueLabel(p.due, p.time)}</span>}
+                {p.priority < 4 && <span style={{ color: PRIORITY[p.priority].color }}>● {PRIORITY[p.priority].label}</span>}
+                {p.person && <span>👤 {p.person}</span>}
+                {p.areaCode && <span>{p.areaCode}</span>}
+                {p.tags.map((t) => (
+                  <span key={t}>#{t}</span>
+                ))}
+              </div>
+            </div>
+            <motion.button
+              whileTap={{ scale: 0.85 }}
+              onClick={() => addOne(i)}
+              className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${added.has(i) ? "bg-ok text-white" : "clay-sm text-blue"}`}
+              aria-label="Görevlere ekle"
+            >
+              <Icon name={added.has(i) ? "check" : "plus"} size={16} stroke={2.8} />
+            </motion.button>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ bilgi dosyası düzenleyici */
+function KnowledgeEditor() {
+  const { toast } = usePeriod();
+  const [md, setMd] = useState("");
+  const [source, setSource] = useState<"custom" | "default" | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    fetch("/api/assistant/knowledge", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((k) => {
+        setMd(k.md ?? "");
+        setSource(k.source);
+      });
+  }, []);
+
+  const save = async (text = md) => {
+    setBusy(true);
+    const r = await fetch("/api/assistant/knowledge", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ md: text }) });
+    setBusy(false);
+    if (r.ok) {
+      const k = await r.json();
+      setSource(k.source);
+      setDirty(false);
+      toast("Bilgi dosyası kaydedildi");
+    } else toast("Kaydedilemedi");
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="font-extrabold">Bilgi dosyası (iş tanımı, önemi, yapılacaklar)</div>
+          <div className="text-xs text-ink-3">{source === "custom" ? "Düzenlenmiş sürüm kullanılıyor" : "Varsayılan: knowledge/asistan.md"} · Asistan her soruda bunu okur</div>
+        </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".md,.markdown,.txt,text/markdown,text/plain"
+          className="hidden"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            const text = await f.text();
+            setMd(text);
+            await save(text);
+            e.target.value = "";
+          }}
+        />
+        <button onClick={() => fileRef.current?.click()} className="clay-sm flex items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-bold">
+          <Icon name="upload" size={15} /> .md yükle
+        </button>
+        {source === "custom" && (
+          <button
+            onClick={async () => {
+              if (!confirm("Varsayılan bilgi dosyasına dönülsün mü?")) return;
+              const r = await fetch("/api/assistant/knowledge", { method: "DELETE" });
+              const k = await r.json();
+              setMd(k.md);
+              setSource(k.source);
+              setDirty(false);
+            }}
+            className="rounded-full px-3 py-2 text-sm font-bold text-ink-3"
+          >
+            Varsayılana dön
+          </button>
+        )}
+      </div>
+      <textarea
+        className="field min-h-0 flex-1 resize-none font-mono text-[13px] leading-relaxed"
+        value={md}
+        onChange={(e) => {
+          setMd(e.target.value);
+          setDirty(true);
+        }}
+        spellCheck={false}
+      />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs text-ink-3">{md.length.toLocaleString("tr-TR")} karakter</span>
+        <button disabled={!dirty || busy} onClick={() => save()} className="clay-dark rounded-full px-6 py-3 font-extrabold disabled:opacity-40">
+          {busy ? "Kaydediliyor…" : "Kaydet"}
+        </button>
+      </div>
+    </div>
+  );
+}

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { buildMessages, DEFAULT_PREFS, type NotifyMessage, type NotifyPrefs } from "@/lib/notify";
 import { usePeriod } from "./PeriodProvider";
 import { useTodos } from "./todos/TodoProvider";
+import { useTheme, type ThemePref } from "./Theme";
 import { Icon, Sheet } from "./ui";
 
 interface PushInfo {
@@ -243,6 +244,9 @@ export function NotificationBell() {
           )}
         </div>
 
+        {/* Görünüm (telefonda tema düğmesi burada) */}
+        <ThemeRow />
+
         {/* Tercihler */}
         <div className="mt-6 text-xs font-bold uppercase tracking-wide text-ink-3">Neler bildirilsin?</div>
         <div className="mt-2 space-y-2.5">
@@ -264,5 +268,33 @@ export function NotificationBell() {
         </div>
       </Sheet>
     </>
+  );
+}
+
+function ThemeRow() {
+  const { pref, set } = useTheme();
+  const opts: { v: ThemePref; l: string }[] = [
+    { v: "system", l: "Sistem" },
+    { v: "light", l: "Açık" },
+    { v: "dark", l: "Koyu" },
+  ];
+  return (
+    <div className="mt-6 sm:hidden">
+      <div className="text-xs font-bold uppercase tracking-wide text-ink-3">Görünüm</div>
+      <div className="mt-2 grid grid-cols-3 gap-2">
+        {opts.map((o) => (
+          <button
+            key={o.v}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              set(o.v, { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+            }}
+            className={`rounded-2xl py-3 text-sm font-bold ${pref === o.v ? "clay-dark" : "clay-sm"}`}
+          >
+            {o.l}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
