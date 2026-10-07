@@ -5,7 +5,23 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ActionEditor, PRIORITIES, STATUSES } from "@/components/ActionEditor";
 import { usePeriod } from "@/components/PeriodProvider";
+import confetti from "canvas-confetti";
 import { Chip, EmptyState, Icon } from "@/components/ui";
+
+/** Aksiyon kapanınca butondan küçük konfeti. */
+function celebrateAt(el: HTMLElement) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const r = el.getBoundingClientRect();
+  confetti({
+    particleCount: 45,
+    spread: 70,
+    startVelocity: 28,
+    scalar: 0.8,
+    ticks: 90,
+    origin: { x: (r.left + r.width / 2) / innerWidth, y: (r.top + r.height / 2) / innerHeight },
+    colors: ["#34C26B", "#5B7CFF", "#FFC93C", "#FF9F43"],
+  });
+}
 import { ALL_ITEMS, HOSPITALS, areaByCode, type Hospital } from "@/lib/checklist";
 import { MONTHS_SHORT, periodLabel, todayISO } from "@/lib/period";
 import type { ActionRow, ActionStatus } from "@/lib/types";
@@ -63,9 +79,9 @@ export default function AksiyonlarPage() {
         ))}
         <Chip active={status === "all"} onClick={() => setStatus("all")}>Tümü</Chip>
         <span className="mx-1 w-px shrink-0 bg-line" />
-        <Chip active={hospital === "all"} onClick={() => setHospital("all")}>İki hastane</Chip>
+        <Chip group="hospital" active={hospital === "all"} onClick={() => setHospital("all")}>İki hastane</Chip>
         {HOSPITALS.map((h) => (
-          <Chip key={h.id} active={hospital === h.id} onClick={() => setHospital(h.id)}>{h.label}</Chip>
+          <Chip group="hospital" key={h.id} active={hospital === h.id} onClick={() => setHospital(h.id)}>{h.label}</Chip>
         ))}
       </div>
 
@@ -84,10 +100,11 @@ export default function AksiyonlarPage() {
                 <motion.div
                   key={a.id}
                   layout
-                  initial={{ opacity: 0, y: 14 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  transition={{ delay: Math.min(i * 0.03, 0.25) }}
+                  initial={{ opacity: 0, y: 20, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.85, x: 40, transition: { duration: 0.25 } }}
+                  transition={{ delay: Math.min(i * 0.04, 0.25), type: "spring", stiffness: 260, damping: 24 }}
+                  whileHover={{ y: -3 }}
                   className="clay flex flex-col p-4"
                 >
                   <div className="flex items-center gap-2">
@@ -123,9 +140,18 @@ export default function AksiyonlarPage() {
                       ))}
                     </select>
                     {a.status !== "Tamamlandı" && (
-                      <button onClick={() => setRowStatus(a.id, "Tamamlandı")} className="clay-sm grid h-11 w-11 place-items-center rounded-full text-ok" aria-label="Tamamlandı">
+                      <motion.button
+                        whileTap={{ scale: 0.8 }}
+                        whileHover={{ scale: 1.1, rotate: -8 }}
+                        onClick={(e) => {
+                          celebrateAt(e.currentTarget);
+                          setRowStatus(a.id, "Tamamlandı");
+                        }}
+                        className="clay-sm grid h-11 w-11 place-items-center rounded-full text-ok"
+                        aria-label="Tamamlandı"
+                      >
                         <Icon name="check" stroke={3} />
-                      </button>
+                      </motion.button>
                     )}
                     <button onClick={() => setEditing(a)} className="clay-sm grid h-11 w-11 place-items-center rounded-full" aria-label="Düzenle">
                       <Icon name="edit" size={19} />

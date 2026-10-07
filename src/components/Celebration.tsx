@@ -2,7 +2,8 @@
 
 import confetti from "canvas-confetti";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { AREAS, type Area } from "@/lib/checklist";
 import type { PeriodData } from "@/lib/types";
 import { areaProgress } from "@/lib/period";
@@ -22,23 +23,42 @@ export function Celebration({
   data,
   onClose,
   onNext,
+  full,
 }: {
   area: Area | null;
   data: PeriodData;
   onClose: () => void;
   onNext?: () => void;
+  /** Tüm dönem (48 madde × 2 hastane) kontrol edildi */
+  full?: boolean;
 }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   useEffect(() => {
     if (!area) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const colors = ["#34C26B", "#5B7CFF", "#FF9F43", "#FF5E6C", "#FFC93C", "#A66CFF"];
-    confetti({ particleCount: 90, spread: 80, origin: { y: 0.35 }, colors, scalar: 1.1 });
+    confetti({ particleCount: full ? 160 : 90, spread: 80, origin: { y: 0.35 }, colors, scalar: 1.1 });
     const t = setTimeout(() => confetti({ particleCount: 60, spread: 120, origin: { y: 0.3 }, colors }), 250);
-    return () => clearTimeout(t);
-  }, [area]);
+    // dönem bitti: iki yandan havai fişek
+    const timers = full
+      ? [500, 900, 1300].map((d, i) =>
+          setTimeout(() => {
+            confetti({ particleCount: 70, angle: 60, spread: 70, origin: { x: 0, y: 0.7 }, colors, startVelocity: 55 + i * 5 });
+            confetti({ particleCount: 70, angle: 120, spread: 70, origin: { x: 1, y: 0.7 }, colors, startVelocity: 55 + i * 5 });
+          }, d),
+        )
+      : [];
+    return () => {
+      clearTimeout(t);
+      timers.forEach(clearTimeout);
+    };
+  }, [area, full]);
+  if (!mounted) return null;
 
   const doneAreas = AREAS.filter((a) => areaProgress(data, a).both === a.items.length).length;
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {area && (
         <motion.div className="fixed inset-0 z-50 grid place-items-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -87,10 +107,16 @@ export function Celebration({
                 </svg>
               </motion.div>
             </div>
-            <div className="text-4xl font-extrabold tracking-tight">Harika!</div>
-            <div className="mt-1 text-2xl font-extrabold tracking-tight">{area.code} tamamlandı.</div>
+            <motion.div initial={{ y: 16, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2, type: "spring", stiffness: 300, damping: 20 }} className="text-4xl font-extrabold tracking-tight">
+              {full ? "Muhteşem!" : "Harika!"}
+            </motion.div>
+            <motion.div initial={{ y: 12, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.3, type: "spring", stiffness: 300, damping: 22 }} className="mt-1 text-2xl font-extrabold tracking-tight">
+              {full ? "Dönem kontrolü tamamlandı." : `${area.code} tamamlandı.`}
+            </motion.div>
             <p className="mx-auto mt-2 max-w-xs text-ink-2">
-              {area.title} her iki hastane için kontrol edildi. Küçük bir adım daha, kapanışa yaklaşıyorsun.
+              {full
+                ? "48 maddenin tamamı iki hastane için kontrol edildi. Excel çıktısını alıp onaya sunabilirsin."
+                : `${area.title} her iki hastane için kontrol edildi. Küçük bir adım daha, kapanışa yaklaşıyorsun.`}
             </p>
 
             <div className="clay-sm mt-5 flex items-center gap-3 px-4 py-3 text-left">
@@ -104,14 +130,17 @@ export function Celebration({
             </div>
 
             <div className="clay-sm mt-3 grid grid-cols-10 gap-1 px-3 py-3">
-              {AREAS.map((a) => {
+              {AREAS.map((a, i) => {
                 const p = areaProgress(data, a);
                 const done = p.both === a.items.length;
                 const partial = p.bursa + p.basaksehir > 0;
                 return (
                   <div key={a.code} className="flex flex-col items-center gap-1">
                     <span className="text-[9px] font-bold text-ink-3">{a.code.slice(2)}</span>
-                    <span
+                    <motion.span
+                      initial={{ scale: 0, rotate: -45 }}
+                      animate={{ scale: area?.code === a.code ? [0, 1.35, 1] : 1, rotate: 0 }}
+                      transition={{ delay: 0.35 + i * 0.05, type: "spring", stiffness: 420, damping: 14 }}
                       className="grid h-6 w-6 place-items-center rounded-full"
                       style={{
                         background: done ? "#34C26B" : "transparent",
@@ -119,7 +148,7 @@ export function Celebration({
                       }}
                     >
                       {done && <Icon name="check" size={13} stroke={3.5} className="text-white" />}
-                    </span>
+                    </motion.span>
                   </div>
                 );
               })}
@@ -131,6 +160,7 @@ export function Celebration({
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

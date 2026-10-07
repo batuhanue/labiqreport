@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -11,6 +11,8 @@ import { ThemeToggle } from "./Theme";
 import { PenGlyph, useNotes } from "./notes/NotesPanel";
 import { usePeriod } from "./PeriodProvider";
 import { Icon } from "./ui";
+import { ScrollProgress, Skeleton, SwapText, useRippleDelegation } from "./fx";
+import { spring } from "@/lib/motion";
 
 const NAV = [
   { href: "/", label: "Denetim", icon: "home" as const },
@@ -29,8 +31,13 @@ function SaveDot() {
   }[saveState];
   return (
     <span className="flex items-center gap-1.5 text-xs font-semibold text-ink-3" title={map.t}>
-      <span className={`h-2 w-2 rounded-full ${map.c}`} />
-      <span className="hidden sm:inline">{map.t}</span>
+      <span className="relative grid h-3 w-3 place-items-center">
+        <motion.span key={saveState} className={`h-2 w-2 rounded-full ${map.c}`} initial={{ scale: 0.3 }} animate={{ scale: 1 }} transition={spring.pop} />
+        {saveState === "saved" && (
+          <motion.span className="absolute inset-0 rounded-full border-2 border-ok" initial={{ scale: 0.6, opacity: 0.8 }} animate={{ scale: 2.2, opacity: 0 }} transition={{ duration: 0.7 }} />
+        )}
+      </span>
+      <SwapText text={map.t || " "} className="hidden sm:inline-grid" />
     </span>
   );
 }
@@ -40,9 +47,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { data, isHistory, activePeriod, backToActive, toastMsg, error, booting } = usePeriod();
   const [picker, setPicker] = useState(false);
 
+  useRippleDelegation();
+
   if (pathname === "/giris") return <>{children}</>;
 
   return (
+    <MotionConfig reducedMotion="user">
+    <ScrollProgress />
     <div className="mx-auto flex min-h-dvh w-full max-w-[1400px] gap-6 px-4 pt-4 sm:px-6 lg:px-8 lg:pt-6">
       {/* Masaüstü yan menü — açılır/kapanır (kapalıyken ikon şeridi). Durum <html data-sidebar> üzerinde tutulur. */}
       <aside className="sticky top-6 hidden h-[calc(100dvh-48px)] w-64 shrink-0 flex-col gap-3 transition-[width] duration-300 ease-out lg:flex in-data-[sidebar=closed]:w-[84px]">
@@ -65,9 +76,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 className="relative flex items-center gap-3 rounded-2xl px-4 py-3 font-bold in-data-[sidebar=closed]:justify-center in-data-[sidebar=closed]:px-0"
               >
                 {active && <motion.span layoutId="side-nav" className="clay-pressed absolute inset-0 rounded-2xl" transition={{ type: "spring", stiffness: 400, damping: 34 }} />}
-                <span className={`relative ${active ? "text-blue" : "text-ink-2"}`}>
+                <motion.span className={`relative ${active ? "text-blue" : "text-ink-2"}`} animate={{ scale: active ? 1.12 : 1, rotate: active ? [0, -8, 0] : 0 }} transition={spring.wobbly}>
                   <Icon name={n.icon} />
-                </span>
+                </motion.span>
                 <span className={`relative whitespace-nowrap in-data-[sidebar=closed]:hidden ${active ? "text-blue" : "text-ink-2"}`}>{n.label}</span>
               </Link>
             );
@@ -163,9 +174,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     transition={{ type: "spring", stiffness: 420, damping: 34 }}
                   />
                 )}
-                <span className={`relative ${active ? "text-blue" : "text-ink-3"}`}>
+                <motion.span
+                  className={`relative ${active ? "text-blue" : "text-ink-3"}`}
+                  animate={{ y: active ? -2 : 0, scale: active ? 1.12 : 1 }}
+                  transition={spring.wobbly}
+                >
                   <Icon name={n.icon} size={24} />
-                </span>
+                </motion.span>
                 <span className={`relative text-[11px] font-bold ${active ? "text-blue" : "text-ink-3"}`}>{n.label}</span>
               </Link>
             );
@@ -182,16 +197,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {toastMsg && (
           <motion.div
             key={toastMsg}
-            initial={{ y: -30, opacity: 0, x: "-50%" }}
-            animate={{ y: 0, opacity: 1, x: "-50%" }}
-            exit={{ y: -30, opacity: 0, x: "-50%" }}
-            className="glass-strong fixed left-1/2 top-4 z-[60] rounded-full px-5 py-3 text-sm font-bold"
+            initial={{ y: -40, opacity: 0, scale: 0.85, x: "-50%" }}
+            animate={{ y: 0, opacity: 1, scale: 1, x: "-50%" }}
+            exit={{ y: -30, opacity: 0, scale: 0.9, x: "-50%" }}
+            transition={spring.lift}
+            className="glass-strong fixed left-1/2 top-4 z-[60] flex max-w-[92vw] items-center gap-2 rounded-full px-5 py-3 text-sm font-bold"
           >
-            {toastMsg}
+            {(() => {
+              const bad = /amadı|emedi|amadı|verilmedi|hatalı|Yetkisiz|eksik:/i.test(toastMsg);
+              return (
+                <motion.span
+                  initial={{ scale: 0, rotate: -90 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  transition={{ ...spring.pop, delay: 0.08 }}
+                  className={`grid h-5 w-5 shrink-0 place-items-center rounded-full text-white ${bad ? "bg-fail" : "bg-blue"}`}
+                >
+                  <Icon name={bad ? "alert" : "check"} size={12} stroke={3} />
+                </motion.span>
+              );
+            })()}
+            <span className="truncate">{toastMsg}</span>
           </motion.div>
         )}
       </AnimatePresence>
     </div>
+    </MotionConfig>
   );
 }
 
@@ -277,11 +307,18 @@ export function Logo() {
 
 function Splash() {
   return (
-    <div className="grid place-items-center py-24">
-      <motion.div animate={{ scale: [1, 1.08, 1], rotate: [0, -4, 4, 0] }} transition={{ repeat: Infinity, duration: 1.6 }}>
-        <Logo />
-      </motion.div>
-      <div className="mt-4 text-sm font-semibold text-ink-3">Kaldığın yer yükleniyor…</div>
+    <div className="space-y-5" aria-busy="true" aria-label="Yükleniyor">
+      <div className="flex gap-3">
+        {Array.from({ length: 6 }, (_, i) => (
+          <Skeleton key={i} className="h-[76px] flex-1" />
+        ))}
+      </div>
+      <Skeleton className="h-56" />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 6 }, (_, i) => (
+          <Skeleton key={i} className="h-24" />
+        ))}
+      </div>
     </div>
   );
 }

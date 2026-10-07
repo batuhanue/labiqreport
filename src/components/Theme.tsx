@@ -36,12 +36,26 @@ export function useTheme() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
-  const set = (p: ThemePref) => {
+  /** origin verilirse tema, o noktadan büyüyen bir daireyle değişir (View Transitions API). */
+  const set = (p: ThemePref, origin?: { x: number; y: number }) => {
     setPref(p);
     try {
       localStorage.setItem(KEY, p);
     } catch {}
-    apply(p);
+    const doc = document as Document & { startViewTransition?: (cb: () => void) => { ready: Promise<void> } };
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!origin || !doc.startViewTransition || reduce) {
+      apply(p);
+      return;
+    }
+    const r = Math.hypot(Math.max(origin.x, innerWidth - origin.x), Math.max(origin.y, innerHeight - origin.y));
+    const t = doc.startViewTransition(() => apply(p));
+    t.ready.then(() => {
+      document.documentElement.animate(
+        { clipPath: [`circle(0px at ${origin.x}px ${origin.y}px)`, `circle(${r}px at ${origin.x}px ${origin.y}px)`] },
+        { duration: 550, easing: "cubic-bezier(0.22, 1, 0.36, 1)", pseudoElement: "::view-transition-new(root)" },
+      );
+    });
   };
   return { pref, set };
 }
@@ -80,7 +94,10 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
   return (
     <motion.button
       whileTap={{ scale: 0.9 }}
-      onClick={() => set(next)}
+      onClick={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        set(next, { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+      }}
       className={`grid h-11 w-11 shrink-0 place-items-center rounded-full ${className}`}
       aria-label={`${LABEL[pref]} — değiştir`}
       title={`${LABEL[pref]} (dokun: ${LABEL[next]})`}

@@ -7,8 +7,18 @@ import { useMemo, useState } from "react";
 import { STATUSES } from "@/components/ActionEditor";
 import { usePeriod } from "@/components/PeriodProvider";
 import { EmptyState, Icon, Ring, Sheet } from "@/components/ui";
+import { AnimatedNumber } from "@/components/fx";
+import { reveal } from "@/lib/motion";
+
+const MotionLink = motion.create(Link);
+const rowReveal = {
+  initial: { opacity: 0, x: -12 },
+  whileInView: { opacity: 1, x: 0 },
+  viewport: { once: true },
+  transition: { type: "spring", stiffness: 300, damping: 26 },
+} as const;
 import { AREAS, HOSPITALS, TOTAL_ITEMS } from "@/lib/checklist";
-import { areaProgress, deadlineInfo, overallProgress, periodLabel, periodShort } from "@/lib/period";
+import { areaProgress, deadlineInfo, isChecked, overallProgress, periodLabel, periodShort } from "@/lib/period";
 import type { PeriodData, PeriodStatus } from "@/lib/types";
 
 // Grafik serileri (doğrulanmış kategorik çift: CVD ΔE 30.8)
@@ -70,7 +80,9 @@ function Tile({
       </div>
       <div className="min-w-0 flex-1">
         <div className="text-xs font-bold leading-tight text-ink-3">{label}</div>
-        <div className="text-2xl font-extrabold leading-tight">{value}</div>
+        <div className="text-2xl font-extrabold leading-tight">
+          {/^%?\d+$/.test(value) ? <AnimatedNumber value={Number(value.replace("%", ""))} prefix={value.startsWith("%") ? "%" : ""} /> : value}
+        </div>
         {sub && <div className="line-clamp-2 text-xs leading-snug text-ink-3">{sub}</div>}
       </div>
       <Icon name="chevron" size={16} className="absolute right-3 top-3 text-ink-3 opacity-40 transition-opacity group-hover:opacity-100" />
@@ -83,15 +95,15 @@ const DRILL_TITLE: Record<Drill, string> = {
   all: "Eksik maddeler",
   bursa: "Bursa — eksik maddeler",
   basaksehir: "Başakşehir — eksik maddeler",
-  fail: "Sorunlu işaretler",
+  fail: "Bulgulu maddeler (✗)",
   overdue: "Termini geçen alanlar",
   status: "Dönem durumu",
 };
 
 const MARK_BADGE: Record<string, { t: string; c: string }> = {
   ok: { t: "Tamam", c: "bg-ok" },
-  fail: { t: "Sorun", c: "bg-fail" },
-  na: { t: "N/A", c: "bg-na" },
+  fail: { t: "Bulgu", c: "bg-fail" },
+  na: { t: "N/A · eksik", c: "bg-na" },
   pending: { t: "Bekliyor", c: "bg-ink-3/60" },
 };
 
@@ -105,7 +117,7 @@ function DrillSheet({ mode, data, onClose }: { mode: Drill | null; data: PeriodD
     items: a.items.filter((it) => {
       const st = data.items[it.id];
       if (mode === "fail") return hs.some((h) => st?.[h] === "fail");
-      return hs.some((h) => st?.[h] !== "ok" && st?.[h] !== "na");
+      return hs.some((h) => !isChecked(st?.[h]));
     }),
   })).filter((g) => g.items.length);
 
@@ -151,7 +163,7 @@ function DrillSheet({ mode, data, onClose }: { mode: Drill | null; data: PeriodD
           </div>
         )
       ) : groups.length === 0 ? (
-        <div className="py-8 text-center text-ink-3">{mode === "fail" ? "Sorunlu işaret yok 🎉" : "Eksik madde yok, hepsi tamam 🎉"}</div>
+        <div className="py-8 text-center text-ink-3">{mode === "fail" ? "✗ işaretli madde yok 🎉" : "Eksik madde yok, hepsi tamam 🎉"}</div>
       ) : (
         <div className="space-y-5">
           {groups.map(({ a, items }) => (
@@ -166,7 +178,7 @@ function DrillSheet({ mode, data, onClose }: { mode: Drill | null; data: PeriodD
                 {items.map((it) => {
                   const st = data.items[it.id];
                   return (
-                    <Link key={it.id} href={`/?alan=${a.code}`} className="clay-sm flex items-center gap-3 px-4 py-3">
+                    <MotionLink key={it.id} href={`/?alan=${a.code}`} {...rowReveal} whileHover={{ x: 4 }} className="clay-sm flex items-center gap-3 px-4 py-3">
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-bold leading-snug">{it.text.trim()}</div>
                         {st?.note && <div className="mt-0.5 line-clamp-2 text-xs text-ink-2">📝 {st.note}</div>}
@@ -182,7 +194,7 @@ function DrillSheet({ mode, data, onClose }: { mode: Drill | null; data: PeriodD
                         })}
                       </div>
                       <Icon name="chevron" size={16} className="shrink-0 text-ink-3" />
-                    </Link>
+                    </MotionLink>
                   );
                 })}
               </div>
@@ -236,18 +248,18 @@ function Analysis({ data }: { data: PeriodData }) {
       </div>
 
       {/* Özet kutuları */}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
-        <Tile delay={0} emoji="🎯" tint="var(--color-tint-info)" onClick={() => setDrill("all")} label="Genel tamamlanma" value={`%${Math.round(prog.overall * 100)}`} sub={`${prog.remaining} işaret kaldı`} />
-        <Tile delay={0.04} emoji="🏥" tint="var(--color-tint-info)" onClick={() => setDrill("bursa")} label="Bursa" value={`%${Math.round(prog.bursa * 100)}`} sub={`${prog.b.ok + prog.b.na}/${TOTAL_ITEMS} madde`} />
-        <Tile delay={0.08} emoji="🏥" tint="var(--color-tint-warn)" onClick={() => setDrill("basaksehir")} label="Başakşehir" value={`%${Math.round(prog.basaksehir * 100)}`} sub={`${prog.k.ok + prog.k.na}/${TOTAL_ITEMS} madde`} />
-        <Tile delay={0.12} emoji="⚠️" tint="var(--color-tint-fail)" onClick={() => setDrill("fail")} label="Sorunlu işaret" value={String(prog.fails)} sub={`BRS ${prog.b.fail} · BŞK ${prog.k.fail}`} />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 2xl:grid-cols-6">
+        <Tile delay={0} emoji="🎯" tint="var(--color-tint-info)" onClick={() => setDrill("all")} label="Genel tamamlanma" value={`%${Math.round(prog.overall * 100)}`} sub={`${prog.remaining} kontrol kaldı`} />
+        <Tile delay={0.04} emoji="🏥" tint="var(--color-tint-info)" onClick={() => setDrill("bursa")} label="Bursa" value={`%${Math.round(prog.bursa * 100)}`} sub={`${prog.bursaDone}/${TOTAL_ITEMS} kontrol edildi`} />
+        <Tile delay={0.08} emoji="🏥" tint="var(--color-tint-warn)" onClick={() => setDrill("basaksehir")} label="Başakşehir" value={`%${Math.round(prog.basaksehir * 100)}`} sub={`${prog.basaksehirDone}/${TOTAL_ITEMS} kontrol edildi`} />
+        <Tile delay={0.12} emoji="⚠️" tint="var(--color-tint-fail)" onClick={() => setDrill("fail")} label="Bulgu (✗)" value={String(prog.fails)} sub={`BRS ${prog.b.fail} · BŞK ${prog.k.fail}`} />
         <Tile delay={0.16} emoji="🚩" tint="var(--color-tint-yellow)" onClick={() => router.push("/aksiyonlar")} label="Açık aksiyon" value={String(openActions.length)} sub={`toplam ${data.actions.length}`} />
         <Tile delay={0.2} emoji="⏰" tint="var(--color-tint-coral)" onClick={() => setDrill("overdue")} label="Geciken alan" value={String(overdue.length)} sub={overdue.map((x) => x.a.code).join(", ") || "yok"} />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
         {/* Alan bazında tamamlanma */}
-        <section className="clay p-5">
+        <motion.section {...reveal} className="clay p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-lg font-extrabold">Alan bazında tamamlanma</h3>
             <Legend />
@@ -292,10 +304,10 @@ function Analysis({ data }: { data: PeriodData }) {
               );
             })}
           </div>
-        </section>
+        </motion.section>
 
         {/* Termin takvimi */}
-        <section className="clay p-5">
+        <motion.section {...reveal} className="clay p-5">
           <h3 className="mb-4 text-lg font-extrabold">Termin takvimi</h3>
           <div className="space-y-2.5">
             {deadlines.map(({ a, d, p }) => {
@@ -310,7 +322,7 @@ function Analysis({ data }: { data: PeriodData }) {
                       ? { i: "⚠️", t: d.text, c: "text-warn" }
                       : { i: "🕒", t: d.text, c: "text-ink-2" };
               return (
-                <Link key={a.code} href={`/?alan=${a.code}`} className="clay-sm flex items-center gap-3 px-3 py-2.5">
+                <MotionLink key={a.code} href={`/?alan=${a.code}`} {...rowReveal} whileHover={{ x: 4 }} className="clay-sm flex items-center gap-3 px-3 py-2.5">
                   <span className="text-xl">{a.emoji}</span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-bold">{a.code} · {a.title}</div>
@@ -319,37 +331,37 @@ function Analysis({ data }: { data: PeriodData }) {
                   <span className={`whitespace-nowrap text-xs font-extrabold ${state.c}`}>
                     {state.i} {state.t}
                   </span>
-                </Link>
+                </MotionLink>
               );
             })}
           </div>
-        </section>
+        </motion.section>
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
         {/* Sorunlu maddeler */}
-        <section className="clay p-5">
+        <motion.section {...reveal} className="clay p-5">
           <h3 className="mb-4 text-lg font-extrabold">Sorunlu maddeler (x)</h3>
           {fails.length === 0 ? (
             <div className="py-6 text-center text-ink-3">Sorun işaretli madde yok 🎉</div>
           ) : (
             <div className="space-y-2.5">
               {fails.map(({ a, it, h, note }) => (
-                <Link key={it.id + h.id} href={`/?alan=${a.code}`} className="clay-sm block px-4 py-3">
+                <MotionLink key={it.id + h.id} href={`/?alan=${a.code}`} {...rowReveal} whileHover={{ x: 4 }} className="clay-sm block px-4 py-3">
                   <div className="flex items-center gap-2 text-xs font-extrabold">
                     <span style={{ color: a.color }}>{a.code}</span>
                     <span className="rounded-full px-2 py-0.5 text-white" style={{ background: SERIES[h.id] }}>{h.label}</span>
                   </div>
                   <div className="mt-1 text-sm font-bold">{it.text.trim()}</div>
                   {note && <div className="mt-1 text-sm text-ink-2">📝 {note}</div>}
-                </Link>
+                </MotionLink>
               ))}
             </div>
           )}
-        </section>
+        </motion.section>
 
         {/* Aksiyon durumu */}
-        <section className="clay p-5">
+        <motion.section {...reveal} className="clay p-5">
           <h3 className="mb-4 text-lg font-extrabold">Aksiyon durumu</h3>
           {data.actions.length === 0 ? (
             <div className="py-6 text-center text-ink-3">Bu dönemde aksiyon yok.</div>
@@ -394,11 +406,11 @@ function Analysis({ data }: { data: PeriodData }) {
               </div>
             </>
           )}
-        </section>
+        </motion.section>
       </div>
 
       {/* Dönem trendi */}
-      <section className="clay p-5">
+      <motion.section {...reveal} className="clay p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-lg font-extrabold">Dönemler arası tamamlanma</h3>
           <Legend />
@@ -478,30 +490,30 @@ function Analysis({ data }: { data: PeriodData }) {
             </div>
           </>
         )}
-      </section>
+      </motion.section>
 
       {/* Hastane karşılaştırma halkaları */}
-      <section className="clay grid gap-4 p-5 sm:grid-cols-2">
+      <motion.section {...reveal} className="clay grid gap-4 p-5 sm:grid-cols-2">
         {HOSPITALS.map((h) => {
           const c = h.id === "bursa" ? prog.b : prog.k;
           return (
             <div key={h.id} className="flex items-center gap-4">
-              <Ring value={(c.ok + c.na) / TOTAL_ITEMS} size={84} stroke={10} color={SERIES[h.id]}>
-                <span className="text-lg font-extrabold">%{Math.round(((c.ok + c.na) / TOTAL_ITEMS) * 100)}</span>
+              <Ring value={(c.ok + c.fail) / TOTAL_ITEMS} size={84} stroke={10} color={SERIES[h.id]}>
+                <span className="text-lg font-extrabold">%{Math.round(((c.ok + c.fail) / TOTAL_ITEMS) * 100)}</span>
               </Ring>
               <div>
                 <div className="text-lg font-extrabold">{h.label}</div>
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-ink-2">
                   <span className="flex items-center gap-1"><Icon name="check" size={15} className="text-ok" /> {c.ok} tamam</span>
-                  <span className="flex items-center gap-1"><Icon name="x" size={15} className="text-fail" /> {c.fail} sorun</span>
-                  <span>N/A {c.na}</span>
+                  <span className="flex items-center gap-1"><Icon name="x" size={15} className="text-fail" /> {c.fail} bulgu</span>
+                  <span>N/A {c.na} (eksik)</span>
                   <span>⏳ {c.pending} bekliyor</span>
                 </div>
               </div>
             </div>
           );
         })}
-      </section>
+      </motion.section>
 
       <DrillSheet mode={drill} data={data} onClose={() => setDrill(null)} />
 

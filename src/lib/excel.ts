@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import { AREAS, ALL_ITEMS, HOSPITALS, areaByCode } from "./checklist";
-import { areaProgress, newPeriod, normalizePeriod, PERIOD_RE } from "./period";
+import { areaProgress, isChecked, newPeriod, normalizePeriod, PERIOD_RE } from "./period";
 import type { ActionRow, Mark, PeriodData, PeriodStatus, Signoff } from "./types";
 import { getCellText, parseSharedStrings, setCached, setCell } from "./xlsx-xml";
 
@@ -87,13 +87,15 @@ export async function buildWorkbook(template: Buffer | Uint8Array, data: PeriodD
   const p2 = paths[SHEET_NAMES.panel];
   if (p2 && zip.file(p2)) {
     let s2 = await zip.file(p2)!.async("string");
+    // Tamamlanma = kontrol edildi: ☑ ve x birlikte sayılır (N/A ve ☐ eksik)
+    s2 = s2.replace(/COUNTIFS?\([^()]*,"☑"\)/g, (m) => (m.includes('"x"') ? m : `(${m}+${m.replace('"☑"', '"x"')})`));
     let tb = 0, tk = 0, tt = 0;
     AREAS.forEach((a, i) => {
       const r = 11 + i;
       const pr = areaProgress(data, a);
-      // Excel formülü yalnızca ☑ sayar
-      const b = a.items.filter((it) => data.items[it.id]?.bursa === "ok").length;
-      const k = a.items.filter((it) => data.items[it.id]?.basaksehir === "ok").length;
+      // kontrol edildi = ☑ veya x
+      const b = a.items.filter((it) => isChecked(data.items[it.id]?.bursa)).length;
+      const k = a.items.filter((it) => isChecked(data.items[it.id]?.basaksehir)).length;
       const n = pr.total;
       tb += b; tk += k; tt += n;
       const rem = n * 2 - b - k;

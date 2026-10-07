@@ -61,9 +61,11 @@ export default function GecmisPage() {
                   return (
                     <motion.div
                       key={s.period}
-                      initial={{ opacity: 0, y: 14 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.04 }}
+                      initial={{ opacity: 0, y: 24, scale: 0.97 }}
+                      whileInView={{ opacity: 1, y: 0, scale: 1 }}
+                      viewport={{ once: true, amount: 0.2 }}
+                      transition={{ delay: Math.min(i * 0.05, 0.3), type: "spring", stiffness: 260, damping: 24 }}
+                      whileHover={{ y: -4 }}
                       className={`clay p-5 ${isViewing ? "ring-2 ring-blue/40" : ""}`}
                     >
                       <div className="flex items-center gap-4">
@@ -81,7 +83,7 @@ export default function GecmisPage() {
                           <div className="mt-1.5 flex flex-wrap gap-x-3 text-xs font-bold text-ink-2">
                             <span>BRS {s.bursaOk}/{TOTAL_ITEMS}</span>
                             <span>BŞK {s.basaksehirOk}/{TOTAL_ITEMS}</span>
-                            {s.fails > 0 && <span className="text-fail">{s.fails} sorun</span>}
+                            {s.fails > 0 && <span className="text-fail">{s.fails} bulgu</span>}
                             {s.openActions > 0 && <span className="text-warn">{s.openActions} açık aksiyon</span>}
                           </div>
                         </div>

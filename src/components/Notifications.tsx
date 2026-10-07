@@ -157,7 +157,15 @@ export function NotificationBell() {
   return (
     <>
       <motion.button whileTap={{ scale: 0.9 }} onClick={() => setOpen(true)} className="clay-sm relative grid h-11 w-11 shrink-0 place-items-center rounded-full" aria-label="Bildirimler">
-        <Icon name="bell" size={21} />
+        <motion.span
+          key={alertCount}
+          className="origin-top"
+          initial={{ rotate: 0 }}
+          animate={{ rotate: alertCount > 0 ? [0, 16, -14, 10, -6, 0] : 0 }}
+          transition={{ duration: 0.8, delay: 0.6 }}
+        >
+          <Icon name="bell" size={21} />
+        </motion.span>
         <AnimatePresence>
           {alertCount > 0 && (
             <motion.span

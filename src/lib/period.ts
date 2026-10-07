@@ -64,7 +64,12 @@ export function normalizePeriod(p: Partial<PeriodData> & { period: string }): Pe
   } as PeriodData;
 }
 
-export const itemDone = (s: ItemState | undefined, h: Hospital) => !!s && (s[h] === "ok" || s[h] === "na");
+/**
+ * Tamamlanma = kontrol edildi mi? ✓ (uygun) ve ✗ (bulgu var) ikisi de kontrol edilmiş sayılır.
+ * N/A ve boş işaret kontrol edilmemiş (eksik) demektir.
+ */
+export const isChecked = (m: ItemState["bursa"] | undefined) => m === "ok" || m === "fail";
+export const itemDone = (s: ItemState | undefined, h: Hospital) => !!s && isChecked(s[h]);
 export const itemTouched = (s: ItemState | undefined, h: Hospital) => !!s && s[h] !== null;
 
 export function areaProgress(p: PeriodData, area: Area) {
@@ -92,10 +97,12 @@ export function countMarks(p: PeriodData, h: Hospital) {
 export function overallProgress(p: PeriodData) {
   const b = countMarks(p, "bursa");
   const k = countMarks(p, "basaksehir");
-  const done = b.ok + b.na + k.ok + k.na;
+  const done = b.ok + b.fail + k.ok + k.fail;
   return {
-    bursa: (b.ok + b.na) / TOTAL_ITEMS,
-    basaksehir: (k.ok + k.na) / TOTAL_ITEMS,
+    bursa: (b.ok + b.fail) / TOTAL_ITEMS,
+    basaksehir: (k.ok + k.fail) / TOTAL_ITEMS,
+    bursaDone: b.ok + b.fail,
+    basaksehirDone: k.ok + k.fail,
     overall: done / (TOTAL_ITEMS * 2),
     remaining: TOTAL_ITEMS * 2 - done,
     fails: b.fail + k.fail,
@@ -111,8 +118,8 @@ export function summarize(p: PeriodData): PeriodSummary {
     period: p.period,
     status: p.status,
     updatedAt: p.updatedAt,
-    bursaOk: b.ok + b.na,
-    basaksehirOk: k.ok + k.na,
+    bursaOk: b.ok + b.fail,
+    basaksehirOk: k.ok + k.fail,
     fails: b.fail + k.fail,
     openActions: p.actions.filter((a) => a.status !== "Tamamlandı").length,
   };

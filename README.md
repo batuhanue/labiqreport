@@ -5,6 +5,11 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
 çıktısını** almak için web uygulaması.
 
 ## Özellikler
+- **Tamamlanma mantığı:** Bir madde ✓ (uygun) veya ✗ (bulgu var) işaretlendiyse **kontrol edilmiş = tamamlanmış** sayılır.
+  N/A veya boş bırakılan madde eksiktir. Excel'deki `03_Durum_Panosu` formülleri de ☑ ile x'i birlikte sayar.
+- **Animasyonlar:** [claudedesignskills](https://github.com/freshtechbro/claudedesignskills) (motion-framer, modern-web-design,
+  react-spring-physics) ilkeleriyle: yay ön ayarları, kademeli girişler, kayan aktif göstergeler, ✓ çizilme + parçacık,
+  ✗ sallanma, sayfa geçişleri, sayan sayılar, dalga efekti, tilt, dairesel tema geçişi. `prefers-reduced-motion` desteklenir.
 - **Denetim (ana sayfa):** Açılışta aktif dönem kaldığı yerden açılır. Her madde iki hastane için
   ☑ Tamam / x Sorun / N/A işaretlenir, not (Excel'de DURUM kolonu) ve bulgu/aksiyon eklenir.
   Alan tamamlanınca kutlama ekranı. Termin (Ay bitiş + N gün) takibi.

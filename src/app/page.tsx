@@ -8,6 +8,9 @@ import { ItemCard } from "@/components/ItemCard";
 import { PenGlyph, useNotes } from "@/components/notes/NotesPanel";
 import { usePeriod, type Focus } from "@/components/PeriodProvider";
 import { Bar, Chip, Icon, Ring, Segmented } from "@/components/ui";
+import { AnimatedNumber } from "@/components/fx";
+import { TiltCard } from "@/components/TiltCard";
+import { hoverLift, itemVariants, listVariants, spring, tapPress } from "@/lib/motion";
 import { AREAS, TOTAL_ITEMS, areaByCode, tintOf, type Area } from "@/lib/checklist";
 import { areaProgress, deadlineInfo, defaultPeriod, MONTHS_SHORT, overallProgress, periodLabel, toPeriod } from "@/lib/period";
 import type { PeriodData } from "@/lib/types";
@@ -75,10 +78,18 @@ function MonthStrip({ current }: { current: string | null }) {
             key={p}
             whileTap={{ scale: 0.92 }}
             onClick={() => openPeriod(p)}
-            className={`relative flex min-w-[68px] flex-1 flex-col items-center rounded-[22px] px-3 py-3 ${sel ? "clay-color bg-blue text-white" : "clay-sm"}`}
+            whileHover={{ y: -3 }}
+            className={`clay-sm relative flex min-w-[68px] flex-1 flex-col items-center rounded-[22px] px-3 py-3 ${sel ? "text-white" : ""}`}
           >
-            <span className={`text-sm font-semibold ${sel ? "text-white/80" : "text-ink-3"}`}>{MONTHS_SHORT[m - 1]}</span>
-            <span className="text-xl font-extrabold">{String(y).slice(2)}</span>
+            {sel && (
+              <motion.span
+                layoutId="month-pill"
+                className="clay-color absolute inset-0 rounded-[22px] bg-blue"
+                transition={spring.stiff}
+              />
+            )}
+            <span className={`relative text-sm font-semibold ${sel ? "text-white/80" : "text-ink-3"}`}>{MONTHS_SHORT[m - 1]}</span>
+            <span className="relative text-xl font-extrabold">{String(y).slice(2)}</span>
             {(exists || p === activePeriod) && (
               <span className={`absolute bottom-1.5 h-1.5 w-1.5 rounded-full ${p === activePeriod ? (sel ? "bg-white" : "bg-ok") : sel ? "bg-white/60" : "bg-blue"}`} />
             )}
@@ -121,6 +132,7 @@ function Audit({ data }: { data: PeriodData }) {
   const [areaCode, setAreaCode] = useState<string | null>(null);
   const [actionDraft, setActionDraft] = useState<ActionDraft | null>(null);
   const [celebrate, setCelebrate] = useState<Area | null>(null);
+  const [fullDone, setFullDone] = useState(false);
   const prog = overallProgress(data);
 
   // URL ?alan= ile geri tuşu desteği
@@ -145,7 +157,10 @@ function Audit({ data }: { data: PeriodData }) {
     const prev = completeRef.current;
     if (prev && prev.period === data.period) {
       const newly = [...set].find((c) => !prev.set.has(c));
-      if (newly) setCelebrate(areaByCode(newly)!);
+      if (newly) {
+        setFullDone(set.size === AREAS.length);
+        setCelebrate(areaByCode(newly)!);
+      }
     }
     completeRef.current = { period: data.period, set };
   }, [data]);
@@ -182,9 +197,8 @@ function Audit({ data }: { data: PeriodData }) {
       <MonthStrip current={data.period} />
 
       {/* Hero */}
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
+      <TiltCard
+        key={data.period}
         className="clay-color relative overflow-hidden p-5 text-white sm:p-7"
         style={{ background: "linear-gradient(135deg,#6d8bff 0%,#4361ee 100%)" }}
       >
@@ -192,7 +206,7 @@ function Audit({ data }: { data: PeriodData }) {
         <div className="relative flex items-center gap-5">
           <Ring value={prog.overall} size={92} stroke={10} color="#fff" track="rgba(255,255,255,.22)">
             <div className="text-center leading-none">
-              <div className="text-2xl font-extrabold">{Math.round(prog.overall * 100)}</div>
+              <AnimatedNumber value={Math.round(prog.overall * 100)} className="text-2xl font-extrabold" />
               <div className="text-[10px] font-bold text-white/70">%</div>
             </div>
           </Ring>
@@ -200,14 +214,14 @@ function Audit({ data }: { data: PeriodData }) {
             <div className="text-xs font-bold uppercase tracking-wider text-white/70">{data.status} · {data.version}</div>
             <div className="text-2xl font-extrabold leading-tight sm:text-3xl">{periodLabel(data.period)} Kapanışı</div>
             <div className="mt-1 text-sm text-white/85">
-              {prog.remaining === 0 ? "Tüm maddeler tamamlandı 🎉" : `${prog.remaining} işaret kaldı · ${prog.fails} sorunlu`}
+              {prog.remaining === 0 ? "Tüm maddeler tamamlandı 🎉" : `${prog.remaining} kontrol kaldı · ${prog.fails} bulgu (✗)`}
             </div>
           </div>
         </div>
         <div className="relative mt-5 grid max-w-md grid-cols-2 gap-3">
           {[
-            { l: "Bursa", v: prog.bursa, n: prog.b.ok + prog.b.na },
-            { l: "Başakşehir", v: prog.basaksehir, n: prog.k.ok + prog.k.na },
+            { l: "Bursa", v: prog.bursa, n: prog.bursaDone },
+            { l: "Başakşehir", v: prog.basaksehir, n: prog.basaksehirDone },
           ].map((x) => (
             <div key={x.l} className="glass-on-color rounded-2xl px-3 py-2.5">
               <div className="flex justify-between text-xs font-bold">
@@ -236,7 +250,7 @@ function Audit({ data }: { data: PeriodData }) {
             </span>
           </button>
         )}
-      </motion.div>
+      </TiltCard>
 
       {/* Hastane odağı + filtreler */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center">
@@ -263,12 +277,20 @@ function Audit({ data }: { data: PeriodData }) {
       <div className="lg:grid lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)] lg:items-start lg:gap-6">
         {/* Alan listesi */}
         <div className={`${area ? "hidden lg:block" : ""} lg:sticky lg:top-6`}>
-          <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)]">
-            {visibleAreas.map((a, i) => (
-              <AreaCard key={a.code} area={a} data={data} index={i} selected={a.code === areaCode} onClick={() => openArea(a.code)} />
-            ))}
+          <motion.div
+            key={`${filter}-${data.period}`}
+            variants={listVariants}
+            initial="hidden"
+            animate="show"
+            className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)]"
+          >
+            <AnimatePresence mode="popLayout">
+              {visibleAreas.map((a, i) => (
+                <AreaCard key={a.code} area={a} data={data} index={i} selected={a.code === areaCode} onClick={() => openArea(a.code)} />
+              ))}
+            </AnimatePresence>
             {visibleAreas.length === 0 && <div className="clay p-6 text-center text-ink-3">Bu filtrede alan yok 🎉</div>}
-          </div>
+          </motion.div>
         </div>
 
         {/* Alan detayı */}
@@ -299,8 +321,11 @@ function Audit({ data }: { data: PeriodData }) {
 
       {/* Excel FAB */}
       <motion.button
-        whileTap={{ scale: 0.92 }}
-        whileHover={{ y: -2 }}
+        initial={{ scale: 0, rotate: -30, opacity: 0 }}
+        animate={{ scale: 1, rotate: 0, opacity: 1 }}
+        transition={{ ...spring.wobbly, delay: 0.35 }}
+        whileTap={{ scale: 0.9 }}
+        whileHover={{ y: -4, scale: 1.03 }}
         onClick={() => exportExcel()}
         className="clay-dark fixed bottom-28 right-5 z-30 flex h-16 items-center gap-2 rounded-full px-5 font-extrabold lg:bottom-8 lg:right-8"
         aria-label="Excel indir"
@@ -312,6 +337,7 @@ function Audit({ data }: { data: PeriodData }) {
       <ActionEditor open={!!actionDraft} draft={actionDraft ?? undefined} onClose={() => setActionDraft(null)} />
       <Celebration
         area={celebrate}
+        full={fullDone}
         data={data}
         onClose={() => setCelebrate(null)}
         onNext={() => {
@@ -334,11 +360,11 @@ function AreaCard({ area, data, index, selected, onClick }: { area: Area; data: 
   return (
     <motion.button
       layout
-      initial={{ opacity: 0, y: 14 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: Math.min(index * 0.035, 0.3) }}
-      whileTap={{ scale: 0.97 }}
-      whileHover={{ y: -3 }}
+      variants={itemVariants}
+      exit={{ opacity: 0, scale: 0.92, transition: { duration: 0.18 } }}
+      whileTap={tapPress}
+      whileHover={hoverLift}
+      data-index={index}
       onClick={onClick}
       className={`relative flex w-full items-center gap-4 p-4 text-left ${selected ? "clay-pressed rounded-[28px]" : "clay"}`}
     >
@@ -354,7 +380,7 @@ function AreaCard({ area, data, index, selected, onClick }: { area: Area; data: 
             {area.code}
           </span>
           {area.priority && <span title="Öncelikli alan" className="text-xs">🔥</span>}
-          {p.fails > 0 && <span className="rounded-full bg-tint-fail px-1.5 text-[10px] font-extrabold text-fail">{p.fails} sorun</span>}
+          {p.fails > 0 && <span className="rounded-full bg-tint-fail px-1.5 text-[10px] font-extrabold text-fail">{p.fails} bulgu</span>}
         </div>
         <div className="line-clamp-2 font-extrabold leading-tight">{area.title}</div>
         <div className="mt-2 grid grid-cols-2 gap-2">

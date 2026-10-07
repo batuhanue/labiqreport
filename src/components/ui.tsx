@@ -100,15 +100,28 @@ export function Ring({
 }
 
 export function Bar({ value, color, height = 8 }: { value: number; color: string; height?: number }) {
+  const full = value >= 1;
   return (
-    <div className="w-full overflow-hidden rounded-full bg-track" style={{ height }}>
+    <div className="relative w-full overflow-hidden rounded-full bg-track" style={{ height }}>
       <motion.div
-        className="h-full rounded-full"
+        className="relative h-full overflow-hidden rounded-full"
         style={{ background: color }}
         initial={{ width: 0 }}
         animate={{ width: `${Math.round(Math.min(1, value) * 100)}%` }}
         transition={{ type: "spring", stiffness: 70, damping: 18 }}
-      />
+      >
+        {/* dolunca üzerinden geçen parıltı */}
+        {full && (
+          <motion.span
+            aria-hidden
+            className="absolute inset-y-0 w-1/2"
+            style={{ background: "linear-gradient(90deg, transparent, rgba(255,255,255,.65), transparent)" }}
+            initial={{ x: "-120%" }}
+            animate={{ x: "260%" }}
+            transition={{ duration: 0.9, delay: 0.5, ease: "easeInOut" }}
+          />
+        )}
+      </motion.div>
     </div>
   );
 }
@@ -167,7 +180,10 @@ export function Sheet({
                 </button>
               </div>
             )}
-            {children}
+            {/* içerik panelden hemen sonra yumuşakça gelir */}
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
+              {children}
+            </motion.div>
           </motion.div>
         </motion.div>
       )}
@@ -181,22 +197,31 @@ export function Chip({
   onClick,
   children,
   color,
+  group = "chips",
 }: {
   active?: boolean;
   onClick?: () => void;
   children: React.ReactNode;
   color?: string;
+  /** aynı gruptaki çipler arasında aktif gösterge kayar (layoutId) */
+  group?: string;
 }) {
   return (
     <motion.button
-      whileTap={{ scale: 0.94 }}
+      whileTap={{ scale: 0.92 }}
+      whileHover={{ y: -2 }}
       onClick={onClick}
-      className={`shrink-0 rounded-full px-4 py-2.5 text-sm font-semibold transition-colors ${
-        active ? "clay-dark" : "clay-sm text-ink-2"
-      }`}
-      style={active && color ? { background: color, color: "white" } : undefined}
+      className={`clay-sm relative shrink-0 rounded-full px-4 py-2.5 text-sm font-semibold transition-colors ${active ? "text-white" : "text-ink-2"}`}
     >
-      {children}
+      {active && (
+        <motion.span
+          layoutId={`chip-${group}`}
+          className="clay-dark absolute inset-0 rounded-full"
+          style={color ? { background: color } : undefined}
+          transition={{ type: "spring", stiffness: 400, damping: 30 }}
+        />
+      )}
+      <span className={`relative ${active ? "dark:text-[#15171e]" : ""}`}>{children}</span>
     </motion.button>
   );
 }

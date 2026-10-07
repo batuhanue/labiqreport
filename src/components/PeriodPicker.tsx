@@ -61,6 +61,10 @@ export function PeriodPicker({ open, onClose }: { open: boolean; onClose: () => 
           return (
             <motion.button
               key={p}
+              initial={{ opacity: 0, scale: 0.85, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ delay: i * 0.025, type: "spring", stiffness: 380, damping: 24 }}
+              whileHover={{ y: -3 }}
               whileTap={{ scale: 0.95 }}
               disabled={future || busy}
               onClick={() => pick(p)}
