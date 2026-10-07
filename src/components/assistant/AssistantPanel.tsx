@@ -30,6 +30,8 @@ interface Msg {
   error?: boolean;
   at: string;
   usage?: { prompt: number; cached: number; output: number };
+  /** asistanın yaptığı arşiv aramaları (durum satırları) */
+  steps?: string[];
 }
 
 const LS_CHAT = "lq:chat";
@@ -246,15 +248,15 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
           const { done, value } = await reader.read();
           if (done) break;
           acc += dec.decode(value, { stream: true });
-          const [text, meta] = acc.split("\u001eMETA");
+          const [raw, meta] = acc.split("\u001eMETA");
           let usage: Msg["usage"];
           try {
             usage = meta ? JSON.parse(meta) : undefined;
           } catch {}
-          setBot({ text, usage });
+          setBot({ text: clean(raw), usage, steps: stepsOf(raw) });
           scrollDown();
         }
-        return acc.split("\u001eMETA")[0];
+        return clean(acc.split("\u001eMETA")[0]);
       };
 
       try {
@@ -543,6 +545,37 @@ function DiagCard({ d, onClose }: { d: Diag; onClose: () => void }) {
   );
 }
 
+/** sunucunun \u001fS…\u001f durum satırları (arşiv aramaları) */
+const stepsOf = (raw: string) => [...raw.matchAll(/\u001fS([^\u001f]*)\u001f/g)].map((m) => m[1]);
+const clean = (raw: string) => raw.replace(/\u001f[^\u001f]*\u001f/g, "").replace(/\u001f[^\u001f]*$/, "");
+
+/** Arşiv aramaları: yanıt beklerken son adım canlı, sonra katlanmış özet. */
+function Steps({ steps, live }: { steps: string[]; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (live) {
+    return (
+      <motion.div key={steps.length} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-ink-3">
+        <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="inline-block h-3 w-3 rounded-full border-2 border-blue border-t-transparent" />
+        {steps.at(-1)}
+      </motion.div>
+    );
+  }
+  return (
+    <div className="mb-2 text-xs text-ink-3">
+      <button onClick={() => setOpen((v) => !v)} className="font-bold hover:text-blue">
+        📚 Arşivde {steps.length} arama {open ? "▴" : "▾"}
+      </button>
+      {open && (
+        <ul className="mt-1 space-y-0.5 pl-1">
+          {steps.map((x, i) => (
+            <li key={i}>{x}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ mesaj balonu */
 function Bubble({ m, streaming, onRetry, onTest }: { m: Msg; streaming: boolean; onRetry?: () => void; onTest?: () => void }) {
   const { body, tasks } = useMemo(() => (m.role === "assistant" ? splitTasks(m.text) : { body: m.text, tasks: [] }), [m]);
@@ -563,6 +596,7 @@ function Bubble({ m, streaming, onRetry, onTest }: { m: Msg; streaming: boolean;
       </div>
       <div className="min-w-0 flex-1">
         <div className={`clay-sm rounded-[22px] rounded-tl-md px-4 py-3 ${m.error ? "bg-tint-fail" : ""}`}>
+          {!!m.steps?.length && !m.error && <Steps steps={m.steps} live={streaming && !m.text.trim()} />}
           {!m.text && streaming ? (
             <div className="flex gap-1.5 py-1.5">
               {[0, 1, 2].map((i) => (

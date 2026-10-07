@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { AUTH_COOKIE, tokenFor } from "@/lib/auth";
+import { AUTH_COOKIE, COOKIE_MAX_AGE, tokenFor } from "@/lib/auth";
 
 /** APP_PASSWORD tanımlıysa uygulamayı basit bir şifreyle korur. */
 export async function proxy(req: NextRequest) {
@@ -8,7 +8,14 @@ export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (pathname === "/giris" || pathname === "/api/login" || pathname.startsWith("/api/cron/")) return NextResponse.next();
   const cookie = req.cookies.get(AUTH_COOKIE)?.value;
-  if (cookie && cookie === (await tokenFor(pw))) return NextResponse.next();
+  if (cookie && cookie === (await tokenFor(pw))) {
+    // kayan süre: uygulama her açıldığında giriş 400 gün uzar (cihazda bir kez giriş yeterli)
+    const res = NextResponse.next();
+    if (!pathname.startsWith("/api/")) {
+      res.cookies.set(AUTH_COOKIE, cookie, { httpOnly: true, sameSite: "lax", secure: req.nextUrl.protocol === "https:", path: "/", maxAge: COOKIE_MAX_AGE });
+    }
+    return res;
+  }
   if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Giriş gerekli" }, { status: 401 });
   const url = req.nextUrl.clone();
   url.pathname = "/giris";

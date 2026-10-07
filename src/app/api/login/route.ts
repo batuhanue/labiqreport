@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AUTH_COOKIE, tokenFor } from "@/lib/auth";
+import { AUTH_COOKIE, COOKIE_MAX_AGE, tokenFor } from "@/lib/auth";
 
 export async function POST(req: Request) {
   const { password } = (await req.json().catch(() => ({}))) as { password?: string };
@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 24 * 180,
+    maxAge: COOKIE_MAX_AGE,
   });
   return res;
 }

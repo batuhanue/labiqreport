@@ -1,0 +1,41 @@
+import { handle } from "@/lib/api";
+import { clearArchive, search } from "@/lib/archive";
+import { archiveStep, progress, resetArchiveState } from "@/lib/google-archive";
+import type { ArchiveSource } from "@/lib/google-types";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+const SOURCES = ["gmail", "chat", "meet", "calendar"];
+
+/** İlerleme; ?q= / source / after / before verilirse arşivde arama. */
+export async function GET(req: Request) {
+  const p = new URL(req.url).searchParams;
+  if (p.has("q") || p.has("source") || p.has("after") || p.has("before")) {
+    const source = p.get("source");
+    return handle(async () => ({
+      hits: await search({
+        query: p.get("q") ?? undefined,
+        source: source && SOURCES.includes(source) ? (source as ArchiveSource) : undefined,
+        after: p.get("after") ?? undefined,
+        before: p.get("before") ?? undefined,
+        limit: 30,
+      }),
+    }));
+  }
+  return handle(progress);
+}
+
+/** Geçmişten bir parça daha indirir (≈40 sn). */
+export async function POST() {
+  return handle(() => archiveStep({ budgetMs: 40000 }));
+}
+
+/** Arşivi tamamen siler (bağlantı kalır; sonraki adımlar baştan indirir). */
+export async function DELETE() {
+  return handle(async () => {
+    await clearArchive();
+    await resetArchiveState();
+    return progress();
+  });
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import type { GoogleStatus } from "@/lib/google-types";
+import type { ArchiveProgress, GoogleStatus } from "@/lib/google-types";
 
 interface Ctx {
   status: GoogleStatus | null;
@@ -10,6 +10,10 @@ interface Ctx {
   sync: (force?: boolean) => Promise<void>;
   disconnect: () => Promise<void>;
   reload: () => Promise<void>;
+  /** geriye dönük arşiv (hafıza) ilerlemesi */
+  archive: ArchiveProgress | null;
+  archiving: boolean;
+  clearArchive: () => Promise<void>;
 }
 const GoogleCtx = createContext<Ctx | null>(null);
 export const useGoogle = () => useContext(GoogleCtx)!;
@@ -26,6 +30,44 @@ export function GoogleProvider({ children }: { children: React.ReactNode }) {
     ref.current = status;
   }, [status]);
   const busy = useRef(false);
+  const [archive, setArchive] = useState<ArchiveProgress | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const archBusy = useRef(false);
+  const archTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Bir arşiv adımı çalıştırır; geçmiş bitmediyse ve sayfa görünürse kısa arayla devam eder. */
+  const archiveStep = useCallback(async () => {
+    if (archBusy.current || !ref.current?.connected || ref.current.needsReauth || document.visibilityState !== "visible") return;
+    archBusy.current = true;
+    setArchiving(true);
+    let again = 0;
+    try {
+      const r = await fetch("/api/google/archive", { method: "POST", cache: "no-store" });
+      const j = (await r.json().catch(() => null)) as ArchiveProgress | null;
+      if (r.ok && j?.stats) {
+        setArchive(j);
+        const allDone = Object.values(j.done).every(Boolean) && Object.keys(j.done).length === 4;
+        again = allDone ? 0 : j.running ? 20000 : 1500;
+      } else again = 60000;
+    } catch {
+      again = 60000;
+    } finally {
+      archBusy.current = false;
+      setArchiving(false);
+    }
+    if (archTimer.current) clearTimeout(archTimer.current);
+    if (again) archTimer.current = setTimeout(() => archiveStepRef.current(), again);
+  }, []);
+  const archiveStepRef = useRef(archiveStep);
+  useEffect(() => {
+    archiveStepRef.current = archiveStep;
+  }, [archiveStep]);
+
+  const clearArchive = useCallback(async () => {
+    const r = await fetch("/api/google/archive", { method: "DELETE" }).catch(() => null);
+    if (r?.ok) setArchive(await r.json());
+    archiveStepRef.current();
+  }, []);
 
   const reload = useCallback(async () => {
     try {
@@ -47,6 +89,7 @@ export function GoogleProvider({ children }: { children: React.ReactNode }) {
       } else {
         setError(null);
         setStatus((s) => (s ? { ...s, snapshot: j, needsReauth: false } : s));
+        setTimeout(() => archiveStepRef.current(), 500);
       }
     } catch (e) {
       setError((e as Error).message);
@@ -66,6 +109,23 @@ export function GoogleProvider({ children }: { children: React.ReactNode }) {
     reload();
   }, [reload]);
 
+  // bağlıysa arşiv ilerlemesini al ve geçmiş indirmeyi başlat
+  useEffect(() => {
+    if (!status?.connected) return;
+    fetch("/api/google/archive", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j?.stats && setArchive(j))
+      .catch(() => {});
+    const t = setTimeout(() => archiveStepRef.current(), 3000);
+    const vis = () => document.visibilityState === "visible" && archiveStepRef.current();
+    document.addEventListener("visibilitychange", vis);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("visibilitychange", vis);
+      if (archTimer.current) clearTimeout(archTimer.current);
+    };
+  }, [status?.connected]);
+
   useEffect(() => {
     const check = () => {
       const s = ref.current;
@@ -84,5 +144,5 @@ export function GoogleProvider({ children }: { children: React.ReactNode }) {
     };
   }, [status?.connected, sync]);
 
-  return <GoogleCtx.Provider value={{ status, syncing, error, sync, disconnect, reload }}>{children}</GoogleCtx.Provider>;
+  return <GoogleCtx.Provider value={{ status, syncing, error, sync, disconnect, reload, archive, archiving, clearArchive }}>{children}</GoogleCtx.Provider>;
 }

@@ -92,3 +92,42 @@ export interface GoogleStatus {
   snapshot?: GoogleSnapshot | null;
   redirectUri?: string;
 }
+
+// ------------------------------------------------------------------ arşiv (geriye dönük hafıza)
+export type ArchiveSource = "gmail" | "chat" | "meet" | "calendar";
+
+export interface ArchiveItem {
+  source: ArchiveSource;
+  id: string;
+  ts: string;
+  title: string;
+  /** gönderen / katılımcılar */
+  who: string;
+  body: string;
+  link?: string;
+  meta?: Record<string, unknown> | null;
+}
+
+export interface ArchiveHit {
+  source: ArchiveSource;
+  id: string;
+  ts: string;
+  title: string;
+  who: string;
+  excerpt: string;
+  link?: string;
+}
+
+export interface ArchiveStats {
+  total: number;
+  bySource: Partial<Record<ArchiveSource, { count: number; oldest: string }>>;
+}
+
+export interface ArchiveProgress {
+  stats: ArchiveStats;
+  /** geçmişin tamamı indirildi mi (kaynak bazında) */
+  done: Partial<Record<ArchiveSource, boolean>>;
+  running?: boolean;
+  lastError?: string;
+  updatedAt?: string;
+}

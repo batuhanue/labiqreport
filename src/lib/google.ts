@@ -30,7 +30,7 @@ const AUTH_KEY = "google-auth";
 const DATA_KEY = "google-data";
 const PEOPLE_KEY = "google-people";
 
-interface StoredAuth {
+export interface StoredAuth {
   /** AES-GCM ile şifreli yenileme belirteci (base64 iv + veri) */
   refresh: string;
   access?: string;
@@ -158,6 +158,13 @@ export async function status(origin: string, withData = true): Promise<GoogleSta
 
 export const getSnapshot = () => store().getKV<GoogleSnapshot>(DATA_KEY);
 
+/** Bağlı hesap için geçerli belirteçli istek fonksiyonu. */
+export async function authed() {
+  const auth = await store().getKV<StoredAuth>(AUTH_KEY);
+  if (!auth?.refresh) throw new Error("Google hesabı bağlı değil");
+  return { auth, get: api(await accessToken(auth)) };
+}
+
 // ------------------------------------------------------------------ API yardımcıları
 class GErr extends Error {
   constructor(
@@ -168,7 +175,7 @@ class GErr extends Error {
   }
 }
 
-function api(token: string) {
+export function api(token: string) {
   return async <T>(url: string): Promise<T> => {
     const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store", signal: AbortSignal.timeout(20000) });
     if (!r.ok) {
@@ -184,7 +191,7 @@ function api(token: string) {
 }
 
 /** sınırlı eşzamanlılıkla map */
-async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+export async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let i = 0;
   await Promise.all(
@@ -198,7 +205,7 @@ async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Prom
   return out;
 }
 
-function explain(source: string, e: unknown) {
+export function explain(source: string, e: unknown) {
   const msg = e instanceof Error ? e.message : String(e);
   const st = e instanceof GErr ? e.status : 0;
   if (/has not been used|is disabled|SERVICE_DISABLED/i.test(msg)) return `${source} API'si Google Cloud projesinde etkin değil. Cloud Console → APIs & Services → Library'den etkinleştir. (${msg.slice(0, 120)})`;
@@ -207,7 +214,7 @@ function explain(source: string, e: unknown) {
   return `${source}: ${msg}`;
 }
 
-const decode = (s: string) =>
+export const decode = (s: string) =>
   s
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
     .replace(/&quot;/g, '"')
@@ -216,13 +223,47 @@ const decode = (s: string) =>
     .replace(/&gt;/g, ">")
     .replace(/&#39;/g, "'");
 
-function parseFrom(v: string) {
+export function parseFrom(v: string) {
   const m = v.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
   return m ? { name: m[1].trim() || m[2], email: m[2] } : { name: v.trim(), email: v.trim() };
 }
 
 // ------------------------------------------------------------------ kaynaklar
-type Get = ReturnType<typeof api>;
+export type Get = ReturnType<typeof api>;
+
+type RawEvent = {
+  id: string;
+  status?: string;
+  summary?: string;
+  description?: string;
+  location?: string;
+  htmlLink: string;
+  hangoutLink?: string;
+  start: { dateTime?: string; date?: string };
+  end: { dateTime?: string; date?: string };
+  organizer?: { email?: string; displayName?: string; self?: boolean };
+  attendees?: { email: string; displayName?: string; responseStatus?: string; self?: boolean; resource?: boolean }[];
+  conferenceData?: { entryPoints?: { entryPointType: string; uri: string }[] };
+};
+
+/** Takvim API olayını uygulama modeline çevirir. */
+export function mapEvent(raw: unknown): GEvent {
+  const e = raw as RawEvent;
+  return {
+    id: e.id,
+    title: e.summary || "(başlıksız)",
+    start: e.start?.dateTime ?? e.start?.date ?? "",
+    end: e.end?.dateTime ?? e.end?.date ?? "",
+    allDay: !e.start?.dateTime,
+    location: e.location,
+    description: e.description ? decode(e.description.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim().slice(0, 500) : undefined,
+    meet: e.hangoutLink ?? e.conferenceData?.entryPoints?.find((p) => p.entryPointType === "video")?.uri,
+    link: e.htmlLink,
+    organizer: e.organizer?.self ? undefined : e.organizer?.displayName || e.organizer?.email,
+    attendees: (e.attendees ?? []).filter((a) => !a.resource && !a.self).slice(0, 30).map((a) => ({ name: a.displayName || a.email.split("@")[0], email: a.email, status: a.responseStatus })),
+    response: e.attendees?.find((a) => a.self)?.responseStatus,
+  };
+}
 
 async function syncCalendar(get: Get): Promise<GEvent[]> {
   const now = Date.now();
@@ -234,37 +275,8 @@ async function syncCalendar(get: Get): Promise<GEvent[]> {
     maxResults: "250",
     timeZone: "Europe/Istanbul",
   });
-  type Ev = {
-    id: string;
-    status?: string;
-    summary?: string;
-    description?: string;
-    location?: string;
-    htmlLink: string;
-    hangoutLink?: string;
-    start: { dateTime?: string; date?: string };
-    end: { dateTime?: string; date?: string };
-    organizer?: { email?: string; displayName?: string; self?: boolean };
-    attendees?: { email: string; displayName?: string; responseStatus?: string; self?: boolean; resource?: boolean }[];
-    conferenceData?: { entryPoints?: { entryPointType: string; uri: string }[] };
-  };
-  const j = await get<{ items?: Ev[] }>(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${q}`);
-  return (j.items ?? [])
-    .filter((e) => e.status !== "cancelled")
-    .map((e) => ({
-      id: e.id,
-      title: e.summary || "(başlıksız)",
-      start: e.start.dateTime ?? e.start.date ?? "",
-      end: e.end.dateTime ?? e.end.date ?? "",
-      allDay: !e.start.dateTime,
-      location: e.location,
-      description: e.description ? decode(e.description.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim().slice(0, 500) : undefined,
-      meet: e.hangoutLink ?? e.conferenceData?.entryPoints?.find((p) => p.entryPointType === "video")?.uri,
-      link: e.htmlLink,
-      organizer: e.organizer?.self ? undefined : e.organizer?.displayName || e.organizer?.email,
-      attendees: (e.attendees ?? []).filter((a) => !a.resource && !a.self).slice(0, 30).map((a) => ({ name: a.displayName || a.email.split("@")[0], email: a.email, status: a.responseStatus })),
-      response: e.attendees?.find((a) => a.self)?.responseStatus,
-    }));
+  const j = await get<{ items?: RawEvent[] }>(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${q}`);
+  return (j.items ?? []).filter((e) => e.status !== "cancelled").map(mapEvent);
 }
 
 async function syncGmail(get: Get, email: string): Promise<{ items: GMail[]; unread?: number }> {
@@ -299,7 +311,7 @@ async function syncGmail(get: Get, email: string): Promise<{ items: GMail[]; unr
 }
 
 /** users/{id} → ad; People API (dizin) ile çözülür, sonuç KV'de önbelleklenir. */
-async function resolveNames(get: Get, ids: string[]) {
+export async function resolveNames(get: Get, ids: string[]) {
   const cache = (await store().getKV<Record<string, string>>(PEOPLE_KEY)) ?? {};
   const missing = [...new Set(ids)].filter((id) => !cache[id]).slice(0, 150);
   if (missing.length) {

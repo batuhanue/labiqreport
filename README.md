@@ -51,6 +51,11 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   kayıtları (katılımcılar, transkript/kayıt bağlantıları) görünür; her öğeden tek tuşla görev oluşturulur.
   Senkron: uygulama açıkken 5 dakikada bir, elle yenileme ve her sabah cron. Asistan bu verileri (ve son toplantı
   transkriptlerini) okur; asistan panelindeki "📬 Google" düğmesiyle kapatılabilir. Sabah bildirimine bugünkü toplantılar eklenir.
+  **Hafıza (arşiv):** geçmiş tüm e-postalar, Chat mesajları, Meet transkriptleri ve takvim `google_archive` tablosunda
+  kalıcı birikir. İlk bağlantıdan sonra geçmiş, uygulama açıkken arka planda parça parça indirilir (kaldığı yerden devam
+  eder); sonra yeni gelenler otomatik eklenir. Asistan geçmişe dönük sorularda arşivde arar (Gemini araç çağrısı).
+  Google sayfası → Arşiv sekmesinden ilerleme görülür ve doğrudan aranabilir. Bağlantı sunucuda saklandığından tüm
+  cihazlarda tek seferlik giriş yeterlidir.
 
 ## Vercel'e kurulum
 1. Repo'yu Vercel'e import et (Framework: Next.js).

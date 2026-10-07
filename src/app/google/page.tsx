@@ -11,9 +11,9 @@ import { Skeleton } from "@/components/fx";
 import { Icon, Segmented } from "@/components/ui";
 import { spring } from "@/lib/motion";
 import { iso, newTodo } from "@/lib/todo";
-import type { GChatSpace, GEvent, GMail, GMeeting, GoogleSnapshot } from "@/lib/google-types";
+import type { ArchiveHit, ArchiveProgress, ArchiveSource, GChatSpace, GEvent, GMail, GMeeting, GoogleSnapshot } from "@/lib/google-types";
 
-type Tab = "calendar" | "gmail" | "chat" | "meet";
+type Tab = "calendar" | "gmail" | "chat" | "meet" | "archive";
 
 // ------------------------------------------------------------------ zaman yardımcıları
 const hm = (s: string) => new Date(s).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
@@ -56,7 +56,7 @@ function Avatar({ name, size = 40 }: { name: string; size?: number }) {
 
 // ------------------------------------------------------------------ sayfa
 export default function GooglePage() {
-  const { status, syncing, error, sync, disconnect } = useGoogle();
+  const { status, syncing, error, sync, disconnect, archive } = useGoogle();
   const { toast } = usePeriod();
   const [tab, setTab] = useState<Tab>("calendar");
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
@@ -111,7 +111,7 @@ export default function GooglePage() {
               </a>
             </div>
           )}
-          <Hero snap={status.snapshot ?? null} email={status.account?.email ?? ""} picture={status.account?.picture} syncing={syncing} onSync={() => sync(true)} error={error} />
+          <Hero snap={status.snapshot ?? null} email={status.account?.email ?? ""} picture={status.account?.picture} syncing={syncing} onSync={() => sync(true)} error={error} archive={archive} onArchive={() => setTab("archive")} />
           {status.snapshot ? (
             <>
               <NextUp snap={status.snapshot} />
@@ -123,6 +123,7 @@ export default function GooglePage() {
                   { value: "gmail", label: <TabLabel icon="mail" text="Gmail" n={status.snapshot.gmail.unread} /> },
                   { value: "chat", label: <TabLabel icon="chat" text="Chat" /> },
                   { value: "meet", label: <TabLabel icon="video" text="Meet" /> },
+                  { value: "archive", label: <TabLabel icon="history" text="Arşiv" /> },
                 ]}
               />
               <AnimatePresence mode="wait">
@@ -131,6 +132,7 @@ export default function GooglePage() {
                   {tab === "gmail" && <GmailTab snap={status.snapshot} />}
                   {tab === "chat" && <ChatTab snap={status.snapshot} />}
                   {tab === "meet" && <MeetTab snap={status.snapshot} />}
+                  {tab === "archive" && <ArchiveTab />}
                 </motion.div>
               </AnimatePresence>
             </>
@@ -162,7 +164,7 @@ export default function GooglePage() {
   );
 }
 
-function TabLabel({ icon, text, n }: { icon: "calendar" | "mail" | "chat" | "video"; text: string; n?: number }) {
+function TabLabel({ icon, text, n }: { icon: "calendar" | "mail" | "chat" | "video" | "history"; text: string; n?: number }) {
   return (
     <span className="inline-flex items-center justify-center gap-1.5">
       <Icon name={icon} size={16} className="hidden sm:block" />
@@ -268,7 +270,25 @@ function GoogleMark({ size = 24 }: { size?: number }) {
 }
 
 // ------------------------------------------------------------------ üst kart
-function Hero({ snap, email, picture, syncing, onSync, error }: { snap: GoogleSnapshot | null; email: string; picture?: string; syncing: boolean; onSync: () => void; error: string | null }) {
+function Hero({
+  snap,
+  email,
+  picture,
+  syncing,
+  onSync,
+  error,
+  archive,
+  onArchive,
+}: {
+  snap: GoogleSnapshot | null;
+  email: string;
+  picture?: string;
+  syncing: boolean;
+  onSync: () => void;
+  error: string | null;
+  archive: ArchiveProgress | null;
+  onArchive: () => void;
+}) {
   const today = iso(new Date());
   const todayEvents = snap?.calendar.items.filter((e) => dayKey(e.start) === today && e.response !== "declined") ?? [];
   const [, tick] = useState(0);
@@ -315,6 +335,11 @@ function Hero({ snap, email, picture, syncing, onSync, error }: { snap: GoogleSn
               {c}
             </motion.span>
           ))}
+          {archive && (
+            <motion.button whileTap={{ scale: 0.95 }} onClick={onArchive} className="glass-on-color rounded-full px-3 py-1.5 text-sm font-bold">
+              📚 {archive.stats.total.toLocaleString("tr-TR")} kayıt hafızada{allDone(archive) ? "" : " · indiriliyor"}
+            </motion.button>
+          )}
         </div>
       )}
       {error && <div className="relative mt-4 rounded-2xl bg-black/20 px-3 py-2 text-sm font-semibold">⚠️ {error}</div>}
@@ -670,6 +695,152 @@ function Empty({ emoji, text }: { emoji: string; text: string }) {
     <div className="clay flex flex-col items-center gap-2 px-6 py-10 text-center">
       <div className="text-4xl">{emoji}</div>
       <div className="text-sm font-semibold text-ink-2">{text}</div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Arşiv (geriye dönük hafıza)
+const allDone = (a: ArchiveProgress) => (["gmail", "chat", "meet", "calendar"] as const).every((k) => a.done[k]);
+const SRC: Record<ArchiveSource, { icon: string; label: string; unit: string }> = {
+  gmail: { icon: "✉️", label: "Gmail", unit: "e-posta" },
+  chat: { icon: "💬", label: "Chat", unit: "mesaj" },
+  meet: { icon: "🎥", label: "Meet", unit: "toplantı" },
+  calendar: { icon: "📅", label: "Takvim", unit: "etkinlik" },
+};
+const monthYear = (s: string) => new Date(s).toLocaleDateString("tr-TR", { month: "long", year: "numeric" });
+
+function ArchiveTab() {
+  const { archive, archiving, clearArchive } = useGoogle();
+  const { ask } = useAssistant();
+  const [q, setQ] = useState("");
+  const [src, setSrc] = useState<ArchiveSource | "">("");
+  const [hits, setHits] = useState<ArchiveHit[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const run = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setLoading(true);
+    try {
+      const p = new URLSearchParams({ q });
+      if (src) p.set("source", src);
+      const r = await fetch(`/api/google/archive?${p}`, { cache: "no-store" });
+      setHits(r.ok ? (await r.json()).hits : []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="clay p-5">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl">📚</span>
+          <div className="min-w-0 flex-1">
+            <div className="text-lg font-extrabold">Hafıza</div>
+            <div className="text-sm text-ink-2">
+              Geçmiş tüm e-postalar, Chat mesajları, toplantı transkriptleri ve takvim kalıcı olarak saklanır; asistan geçmişe dönük sorularda burada arar.
+            </div>
+          </div>
+        </div>
+        {archive ? (
+          <>
+            <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+              {(Object.keys(SRC) as ArchiveSource[]).map((k) => {
+                const s = archive.stats.bySource[k];
+                const done = archive.done[k];
+                return (
+                  <div key={k} className="clay-sm rounded-2xl p-3">
+                    <div className="flex items-center justify-between text-xs font-bold text-ink-3">
+                      <span>
+                        {SRC[k].icon} {SRC[k].label}
+                      </span>
+                      {done ? <span className="text-ok">✓ tamam</span> : <span className="text-blue">indiriliyor</span>}
+                    </div>
+                    <div className="mt-1 text-xl font-extrabold tabular-nums">{(s?.count ?? 0).toLocaleString("tr-TR")}</div>
+                    <div className="text-[11px] text-ink-3">{s ? `${SRC[k].unit} · ${monthYear(s.oldest)}'den beri` : SRC[k].unit}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-3">
+              {archiving || !allDone(archive) ? (
+                <span className="flex items-center gap-1.5 font-semibold text-blue">
+                  <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="inline-block h-3 w-3 rounded-full border-2 border-blue border-t-transparent" />
+                  Geçmiş indiriliyor — uygulama açıkken arka planda sürer; kapatırsan kaldığı yerden devam eder.
+                </span>
+              ) : (
+                <span className="font-semibold text-ok">Tüm geçmiş indirildi; yeni gelenler otomatik eklenir.</span>
+              )}
+              {archive.lastError && <span className="w-full break-words text-warn">⚠️ {archive.lastError}</span>}
+            </div>
+          </>
+        ) : (
+          <div className="mt-4">
+            <Skeleton className="h-20 rounded-2xl" />
+          </div>
+        )}
+      </div>
+
+      <form onSubmit={run} className="clay-pressed flex items-center gap-2 rounded-full p-1.5 pl-4">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Arşivde ara: kişi, konu, ürün, kod…" className="min-w-0 flex-1 bg-transparent py-2 text-[15px] outline-none placeholder:text-ink-3" />
+        <select value={src} onChange={(e) => setSrc(e.target.value as ArchiveSource | "")} className="rounded-full bg-transparent px-1 py-2 text-xs font-bold text-ink-2 outline-none" aria-label="Kaynak">
+          <option value="">Tümü</option>
+          {(Object.keys(SRC) as ArchiveSource[]).map((k) => (
+            <option key={k} value={k}>
+              {SRC[k].label}
+            </option>
+          ))}
+        </select>
+        <motion.button whileTap={{ scale: 0.92 }} className="clay-color grid h-10 w-10 shrink-0 place-items-center rounded-full bg-blue text-white" aria-label="Ara">
+          {loading ? <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="inline-block h-4 w-4 rounded-full border-2 border-white border-t-transparent" /> : "🔎"}
+        </motion.button>
+      </form>
+
+      {hits && (
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between px-1 text-sm font-bold text-ink-2">
+            <span>{hits.length ? `${hits.length} sonuç` : "Sonuç yok"}</span>
+            {q.trim() && (
+              <button onClick={() => ask(`Arşivde "${q.trim()}" hakkında ne var? Kronolojik özetle; kim ne zaman ne demiş, açık kalan konu var mı?`)} className="text-xs font-bold text-blue">
+                ✨ Asistana özetlet
+              </button>
+            )}
+          </div>
+          {hits.map((h, i) => (
+            <motion.a
+              key={`${h.source}:${h.id}`}
+              href={h.link}
+              target="_blank"
+              rel="noreferrer"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: Math.min(i, 10) * 0.03 }}
+              className="clay-sm block rounded-2xl p-3.5"
+            >
+              <div className="flex items-center gap-2 text-xs text-ink-3">
+                <span>{SRC[h.source].icon}</span>
+                <span className="font-bold">{SRC[h.source].label}</span>
+                <span>·</span>
+                <span>{new Date(h.ts).toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" })}</span>
+                <span className="min-w-0 truncate">· {h.who}</span>
+              </div>
+              <div className="mt-0.5 truncate font-extrabold">{h.title}</div>
+              <div className="mt-0.5 line-clamp-3 whitespace-pre-line text-sm text-ink-2">{h.excerpt}</div>
+            </motion.a>
+          ))}
+        </div>
+      )}
+
+      <div className="flex justify-end px-1">
+        <button
+          onClick={async () => {
+            if (confirm("Arşiv (hafıza) silinsin mi? Bağlantı kalır; geçmiş baştan indirilir.")) await clearArchive();
+          }}
+          className="text-xs font-bold text-ink-3 underline"
+        >
+          Arşivi sil ve baştan indir
+        </button>
+      </div>
     </div>
   );
 }
