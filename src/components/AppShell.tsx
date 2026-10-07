@@ -8,6 +8,7 @@ import { periodLabel, periodShort } from "@/lib/period";
 import { NotificationBell } from "./Notifications";
 import { PeriodPicker } from "./PeriodPicker";
 import { ThemeToggle } from "./Theme";
+import { PenGlyph, useNotes } from "./notes/NotesPanel";
 import { usePeriod } from "./PeriodProvider";
 import { Icon } from "./ui";
 
@@ -101,6 +102,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <SaveDot />
           <ThemeToggle className="clay-sm" />
+          <NotesButton />
           <NotificationBell />
           <motion.button
             whileTap={{ scale: 0.95 }}
@@ -171,6 +173,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
 
+      {/* Mobil: yüzen not düğmesi (sol alt) */}
+      <MobileNotesButton />
+
       <PeriodPicker open={picker} onClose={() => setPicker(false)} />
 
       <AnimatePresence>
@@ -187,6 +192,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function NotesButton() {
+  const { toggle } = useNotes();
+  return (
+    <motion.button
+      whileTap={{ scale: 0.9 }}
+      onClick={toggle}
+      className="clay-sm hidden h-11 w-11 shrink-0 place-items-center rounded-full sm:grid"
+      aria-label="Notlar"
+      title="Notlar (N · Alt+N)"
+    >
+      <PenGlyph />
+    </motion.button>
+  );
+}
+
+function MobileNotesButton() {
+  const { toggle } = useNotes();
+  return (
+    <motion.button
+      whileTap={{ scale: 0.9 }}
+      onClick={toggle}
+      className="glass fixed bottom-28 left-5 z-30 grid h-14 w-14 place-items-center rounded-full text-ink sm:hidden"
+      aria-label="Notlar"
+    >
+      <PenGlyph />
+    </motion.button>
   );
 }
 

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActionEditor, type ActionDraft } from "@/components/ActionEditor";
 import { Celebration } from "@/components/Celebration";
 import { ItemCard } from "@/components/ItemCard";
+import { PenGlyph, useNotes } from "@/components/notes/NotesPanel";
 import { usePeriod, type Focus } from "@/components/PeriodProvider";
 import { Bar, Chip, Icon, Ring, Segmented } from "@/components/ui";
 import { AREAS, TOTAL_ITEMS, areaByCode, tintOf, type Area } from "@/lib/checklist";
@@ -397,6 +398,7 @@ function AreaDetail({
   onNext: () => void;
 }) {
   const { update, focus } = usePeriod();
+  const { openNotes } = useNotes();
   const p = areaProgress(data, area);
   const dl = deadlineInfo(data.period, area);
   const [info, setInfo] = useState(false);
@@ -473,6 +475,9 @@ function AreaDetail({
       ))}
 
       <div className="flex flex-wrap gap-3 pt-1">
+        <button onClick={() => openNotes({ areaCode: area.code })} className="clay-sm flex items-center gap-2 rounded-full px-5 py-3 font-bold text-ink-2">
+          <PenGlyph /> {area.code} için not al
+        </button>
         <button onClick={markAll} className="clay-sm flex items-center gap-2 rounded-full px-5 py-3 font-bold text-ink-2">
           <Icon name="check" size={18} /> Boşları tamam işaretle
         </button>

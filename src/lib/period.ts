@@ -43,6 +43,7 @@ export function newPeriod(period: string): PeriodData {
     signoffs: { preparer: { name: "Batuhan Başar", date: "" }, control: blank, preApproval: blank, finalApproval: blank, closing: blank },
     items,
     actions: [],
+    notes: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -59,6 +60,7 @@ export function normalizePeriod(p: Partial<PeriodData> & { period: string }): Pe
     signoffs: { ...base.signoffs, ...(p.signoffs ?? {}) },
     items,
     actions: p.actions ?? [],
+    notes: p.notes ?? [],
   } as PeriodData;
 }
 

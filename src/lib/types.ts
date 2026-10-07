@@ -51,6 +51,7 @@ export interface PeriodData {
   };
   items: Record<string, ItemState>;
   actions: ActionRow[];
+  notes: Note[];
   createdAt: string;
   updatedAt: string;
 }
@@ -67,4 +68,33 @@ export interface PeriodSummary {
 
 export interface AppState {
   activePeriod: string | null;
+}
+
+// ---------------------------------------------------------------- Notlar
+export type InkTool = "pen" | "marker";
+export type InkColor = "ink" | "blue" | "red" | "green" | "orange" | "yellow";
+
+export interface Stroke {
+  tool: InkTool;
+  color: InkColor;
+  size: number; // mantıksal birim (sayfa genişliği 800)
+  pen: boolean; // gerçek kalem basıncı var mı
+  pts: number[]; // düz dizi: x, y, basınç, x, y, basınç…
+}
+
+export interface NoteInk {
+  strokes: Stroke[];
+  height: number; // mantıksal yükseklik
+  paper: "lined" | "grid" | "blank";
+}
+
+export interface Note {
+  id: string;
+  title: string;
+  text: string;
+  ink: NoteInk;
+  areaCode?: string;
+  mode: "text" | "ink";
+  createdAt: string;
+  updatedAt: string;
 }

@@ -3,6 +3,7 @@ import { Plus_Jakarta_Sans } from "next/font/google";
 import { AppShell } from "@/components/AppShell";
 import { PeriodProvider } from "@/components/PeriodProvider";
 import { themeScript } from "@/components/Theme";
+import { NotesProvider } from "@/components/notes/NotesPanel";
 import "./globals.css";
 
 const jakarta = Plus_Jakarta_Sans({
@@ -36,7 +37,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="font-sans antialiased">
         <PeriodProvider>
-          <AppShell>{children}</AppShell>
+          <NotesProvider>
+            <AppShell>{children}</AppShell>
+          </NotesProvider>
         </PeriodProvider>
       </body>
     </html>
