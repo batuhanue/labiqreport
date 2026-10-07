@@ -114,8 +114,24 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
   const [sendInk, setSendInk] = useState(true);
   const [status, setStatus] = useState<{ configured: boolean; model: string } | null>(null);
   const [view, setView] = useState<"chat" | "knowledge">("chat");
+  const [diag, setDiag] = useState<Diag | null>(null);
+  const runDiag = useCallback(async () => {
+    setDiag({ loading: true });
+    try {
+      const r = await fetch("/api/assistant?test=1", { cache: "no-store" });
+      setDiag(await r.json());
+    } catch (e) {
+      setDiag({ testError: `Sunucuya ulaşılamadı: ${(e as Error).message}` });
+    }
+    requestAnimationFrame(() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }));
+  }, []);
   const [mounted, setMounted] = useState(false);
   const abort = useRef<AbortController | null>(null);
+  const userStopped = useRef(false);
+  const stop = () => {
+    userStopped.current = true;
+    abort.current?.abort();
+  };
   const scroller = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -173,16 +189,26 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
 
       const ctrl = new AbortController();
       abort.current = ctrl;
-      try {
+      userStopped.current = false;
+      const payload = {
+        messages: history.filter((m) => !m.error && m.text.trim()).map((m) => ({ role: m.role, text: m.text.replace(/\n\n_\((durduruldu|bağlantı kesildi)[^)]*\)_$/, "") })),
+        period: data?.period,
+        images,
+        deep,
+      };
+      const setBot = (patch: Partial<Msg>) => setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, ...patch } : x)));
+
+      /** tek istek: akışlı ya da akışsız. Dönen metni ve kullanım bilgisini verir. */
+      const run = async (stream: boolean) => {
         const res = await fetch("/api/assistant", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history.filter((m) => !m.error).map((m) => ({ role: m.role, text: m.text })), period: data?.period, images, deep }),
+          body: JSON.stringify({ ...payload, stream }),
           signal: ctrl.signal,
         });
         if (!res.ok || !res.body) {
-          const err = await res.json().catch(() => ({ error: `Hata ${res.status}` }));
-          throw new Error(err.error || `Hata ${res.status}`);
+          const err = await res.json().catch(() => ({ error: `Sunucu hatası ${res.status}` }));
+          throw Object.assign(new Error(err.error || `Sunucu hatası ${res.status}`), { server: true });
         }
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -196,13 +222,39 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
           try {
             usage = meta ? JSON.parse(meta) : undefined;
           } catch {}
-          setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text, usage } : x)));
+          setBot({ text, usage });
           scrollDown();
         }
-        if (!acc.split("\u001eMETA")[0].trim()) setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: "_(boş yanıt)_" } : x)));
+        return acc.split("\u001eMETA")[0];
+      };
+
+      try {
+        let text = "";
+        try {
+          text = await run(true);
+          // sunucu ile Gemini arasındaki akış koptuysa akışsız yeniden dene
+          if (/_\(bağlantı kesildi[^)]*\)_\s*$/.test(text)) throw new Error("akış koptu");
+        } catch (e) {
+          // kullanıcı durdurmadıysa ve sunucu açık bir hata vermediyse: akışsız yeniden dene
+          if (userStopped.current || (e as { server?: boolean }).server) throw e;
+          setBot({ text: "" });
+          text = await run(false);
+        }
+        if (!text.trim()) {
+          setBot({ text: "" });
+          text = await run(false);
+        }
+        if (!text.trim()) setBot({ text: "_(boş yanıt)_" });
       } catch (e) {
-        const aborted = (e as Error).name === "AbortError";
-        setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: aborted ? x.text + "\n\n_(durduruldu)_" : (e as Error).message, error: !aborted } : x)));
+        if (userStopped.current) {
+          setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: (x.text || "") + "\n\n_(durduruldu)_" } : x)));
+        } else {
+          const msg = (e as Error).message;
+          const friendly = /failed to fetch|network|load failed|aborted/i.test(msg)
+            ? "Sunucuyla bağlantı kurulamadı ya da yarıda kesildi. İnternet bağlantını kontrol edip tekrar dene; sürerse “Bağlantıyı test et”."
+            : msg;
+          setBot({ text: friendly, error: true });
+        }
       } finally {
         setBusy(false);
         abort.current = null;
@@ -225,7 +277,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (busy) abort.current?.abort();
+        if (busy) stop();
         else onClose();
       }
     };
@@ -307,6 +359,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
                       <p className="mx-auto mt-1 max-w-md text-sm text-ink-2">
                         İş tanımını, 10 başlığın güncel durumunu, anomali notlarını, aksiyonları, notlarını ve görevlerini okuyarak yanıt veririm.
                       </p>
+                      <button onClick={runDiag} className="mt-3 text-xs font-bold text-blue underline">Bağlantıyı test et</button>
                       <div className="mt-5 grid gap-2 text-left sm:grid-cols-2">
                         {SUGGEST.map((s, i) => (
                           <motion.button
@@ -326,8 +379,24 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
                     </motion.div>
                   )}
                   {msgs.map((m, i) => (
-                    <Bubble key={m.id} m={m} streaming={busy && i === msgs.length - 1} />
+                    <Bubble
+                      key={m.id}
+                      m={m}
+                      streaming={busy && i === msgs.length - 1}
+                      onRetry={
+                        m.error && i === msgs.length - 1 && !busy
+                          ? () => {
+                              const q = [...msgs.slice(0, i)].reverse().find((x) => x.role === "user")?.text;
+                              if (!q) return;
+                              setMsgs(msgs.slice(0, Math.max(0, i - 1)));
+                              setTimeout(() => send(q), 0);
+                            }
+                          : undefined
+                      }
+                      onTest={m.error ? runDiag : undefined}
+                    />
                   ))}
+                  {diag && <DiagCard d={diag} onClose={() => setDiag(null)} />}
                 </div>
 
                 {/* giriş */}
@@ -364,7 +433,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
                       style={{ fieldSizing: "content" } as React.CSSProperties}
                     />
                     {busy ? (
-                      <motion.button type="button" whileTap={{ scale: 0.9 }} onClick={() => abort.current?.abort()} className="clay-sm grid h-11 w-11 shrink-0 place-items-center rounded-full text-fail" aria-label="Durdur">
+                      <motion.button type="button" whileTap={{ scale: 0.9 }} onClick={stop} className="clay-sm grid h-11 w-11 shrink-0 place-items-center rounded-full text-fail" aria-label="Durdur">
                         <span className="h-3.5 w-3.5 rounded-sm bg-current" />
                       </motion.button>
                     ) : (
@@ -386,8 +455,58 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
   );
 }
 
+/* ------------------------------------------------------------------ bağlantı teşhisi */
+interface Diag {
+  loading?: boolean;
+  configured?: boolean;
+  model?: string;
+  keyHint?: string | null;
+  warning?: string;
+  listStatus?: number;
+  listError?: string;
+  modelFound?: boolean;
+  flashModels?: string[];
+  testStatus?: number;
+  testText?: string;
+  testError?: string;
+  ms?: number;
+  ok?: boolean;
+}
+
+function DiagCard({ d, onClose }: { d: Diag; onClose: () => void }) {
+  const row = (ok: boolean | undefined, label: string, detail?: React.ReactNode) => (
+    <div className="flex gap-2.5 py-1.5">
+      <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px] font-extrabold text-white ${ok ? "bg-ok" : ok === false ? "bg-fail" : "bg-na"}`}>{ok ? "✓" : ok === false ? "✗" : "–"}</span>
+      <div className="min-w-0 flex-1 text-sm">
+        <div className="font-bold">{label}</div>
+        {detail && <div className="break-words text-xs text-ink-2">{detail}</div>}
+      </div>
+    </div>
+  );
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="clay-sm relative rounded-[22px] p-4">
+      <button onClick={onClose} className="absolute right-3 top-3 text-ink-3" aria-label="Kapat">
+        <Icon name="close" size={14} />
+      </button>
+      <div className="mb-1 font-extrabold">🔌 Bağlantı testi</div>
+      {d.loading ? (
+        <div className="py-2 text-sm text-ink-3">Gemini'ye bağlanılıyor…</div>
+      ) : (
+        <>
+          {row(d.configured, "GEMINI_API_KEY tanımlı", d.configured ? d.keyHint : "Vercel → Settings → Environment Variables (Production) + Redeploy")}
+          {d.warning && row(false, "Anahtar biçimi", d.warning)}
+          {d.configured && row(d.listStatus === 200, "Anahtar geçerli", d.listStatus === 200 ? "Google model listesine erişildi" : `HTTP ${d.listStatus ?? "?"} · ${d.listError ?? ""}`)}
+          {d.configured && d.listStatus === 200 && row(d.modelFound, `Model: ${d.model}`, d.modelFound ? "Hesabında kullanılabilir" : `Hesapta bulunamadı. Mevcut Flash modelleri: ${(d.flashModels ?? []).join(", ") || "—"} · Vercel'de GEMINI_MODEL ile değiştirebilirsin`)}
+          {d.configured && row(d.ok, "Deneme isteği", d.ok ? `“${d.testText}” · ${d.ms} ms` : `HTTP ${d.testStatus ?? "?"} · ${d.testError ?? ""}`)}
+          {d.ok && <div className="mt-2 rounded-xl bg-tint-info px-3 py-2 text-xs">Bağlantı sağlam. Sorun sürerse yanıt süresi uzun olabilir; “Derin düşün”ü kapatıp tekrar dene.</div>}
+        </>
+      )}
+    </motion.div>
+  );
+}
+
 /* ------------------------------------------------------------------ mesaj balonu */
-function Bubble({ m, streaming }: { m: Msg; streaming: boolean }) {
+function Bubble({ m, streaming, onRetry, onTest }: { m: Msg; streaming: boolean; onRetry?: () => void; onTest?: () => void }) {
   const { body, tasks } = useMemo(() => (m.role === "assistant" ? splitTasks(m.text) : { body: m.text, tasks: [] }), [m]);
   const html = useMemo(() => (m.role === "assistant" ? md.parse(body) : ""), [m.role, body]);
   const [copied, setCopied] = useState(false);
@@ -413,7 +532,23 @@ function Bubble({ m, streaming }: { m: Msg; streaming: boolean }) {
               ))}
             </div>
           ) : m.error ? (
-            <div className="text-sm font-semibold text-fail">⚠️ {m.text}</div>
+            <div>
+              <div className="text-sm font-semibold text-fail">⚠️ {m.text}</div>
+              {(onRetry || onTest) && (
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  {onRetry && (
+                    <button onClick={onRetry} className="clay-dark rounded-full px-3.5 py-1.5 text-xs font-bold">
+                      Tekrar dene
+                    </button>
+                  )}
+                  {onTest && (
+                    <button onClick={onTest} className="clay-sm rounded-full px-3.5 py-1.5 text-xs font-bold">
+                      Bağlantıyı test et
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           ) : (
             <div className="md text-[15px] leading-relaxed" dangerouslySetInnerHTML={{ __html: html }} />
           )}

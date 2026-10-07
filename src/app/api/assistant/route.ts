@@ -16,21 +16,82 @@ interface Img {
   label: string;
 }
 
-/** GET: yapılandırma durumu (anahtar var mı, model) */
-export async function GET() {
-  return NextResponse.json({ configured: !!process.env.GEMINI_API_KEY, model: GEMINI_MODEL });
+const BASE = () => process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
+const modelUrl = (method: string) => `${BASE()}/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:${method}`;
+
+async function errorText(r: Response) {
+  const t = await r.text().catch(() => "");
+  try {
+    const j = JSON.parse(t);
+    return j.error?.message ?? t;
+  } catch {
+    return t;
+  }
 }
 
-/** POST: soruyu bağlamla birlikte Gemini'ye gönderir, yanıtı düz metin akışı olarak döndürür. */
-export async function POST(req: Request) {
+/**
+ * GET: yapılandırma durumu.
+ * GET ?test=1: bağlantı teşhisi — anahtar geçerli mi, model hesapta var mı, küçük bir deneme isteği ne döndürüyor.
+ */
+export async function GET(req: Request) {
   const key = process.env.GEMINI_API_KEY;
-  if (!key) return bad("GEMINI_API_KEY tanımlı değil. Vercel → Settings → Environment Variables'a ekleyin.", 503);
+  const configured = !!key;
+  if (new URL(req.url).searchParams.get("test") !== "1" || !key) {
+    return NextResponse.json({ configured, model: GEMINI_MODEL, keyHint: key ? `${key.slice(0, 4)}…${key.slice(-4)} (${key.length} karakter)` : null });
+  }
+  const out: Record<string, unknown> = { configured, model: GEMINI_MODEL, keyHint: `${key.slice(0, 4)}…${key.slice(-4)} (${key.length} karakter)` };
+  if (key.trim() !== key) out.warning = "Anahtarın başında/sonunda boşluk var — Vercel'de silip yeniden yapıştırın.";
 
-  const body = (await req.json().catch(() => null)) as { messages?: Msg[]; period?: string; images?: Img[]; deep?: boolean } | null;
+  // 1) modeller
+  try {
+    const r = await fetch(`${BASE()}/v1beta/models?pageSize=1000`, { headers: { "x-goog-api-key": key.trim() }, cache: "no-store" });
+    out.listStatus = r.status;
+    if (r.ok) {
+      const j = (await r.json()) as { models?: { name: string }[] };
+      const names = (j.models ?? []).map((m) => m.name.replace(/^models\//, ""));
+      out.modelFound = names.includes(GEMINI_MODEL);
+      out.flashModels = names.filter((n) => /flash/i.test(n)).slice(-12);
+    } else out.listError = (await errorText(r)).slice(0, 400);
+  } catch (e) {
+    out.listError = String(e);
+  }
+
+  // 2) küçük deneme (akışsız)
+  const t0 = Date.now();
+  try {
+    const r = await fetch(modelUrl("generateContent"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key.trim() },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "Bağlantı testi: yalnızca 'Hazırım' yaz." }] }],
+        generationConfig: { thinkingConfig: { thinkingLevel: "low" }, maxOutputTokens: 64 },
+      }),
+      cache: "no-store",
+    });
+    out.testStatus = r.status;
+    out.ms = Date.now() - t0;
+    if (r.ok) {
+      const j = await r.json();
+      out.testText = (j.candidates?.[0]?.content?.parts ?? []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text ?? "").join("");
+      out.ok = true;
+    } else out.testError = (await errorText(r)).slice(0, 600);
+  } catch (e) {
+    out.testError = String(e);
+  }
+  return NextResponse.json(out);
+}
+
+/** POST: soruyu bağlamla birlikte Gemini'ye gönderir; yanıtı düz metin akışı (veya stream:false ile tek parça) döndürür. */
+export async function POST(req: Request) {
+  const key = process.env.GEMINI_API_KEY?.trim();
+  if (!key) return bad("GEMINI_API_KEY tanımlı değil. Vercel → Settings → Environment Variables'a ekleyip Redeploy yapın.", 503);
+
+  const body = (await req.json().catch(() => null)) as { messages?: Msg[]; period?: string; images?: Img[]; deep?: boolean; stream?: boolean } | null;
   const messages = (body?.messages ?? []).filter((x) => x.text?.trim()).slice(-20);
   if (!messages.length || messages[messages.length - 1].role !== "user") return bad("Soru boş");
   const period = body?.period && PERIOD_RE.test(body.period) ? body.period : null;
-  const images = (body?.images ?? []).filter((x) => /^image\/(png|jpeg|webp)$/.test(x.mime) && x.data.length < 2_500_000).slice(0, 8);
+  const images = (body?.images ?? []).filter((x) => /^image\/(png|jpeg|webp)$/.test(x.mime) && x.data.length < 1_500_000).slice(0, 6);
+  const streaming = body?.stream !== false;
 
   let system: string;
   try {
@@ -51,32 +112,46 @@ export async function POST(req: Request) {
     return { role: x.role === "assistant" ? "model" : "user", parts };
   });
 
-  const upstream = await fetch(`${process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com"}/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:streamGenerateContent?alt=sse`, {
+  const payload = JSON.stringify({
+    system_instruction: { parts: [{ text: system }] },
+    contents,
+    // Gemini 3: temperature/top_p kullanılmaz; düşünme seviyesi thinkingLevel ile
+    generationConfig: { thinkingConfig: { thinkingLevel: body?.deep ? "high" : "low" }, maxOutputTokens: 8192 },
+  });
+
+  // Not: istemcinin iptal sinyali Gemini isteğine bağlanmaz (Vercel'de erken kesmeye yol açabiliyordu).
+  const upstream = await fetch(streaming ? modelUrl("streamGenerateContent?alt=sse") : modelUrl("generateContent"), {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: system }] },
-      contents,
-      // Gemini 3: temperature/top_p kullanılmaz; düşünme seviyesi thinkingLevel ile
-      generationConfig: { thinkingConfig: { thinkingLevel: body?.deep ? "high" : "low" }, maxOutputTokens: 8192 },
-    }),
-    signal: req.signal,
+    body: payload,
+    cache: "no-store",
   }).catch((e) => e as Error);
 
   if (upstream instanceof Error) return bad(`Gemini'ye ulaşılamadı: ${upstream.message}`, 502);
-  if (!upstream.ok || !upstream.body) {
-    const t = await upstream.text().catch(() => "");
-    let msg = t;
-    try {
-      msg = JSON.parse(t).error?.message ?? t;
-    } catch {}
-    return bad(`Gemini hatası (${upstream.status}): ${msg.slice(0, 400)}`, 502);
+  if (!upstream.ok || !upstream.body) return bad(`Gemini hatası (${upstream.status}): ${(await errorText(upstream)).slice(0, 500)}`, 502);
+
+  const enc = new TextEncoder();
+  const metaOf = (u: Record<string, number> | null) =>
+    u ? `\u001eMETA${JSON.stringify({ prompt: u.promptTokenCount ?? 0, cached: u.cachedContentTokenCount ?? 0, output: (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0) })}` : "";
+  const textOf = (ev: { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[]; promptFeedback?: { blockReason?: string } }) => {
+    let t = "";
+    for (const p of ev.candidates?.[0]?.content?.parts ?? []) if (p.text && !p.thought) t += p.text;
+    const reason = ev.candidates?.[0]?.finishReason;
+    if (reason && !["STOP", "MAX_TOKENS", "FINISH_REASON_UNSPECIFIED"].includes(reason)) t += `\n\n_(yanıt durduruldu: ${reason})_`;
+    if (ev.promptFeedback?.blockReason) t += `\n\n_(istek engellendi: ${ev.promptFeedback.blockReason})_`;
+    return t;
+  };
+
+  // akışsız (yedek yol)
+  if (!streaming) {
+    const j = await upstream.json().catch(() => ({}));
+    const text = textOf(j) || "_(boş yanıt)_";
+    return new Response(text + metaOf(j.usageMetadata ?? null), { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
   }
 
   // SSE → düz metin akışı (düşünce parçaları atlanır)
   const reader = upstream.body.getReader();
   const dec = new TextDecoder();
-  const enc = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let buf = "";
@@ -96,23 +171,16 @@ export async function POST(req: Request) {
             try {
               const ev = JSON.parse(json);
               if (ev.usageMetadata) usage = ev.usageMetadata;
-              const parts = ev.candidates?.[0]?.content?.parts ?? [];
-              for (const p of parts) if (p.text && !p.thought) controller.enqueue(enc.encode(p.text));
-              const reason = ev.candidates?.[0]?.finishReason;
-              if (reason && reason !== "STOP" && reason !== "MAX_TOKENS") controller.enqueue(enc.encode(`\n\n_(yanıt durduruldu: ${reason})_`));
+              if (ev.error) controller.enqueue(enc.encode(`\n\n⚠️ Gemini: ${ev.error.message ?? "hata"}`));
+              const t = textOf(ev);
+              if (t) controller.enqueue(enc.encode(t));
             } catch {}
           }
         }
-      } catch {
-        // istemci iptal etti
+      } catch (e) {
+        controller.enqueue(enc.encode(`\n\n_(bağlantı kesildi: ${e instanceof Error ? e.message : e})_`));
       } finally {
-        // kullanım bilgisi (önbellekten gelen token dahil) — istemci ayıklar
-        if (usage) {
-          const meta = { prompt: usage.promptTokenCount ?? 0, cached: usage.cachedContentTokenCount ?? 0, output: (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0) };
-          try {
-            controller.enqueue(enc.encode(`\u001eMETA${JSON.stringify(meta)}`));
-          } catch {}
-        }
+        controller.enqueue(enc.encode(metaOf(usage)));
         controller.close();
       }
     },
@@ -120,5 +188,5 @@ export async function POST(req: Request) {
       reader.cancel().catch(() => {});
     },
   });
-  return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Model": GEMINI_MODEL } });
+  return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no", "X-Model": GEMINI_MODEL } });
 }
