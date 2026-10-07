@@ -162,6 +162,11 @@ export async function buildContext(viewPeriod?: string | null) {
   return L.join("\n");
 }
 
+/**
+ * Sıra önemli: sabit kurallar + bilgi dosyaları BAŞTA, değişen canlı veri SONDA.
+ * Böylece Gemini'nin örtük önbelleği (implicit caching) ~30k token'lık sabit öneki her soruda yeniden kullanır;
+ * dosyaların sonuna eklenen içerik de öneki bozmaz.
+ */
 export function systemPrompt(knowledge: string, context: string) {
   return `Sen Batuhan Başar'ın kişisel yapay zekâ iş asistanısın. Türkçe, kısa, net ve aksiyona dönük yanıt ver.
 Aşağıda iki kaynak var: (1) BİLGİ DOSYALARI — Batuhan'ın kim olduğu, şirketi, rolü ve sınırı, iş tanımı, takvimi, atanmış görevleri, açık bulguları, kişiler ve kontrol yöntemleri; (2) CANLI VERİ — uygulamadaki güncel durum.

@@ -80,6 +80,7 @@ export async function POST(req: Request) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let buf = "";
+      let usage: Record<string, number> | null = null;
       try {
         for (;;) {
           const { done, value } = await reader.read();
@@ -94,6 +95,7 @@ export async function POST(req: Request) {
             if (!json || json === "[DONE]") continue;
             try {
               const ev = JSON.parse(json);
+              if (ev.usageMetadata) usage = ev.usageMetadata;
               const parts = ev.candidates?.[0]?.content?.parts ?? [];
               for (const p of parts) if (p.text && !p.thought) controller.enqueue(enc.encode(p.text));
               const reason = ev.candidates?.[0]?.finishReason;
@@ -104,6 +106,13 @@ export async function POST(req: Request) {
       } catch {
         // istemci iptal etti
       } finally {
+        // kullanım bilgisi (önbellekten gelen token dahil) — istemci ayıklar
+        if (usage) {
+          const meta = { prompt: usage.promptTokenCount ?? 0, cached: usage.cachedContentTokenCount ?? 0, output: (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0) };
+          try {
+            controller.enqueue(enc.encode(`\u001eMETA${JSON.stringify(meta)}`));
+          } catch {}
+        }
         controller.close();
       }
     },

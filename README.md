@@ -38,6 +38,9 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   yüklenebilir) ile canlı veriyi birlikte okur: 10 başlığın iki hastane için güncel durumu, madde notları / anomaliler,
   aksiyonlar, dönem notları (el yazısı notlar görüntü olarak gönderilir), kişisel görevler, terminler ve geçmiş dönem özeti.
   Yanıtlar akışla gelir; önerdiği görevler tek tuşla Görevler'e eklenir. Alan sayfasında "✨ Asistana sor" düğmesi var.
+  Maliyet: sabit kurallar + bilgi dosyaları isteğin başında, değişen canlı veri sonda durur; Gemini'nin örtük önbelleği
+  bu ~30k token'lık öneki otomatik yeniden kullanır (indirimli). Her yanıtın altında "Nk token · Mk önbellekten ⚡" görünür.
+  Dosyaların sonuna ekleme yapmak öneki bozmaz.
   Kurulum: Vercel'e `GEMINI_API_KEY` (Google AI Studio → API key) ekleyin; model `GEMINI_MODEL` ile değiştirilebilir.
 - **Push bildirimleri:** Sağ üstteki zil → "Bildirimleri aç". Her sabah 09:00'da (Vercel Cron) aktif dönem için:
   yaklaşan/geçen rapor alanı terminleri, termini gelen/geciken aksiyonlar, Cuma 12:00 toplantı özeti ve ay başı

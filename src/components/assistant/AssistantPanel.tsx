@@ -28,6 +28,7 @@ interface Msg {
   text: string;
   error?: boolean;
   at: string;
+  usage?: { prompt: number; cached: number; output: number };
 }
 
 const LS_CHAT = "lq:chat";
@@ -190,10 +191,15 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
           const { done, value } = await reader.read();
           if (done) break;
           acc += dec.decode(value, { stream: true });
-          setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: acc } : x)));
+          const [text, meta] = acc.split("\u001eMETA");
+          let usage: Msg["usage"];
+          try {
+            usage = meta ? JSON.parse(meta) : undefined;
+          } catch {}
+          setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text, usage } : x)));
           scrollDown();
         }
-        if (!acc.trim()) setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: "_(boş yanıt)_" } : x)));
+        if (!acc.split("\u001eMETA")[0].trim()) setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: "_(boş yanıt)_" } : x)));
       } catch (e) {
         const aborted = (e as Error).name === "AbortError";
         setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: aborted ? x.text + "\n\n_(durduruldu)_" : (e as Error).message, error: !aborted } : x)));
@@ -414,6 +420,11 @@ function Bubble({ m, streaming }: { m: Msg; streaming: boolean }) {
           {streaming && m.text && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-blue align-middle" />}
         </div>
         {tasks.length > 0 && !streaming && <TaskSuggestions tasks={tasks} />}
+        {!streaming && m.usage && (
+          <span className="ml-2 text-[11px] font-semibold text-ink-3" title="Gemini örtük önbellek: sabit bilgi dosyaları tekrar ücretlendirilmez (indirimli)">
+            {Math.round(m.usage.prompt / 1000)}k token{m.usage.cached ? ` · ${Math.round(m.usage.cached / 1000)}k önbellekten ⚡` : ""}
+          </span>
+        )}
         {!streaming && m.text && !m.error && (
           <button
             onClick={() => {
