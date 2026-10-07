@@ -2,6 +2,7 @@ import "server-only";
 import webpush from "web-push";
 import { store, type StoredSub } from "./db";
 import { buildMessages, DEFAULT_PREFS, type NotifyMessage, type NotifyPrefs } from "./notify";
+import type { TodoStore } from "./todo";
 
 const pub = process.env.VAPID_PUBLIC_KEY || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "";
 const priv = process.env.VAPID_PRIVATE_KEY || "";
@@ -52,7 +53,8 @@ export async function runDaily(opts: { dry?: boolean; today?: Date } = {}) {
   const prefs = await getPrefs();
   const { activePeriod } = await s.getState();
   const data = activePeriod ? await s.getPeriod(activePeriod) : null;
-  const messages = buildMessages(data, prefs, { today: opts.today, activePeriod });
+  const todos = (await s.getKV<TodoStore>("todos"))?.todos ?? [];
+  const messages = buildMessages(data, prefs, { today: opts.today, activePeriod, todos });
   if (opts.dry || messages.length === 0 || !pushConfigured()) return { messages, result: null };
   return { messages, result: await sendToAll(messages) };
 }

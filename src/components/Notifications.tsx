@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { buildMessages, DEFAULT_PREFS, type NotifyMessage, type NotifyPrefs } from "@/lib/notify";
 import { usePeriod } from "./PeriodProvider";
+import { useTodos } from "./todos/TodoProvider";
 import { Icon, Sheet } from "./ui";
 
 interface PushInfo {
@@ -58,7 +59,8 @@ export function NotificationBell() {
   const [busy, setBusy] = useState(false);
 
   const prefs = info?.prefs ?? DEFAULT_PREFS;
-  const messages = useMemo(() => buildMessages(data, prefs), [data, prefs]);
+  const { store: todoStore } = useTodos();
+  const messages = useMemo(() => buildMessages(data, prefs, { todos: todoStore.todos }), [data, prefs, todoStore.todos]);
   const alertCount = messages.filter((m) => m.kind !== "friday").length;
 
   const load = useCallback(async () => {
@@ -258,6 +260,7 @@ export function NotificationBell() {
           <Toggle on={prefs.actions} onChange={(v) => savePrefs({ ...prefs, actions: v })} label="Aksiyon terminleri" sub="Termini bugün olan ve geciken açık aksiyonlar" />
           <Toggle on={prefs.friday} onChange={(v) => savePrefs({ ...prefs, friday: v })} label="Cuma toplantı özeti" sub="Cuma sabahı: kapanan / açık aksiyonlar, sorunlu maddeler" />
           <Toggle on={prefs.monthStart} onChange={(v) => savePrefs({ ...prefs, monthStart: v })} label="Ay başı hatırlatması" sub="Yeni ayın ilk günlerinde kapanışı başlat" />
+          <Toggle on={prefs.todos} onChange={(v) => savePrefs({ ...prefs, todos: v })} label="Kişisel görevler" sub="Bugün termini olan ve geciken görevlerim" />
         </div>
       </Sheet>
     </>

@@ -10,6 +10,7 @@ export async function PUT(req: Request) {
     actions: body.actions ?? DEFAULT_PREFS.actions,
     friday: body.friday ?? DEFAULT_PREFS.friday,
     monthStart: body.monthStart ?? DEFAULT_PREFS.monthStart,
+    todos: body.todos ?? DEFAULT_PREFS.todos,
   };
   return handle(async () => {
     await store().setKV("notify", prefs);

@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { PeriodProvider } from "@/components/PeriodProvider";
 import { themeScript } from "@/components/Theme";
 import { NotesProvider } from "@/components/notes/NotesPanel";
+import { TodoProvider } from "@/components/todos/TodoProvider";
 import "./globals.css";
 
 const jakarta = Plus_Jakarta_Sans({
@@ -37,9 +38,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="font-sans antialiased">
         <PeriodProvider>
-          <NotesProvider>
-            <AppShell>{children}</AppShell>
-          </NotesProvider>
+          <TodoProvider>
+            <NotesProvider>
+              <AppShell>{children}</AppShell>
+            </NotesProvider>
+          </TodoProvider>
         </PeriodProvider>
       </body>
     </html>

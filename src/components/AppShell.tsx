@@ -16,6 +16,7 @@ import { spring } from "@/lib/motion";
 
 const NAV = [
   { href: "/", label: "Denetim", icon: "home" as const },
+  { href: "/gorevler", label: "Görevler", icon: "todo" as const },
   { href: "/aksiyonlar", label: "Aksiyonlar", icon: "flag" as const },
   { href: "/analiz", label: "Analiz", icon: "chart" as const },
   { href: "/gecmis", label: "Geçmiş", icon: "history" as const },

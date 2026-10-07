@@ -2,6 +2,7 @@
 import { AREAS } from "./checklist";
 import { areaProgress, deadlineInfo, defaultPeriod, periodLabel } from "./period";
 import type { PeriodData } from "./types";
+import type { Todo } from "./todo";
 
 export interface NotifyPrefs {
   deadlines: boolean; // rapor alanı terminleri
@@ -9,12 +10,13 @@ export interface NotifyPrefs {
   actions: boolean; // aksiyon terminleri
   friday: boolean; // Cuma 12:00 toplantı özeti
   monthStart: boolean; // ay başı: yeni kapanış hatırlatması
+  todos: boolean; // kişisel görevler
 }
 
-export const DEFAULT_PREFS: NotifyPrefs = { deadlines: true, daysBefore: 2, actions: true, friday: true, monthStart: true };
+export const DEFAULT_PREFS: NotifyPrefs = { deadlines: true, daysBefore: 2, actions: true, friday: true, monthStart: true, todos: true };
 
 export interface NotifyMessage {
-  kind: "deadline" | "overdue" | "action" | "friday" | "month";
+  kind: "deadline" | "overdue" | "action" | "friday" | "month" | "todo";
   title: string;
   body: string;
   url: string;
@@ -34,7 +36,7 @@ const isoOf = (d: Date) =>
 export function buildMessages(
   data: PeriodData | null,
   prefs: NotifyPrefs,
-  opts: { today?: Date; activePeriod?: string | null } = {},
+  opts: { today?: Date; activePeriod?: string | null; todos?: Todo[] } = {},
 ): NotifyMessage[] {
   const today = opts.today ?? istanbulToday();
   const out: NotifyMessage[] = [];
@@ -53,6 +55,24 @@ export function buildMessages(
       });
     }
   }
+  if (prefs.todos && opts.todos?.length) {
+    const t = isoOf(today);
+    const open = opts.todos.filter((x) => !x.done && x.due);
+    const dueToday = open.filter((x) => x.due === t).sort((a, b) => a.priority - b.priority || (a.time ?? "99").localeCompare(b.time ?? "99"));
+    const late = open.filter((x) => x.due! < t);
+    if (dueToday.length || late.length) {
+      const top = [...late, ...dueToday].slice(0, 3).map((x) => `${x.time ? x.time + " " : ""}${x.title}`);
+      out.push({
+        kind: "todo",
+        title: `✅ Bugün ${dueToday.length} görev${late.length ? ` · ${late.length} gecikmiş` : ""}`,
+        body: top.join(" · ") + (dueToday.length + late.length > 3 ? " …" : ""),
+        url: "/gorevler",
+        tag: `todo-${t}`,
+        level: late.length ? "warn" : "info",
+      });
+    }
+  }
+
   if (!data) return out;
 
   if (prefs.deadlines) {
