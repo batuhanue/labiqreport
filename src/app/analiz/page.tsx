@@ -2,13 +2,14 @@
 
 import { motion } from "motion/react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { STATUSES } from "@/components/ActionEditor";
 import { usePeriod } from "@/components/PeriodProvider";
-import { EmptyState, Icon, Ring } from "@/components/ui";
+import { EmptyState, Icon, Ring, Sheet } from "@/components/ui";
 import { AREAS, HOSPITALS, TOTAL_ITEMS } from "@/lib/checklist";
 import { areaProgress, deadlineInfo, overallProgress, periodLabel, periodShort } from "@/lib/period";
-import type { PeriodData } from "@/lib/types";
+import type { PeriodData, PeriodStatus } from "@/lib/types";
 
 // Grafik serileri (doğrulanmış kategorik çift: CVD ΔE 30.8)
 const SERIES = { bursa: "#4F6BED", basaksehir: "#E8833A" } as const;
@@ -37,23 +38,166 @@ function Legend() {
   );
 }
 
-function Tile({ label, value, sub, emoji, tint, delay }: { label: string; value: string; sub?: string; emoji: string; tint: string; delay: number }) {
+function Tile({
+  label,
+  value,
+  sub,
+  emoji,
+  tint,
+  delay,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  emoji: string;
+  tint: string;
+  delay: number;
+  onClick: () => void;
+}) {
   return (
-    <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay }} className="clay flex items-center gap-3 p-4">
+    <motion.button
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay }}
+      whileHover={{ y: -3 }}
+      whileTap={{ scale: 0.96 }}
+      onClick={onClick}
+      className="clay group relative flex items-center gap-3 p-4 text-left"
+    >
       <div className="clay-color grid h-12 w-12 shrink-0 place-items-center text-2xl" style={{ background: tint, borderRadius: 16, ["--glow" as string]: "rgba(0,0,0,.12)" }}>
         {emoji}
       </div>
-      <div className="min-w-0">
-        <div className="text-xs font-bold text-ink-3">{label}</div>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-bold leading-tight text-ink-3">{label}</div>
         <div className="text-2xl font-extrabold leading-tight">{value}</div>
-        {sub && <div className="truncate text-xs text-ink-3">{sub}</div>}
+        {sub && <div className="line-clamp-2 text-xs leading-snug text-ink-3">{sub}</div>}
       </div>
-    </motion.div>
+      <Icon name="chevron" size={16} className="absolute right-3 top-3 text-ink-3 opacity-40 transition-opacity group-hover:opacity-100" />
+    </motion.button>
+  );
+}
+
+type Drill = "all" | "bursa" | "basaksehir" | "fail" | "overdue" | "status";
+const DRILL_TITLE: Record<Drill, string> = {
+  all: "Eksik maddeler",
+  bursa: "Bursa — eksik maddeler",
+  basaksehir: "Başakşehir — eksik maddeler",
+  fail: "Sorunlu işaretler",
+  overdue: "Termini geçen alanlar",
+  status: "Dönem durumu",
+};
+
+const MARK_BADGE: Record<string, { t: string; c: string }> = {
+  ok: { t: "Tamam", c: "bg-ok" },
+  fail: { t: "Sorun", c: "bg-fail" },
+  na: { t: "N/A", c: "bg-na" },
+  pending: { t: "Bekliyor", c: "bg-ink-3/60" },
+};
+
+/** Özet kutusuna tıklayınca açılan detay listesi. */
+function DrillSheet({ mode, data, onClose }: { mode: Drill | null; data: PeriodData; onClose: () => void }) {
+  const { update } = usePeriod();
+  const hs = mode === "bursa" ? (["bursa"] as const) : mode === "basaksehir" ? (["basaksehir"] as const) : (["bursa", "basaksehir"] as const);
+
+  const groups = AREAS.map((a) => ({
+    a,
+    items: a.items.filter((it) => {
+      const st = data.items[it.id];
+      if (mode === "fail") return hs.some((h) => st?.[h] === "fail");
+      return hs.some((h) => st?.[h] !== "ok" && st?.[h] !== "na");
+    }),
+  })).filter((g) => g.items.length);
+
+  const overdue = AREAS.map((a) => ({ a, d: deadlineInfo(data.period, a), p: areaProgress(data, a) })).filter(
+    (x) => x.d.days != null && x.d.days < 0 && x.p.both < x.a.items.length,
+  );
+
+  return (
+    <Sheet open={!!mode} onClose={onClose} title={mode ? DRILL_TITLE[mode] : ""} wide>
+      {mode === "status" ? (
+        <div className="grid grid-cols-3 gap-2">
+          {(["Taslak", "Ön Onay", "Son Onay"] as PeriodStatus[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => {
+                update((d) => ({ ...d, status: s }));
+                onClose();
+              }}
+              className={`rounded-2xl py-4 text-sm font-bold ${data.status === s ? "clay-dark" : "clay-sm"}`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      ) : mode === "overdue" ? (
+        overdue.length === 0 ? (
+          <div className="py-8 text-center text-ink-3">Termini geçen alan yok 🎉</div>
+        ) : (
+          <div className="space-y-2.5">
+            {overdue.map(({ a, d, p }) => (
+              <Link key={a.code} href={`/?alan=${a.code}`} className="clay-sm flex items-center gap-3 px-4 py-3">
+                <span className="text-2xl">{a.emoji}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold">{a.code} · {a.title}</div>
+                  <div className="text-xs text-ink-3">
+                    {a.deadlineLabel} · {d.dateText} · kalan {p.total * 2 - p.bursa - p.basaksehir} işaret
+                  </div>
+                </div>
+                <span className="whitespace-nowrap text-xs font-extrabold text-fail">⛔ {d.text}</span>
+              </Link>
+            ))}
+            <p className="pt-2 text-xs text-ink-3">Yetişmeyecek alan Cuma toplantısında söylenir, sessizce kaçırılmaz.</p>
+          </div>
+        )
+      ) : groups.length === 0 ? (
+        <div className="py-8 text-center text-ink-3">{mode === "fail" ? "Sorunlu işaret yok 🎉" : "Eksik madde yok, hepsi tamam 🎉"}</div>
+      ) : (
+        <div className="space-y-5">
+          {groups.map(({ a, items }) => (
+            <div key={a.code}>
+              <Link href={`/?alan=${a.code}`} className="mb-2 flex items-center gap-2 px-1 text-sm font-extrabold">
+                <span>{a.emoji}</span>
+                <span style={{ color: a.color }}>{a.code}</span>
+                <span className="min-w-0 truncate">{a.title}</span>
+                <span className="ml-auto text-xs font-bold text-ink-3">{items.length} madde</span>
+              </Link>
+              <div className="space-y-2">
+                {items.map((it) => {
+                  const st = data.items[it.id];
+                  return (
+                    <Link key={it.id} href={`/?alan=${a.code}`} className="clay-sm flex items-center gap-3 px-4 py-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-bold leading-snug">{it.text.trim()}</div>
+                        {st?.note && <div className="mt-0.5 line-clamp-2 text-xs text-ink-2">📝 {st.note}</div>}
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        {hs.map((h) => {
+                          const b = MARK_BADGE[st?.[h] ?? "pending"];
+                          return (
+                            <span key={h} className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-extrabold text-white ${b.c}`}>
+                              {h === "bursa" ? "BRS" : "BŞK"} · {b.t}
+                            </span>
+                          );
+                        })}
+                      </div>
+                      <Icon name="chevron" size={16} className="shrink-0 text-ink-3" />
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Sheet>
   );
 }
 
 function Analysis({ data }: { data: PeriodData }) {
   const { summaries } = usePeriod();
+  const router = useRouter();
+  const [drill, setDrill] = useState<Drill | null>(null);
   const prog = overallProgress(data);
   const [hover, setHover] = useState<{ x: number; y: number; html: React.ReactNode } | null>(null);
 
@@ -85,17 +229,20 @@ function Analysis({ data }: { data: PeriodData }) {
           <div className="text-sm font-bold text-ink-3">Seçili dönem</div>
           <div className="text-2xl font-extrabold">{periodLabel(data.period)}</div>
         </div>
-        <span className="clay-sm rounded-full px-4 py-2 text-sm font-bold">{data.status}</span>
+        <motion.button whileTap={{ scale: 0.95 }} onClick={() => setDrill("status")} className="clay-sm flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold" title="Durumu değiştir">
+          {data.status}
+          <Icon name="edit" size={14} className="text-ink-3" />
+        </motion.button>
       </div>
 
       {/* Özet kutuları */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
-        <Tile delay={0} emoji="🎯" tint="var(--color-tint-info)" label="Genel tamamlanma" value={`%${Math.round(prog.overall * 100)}`} sub={`${prog.remaining} işaret kaldı`} />
-        <Tile delay={0.04} emoji="🏥" tint="var(--color-tint-info)" label="Bursa" value={`%${Math.round(prog.bursa * 100)}`} sub={`${prog.b.ok + prog.b.na}/${TOTAL_ITEMS} madde`} />
-        <Tile delay={0.08} emoji="🏥" tint="var(--color-tint-warn)" label="Başakşehir" value={`%${Math.round(prog.basaksehir * 100)}`} sub={`${prog.k.ok + prog.k.na}/${TOTAL_ITEMS} madde`} />
-        <Tile delay={0.12} emoji="⚠️" tint="var(--color-tint-fail)" label="Sorunlu işaret" value={String(prog.fails)} sub={`BRS ${prog.b.fail} · BŞK ${prog.k.fail}`} />
-        <Tile delay={0.16} emoji="🚩" tint="var(--color-tint-yellow)" label="Açık aksiyon" value={String(openActions.length)} sub={`toplam ${data.actions.length}`} />
-        <Tile delay={0.2} emoji="⏰" tint="var(--color-tint-coral)" label="Geciken alan" value={String(overdue.length)} sub={overdue.map((x) => x.a.code).join(", ") || "yok"} />
+        <Tile delay={0} emoji="🎯" tint="var(--color-tint-info)" onClick={() => setDrill("all")} label="Genel tamamlanma" value={`%${Math.round(prog.overall * 100)}`} sub={`${prog.remaining} işaret kaldı`} />
+        <Tile delay={0.04} emoji="🏥" tint="var(--color-tint-info)" onClick={() => setDrill("bursa")} label="Bursa" value={`%${Math.round(prog.bursa * 100)}`} sub={`${prog.b.ok + prog.b.na}/${TOTAL_ITEMS} madde`} />
+        <Tile delay={0.08} emoji="🏥" tint="var(--color-tint-warn)" onClick={() => setDrill("basaksehir")} label="Başakşehir" value={`%${Math.round(prog.basaksehir * 100)}`} sub={`${prog.k.ok + prog.k.na}/${TOTAL_ITEMS} madde`} />
+        <Tile delay={0.12} emoji="⚠️" tint="var(--color-tint-fail)" onClick={() => setDrill("fail")} label="Sorunlu işaret" value={String(prog.fails)} sub={`BRS ${prog.b.fail} · BŞK ${prog.k.fail}`} />
+        <Tile delay={0.16} emoji="🚩" tint="var(--color-tint-yellow)" onClick={() => router.push("/aksiyonlar")} label="Açık aksiyon" value={String(openActions.length)} sub={`toplam ${data.actions.length}`} />
+        <Tile delay={0.2} emoji="⏰" tint="var(--color-tint-coral)" onClick={() => setDrill("overdue")} label="Geciken alan" value={String(overdue.length)} sub={overdue.map((x) => x.a.code).join(", ") || "yok"} />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
@@ -355,6 +502,8 @@ function Analysis({ data }: { data: PeriodData }) {
           );
         })}
       </section>
+
+      <DrillSheet mode={drill} data={data} onClose={() => setDrill(null)} />
 
       {hover && (
         <div
