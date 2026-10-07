@@ -360,7 +360,7 @@ export function eventItem(e: GEvent): ArchiveItem {
     who: [e.organizer, ...e.attendees.map((a) => a.name)].filter(Boolean).join(", "),
     body: [e.allDay ? `Tüm gün (${e.start} – ${e.end})` : `Bitiş: ${e.end}`, e.location && `Yer: ${e.location}`, e.meet && "Google Meet", e.description].filter(Boolean).join("\n"),
     link: e.link,
-    meta: { meet: e.meet, response: e.response },
+    meta: { meet: e.meet, response: e.response, allDay: e.allDay, end: e.end, location: e.location, organizer: e.organizer },
   };
 }
 

@@ -412,7 +412,45 @@ function TaskButton({ make }: { make: () => ReturnType<typeof newTodo> }) {
 }
 
 // ------------------------------------------------------------------ Takvim
+const CAL_VIEW_KEY = "lq:cal-view";
+
 function CalendarTab({ snap }: { snap: GoogleSnapshot }) {
+  const [view, setView] = useState<"list" | "month">("list");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(CAL_VIEW_KEY) === "month") setView("month");
+    } catch {}
+  }, []);
+  const pick = (v: "list" | "month") => {
+    setView(v);
+    try {
+      localStorage.setItem(CAL_VIEW_KEY, v);
+    } catch {}
+  };
+  return (
+    <div>
+      <SourceError text={snap.calendar.error} />
+      <div className="mb-3 flex justify-end">
+        <div className="clay-pressed flex rounded-full p-1">
+          {(
+            [
+              ["list", "Liste"],
+              ["month", "Takvim"],
+            ] as const
+          ).map(([v, l]) => (
+            <button key={v} onClick={() => pick(v)} className={`relative rounded-full px-4 py-1.5 text-xs font-bold ${view === v ? "text-white" : "text-ink-2"}`}>
+              {view === v && <motion.span layoutId="cal-view" className="absolute inset-0 rounded-full bg-blue" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}
+              <span className="relative">{l}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      {view === "list" ? <AgendaList snap={snap} /> : <MonthView snap={snap} />}
+    </div>
+  );
+}
+
+function AgendaList({ snap }: { snap: GoogleSnapshot }) {
   const [past, setPast] = useState(false);
   const today = iso(new Date());
   const groups = useMemo(() => {
@@ -428,7 +466,6 @@ function CalendarTab({ snap }: { snap: GoogleSnapshot }) {
   }, [snap, past, today]);
   return (
     <div>
-      <SourceError text={snap.calendar.error} />
       <div className="mb-3 flex justify-end">
         <button onClick={() => setPast((v) => !v)} className="clay-sm rounded-full px-4 py-2 text-xs font-bold text-ink-2">
           {past ? "← Yaklaşanlar" : "Geçen hafta"}
@@ -446,6 +483,211 @@ function CalendarTab({ snap }: { snap: GoogleSnapshot }) {
             </div>
           </motion.section>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/** Arşivdeki takvim kaydını etkinlik modeline çevirir (eski kayıtlarda meta yoksa gövdeden çıkarır). */
+function eventFromArchive(r: ArchiveRow): GEvent {
+  const meta = r.meta ?? {};
+  const allDay = (meta.allDay as boolean | undefined) ?? r.preview.startsWith("Tüm gün");
+  const start = allDay ? iso(new Date(r.ts)) : r.ts;
+  const end = (meta.end as string | undefined) ?? r.preview.match(/Bitiş: (\S+)/)?.[1] ?? r.ts;
+  const organizer = meta.organizer as string | undefined;
+  const names = r.who ? r.who.split(", ").filter((n) => n && n !== organizer) : [];
+  return {
+    id: r.id,
+    title: r.title,
+    start,
+    end,
+    allDay,
+    location: (meta.location as string | undefined) ?? r.preview.match(/Yer: ([^\n]+?)(?: Google Meet|$)/)?.[1],
+    meet: meta.meet as string | undefined,
+    link: r.link ?? "",
+    organizer,
+    attendees: names.map((n) => ({ name: n, email: n })),
+    response: meta.response as string | undefined,
+  };
+}
+
+const WD = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
+const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+
+/** Ay görünümü: 7 sütunlu ızgara, gün seçilince o günün etkinlikleri altta. */
+function MonthView({ snap }: { snap: GoogleSnapshot }) {
+  const today = iso(new Date());
+  const [cursor, setCursor] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+  const [selected, setSelected] = useState(today);
+  const [archived, setArchived] = useState<Record<string, GEvent[]>>({});
+  const [dir, setDir] = useState(0);
+  const mk = monthKey(cursor);
+
+  // önceki/sonraki ay taşan günler için komşu aylar da yüklenir
+  useEffect(() => {
+    const keys = [-1, 0, 1].map((o) => monthKey(new Date(cursor.getFullYear(), cursor.getMonth() + o, 1)));
+    for (const k of keys) {
+      if (archived[k]) continue;
+      fetch(`/api/google/archive?source=calendar&month=${k}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : { rows: [] }))
+        .then((j) => setArchived((a) => ({ ...a, [k]: (j.rows as ArchiveRow[]).map(eventFromArchive) })))
+        .catch(() => setArchived((a) => ({ ...a, [k]: [] })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mk]);
+
+  // gün → etkinlikler (anlık görüntü daha ayrıntılı olduğu için önceliklidir)
+  const byDay = useMemo(() => {
+    const all = new Map<string, GEvent>();
+    for (const list of Object.values(archived)) for (const e of list) all.set(e.id, e);
+    for (const e of snap.calendar.items) all.set(e.id, e);
+    const m = new Map<string, GEvent[]>();
+    for (const e of all.values()) {
+      if (e.allDay) {
+        // çok günlü tüm gün etkinlikleri her güne yayılır (bitiş günü hariç)
+        const s = new Date(`${dayKey(e.start)}T12:00:00`);
+        const end = e.end && e.end.length === 10 ? new Date(`${e.end}T12:00:00`) : new Date(s.getTime() + 86400000);
+        for (let d = s; d < end && d.getTime() - s.getTime() < 62 * 86400000; d = new Date(d.getTime() + 86400000)) {
+          const k = iso(d);
+          (m.get(k) ?? m.set(k, []).get(k)!).push(e);
+        }
+      } else {
+        const k = dayKey(e.start);
+        (m.get(k) ?? m.set(k, []).get(k)!).push(e);
+      }
+    }
+    for (const list of m.values()) list.sort((a, b) => Number(b.allDay) - Number(a.allDay) || a.start.localeCompare(b.start));
+    return m;
+  }, [archived, snap]);
+
+  // ızgara: ayın ilk gününün haftasının Pazartesi'sinden başlayarak 6 hafta
+  const cells = useMemo(() => {
+    const first = new Date(cursor);
+    const offset = (first.getDay() + 6) % 7;
+    const start = new Date(first.getFullYear(), first.getMonth(), 1 - offset);
+    const weeks = Math.ceil((offset + new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate()) / 7);
+    return Array.from({ length: weeks * 7 }, (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
+  }, [cursor]);
+
+  const go = (n: number) => {
+    setDir(n);
+    setCursor((c) => new Date(c.getFullYear(), c.getMonth() + n, 1));
+  };
+  const loading = !archived[mk];
+  const dayEvents = byDay.get(selected) ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="clay overflow-hidden p-3 sm:p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <motion.button whileTap={{ scale: 0.9 }} onClick={() => go(-1)} className="clay-sm grid h-10 w-10 place-items-center rounded-full" aria-label="Önceki ay">
+            <Icon name="back" size={18} />
+          </motion.button>
+          <div className="flex-1 text-center">
+            <div className="text-lg font-extrabold capitalize">{cursor.toLocaleDateString("tr-TR", { month: "long", year: "numeric" })}</div>
+            {loading && <div className="text-[11px] text-ink-3">yükleniyor…</div>}
+          </div>
+          <motion.button whileTap={{ scale: 0.9 }} onClick={() => go(1)} className="clay-sm grid h-10 w-10 place-items-center rounded-full" aria-label="Sonraki ay">
+            <Icon name="chevron" size={18} />
+          </motion.button>
+        </div>
+        {mk !== monthKey(new Date()) && (
+          <div className="mb-2 text-center">
+            <button
+              onClick={() => {
+                const d = new Date();
+                setDir(0);
+                setCursor(new Date(d.getFullYear(), d.getMonth(), 1));
+                setSelected(today);
+              }}
+              className="rounded-full bg-track px-3 py-1 text-[11px] font-bold text-ink-2"
+            >
+              Bugüne dön
+            </button>
+          </div>
+        )}
+        <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-bold text-ink-3">
+          {WD.map((d) => (
+            <div key={d} className="py-1 sm:px-2 sm:text-left">
+              {d}
+            </div>
+          ))}
+        </div>
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.div
+            key={mk}
+            initial={{ opacity: 0, x: dir * 40 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: dir * -40 }}
+            transition={{ duration: 0.22 }}
+            className="grid grid-cols-7 gap-1"
+          >
+            {cells.map((d) => {
+              const k = iso(d);
+              const inMonth = d.getMonth() === cursor.getMonth();
+              const evs = byDay.get(k) ?? [];
+              const isSel = k === selected;
+              const isToday = k === today;
+              const weekend = d.getDay() === 0 || d.getDay() === 6;
+              return (
+                <button
+                  key={k}
+                  onClick={() => setSelected(k)}
+                  className={`relative flex min-h-[54px] flex-col items-stretch rounded-xl p-1 text-left transition-colors sm:min-h-[92px] sm:p-1.5 ${
+                    isSel ? "bg-tint-info ring-2 ring-blue" : "hover:bg-track/60"
+                  } ${inMonth ? "" : "opacity-40"}`}
+                >
+                  <span
+                    className={`mx-auto grid h-6 w-6 place-items-center rounded-full text-xs font-extrabold sm:mx-0 ${
+                      isToday ? "bg-blue text-white" : weekend ? "text-ink-3" : ""
+                    }`}
+                  >
+                    {d.getDate()}
+                  </span>
+                  {/* mobil: noktalar */}
+                  <span className="mt-1 flex flex-wrap justify-center gap-0.5 sm:hidden">
+                    {evs.slice(0, 4).map((e) => (
+                      <span key={e.id} className="h-1.5 w-1.5 rounded-full" style={{ background: e.meet ? "#00897b" : e.allDay ? "var(--color-warn)" : "var(--color-blue)" }} />
+                    ))}
+                  </span>
+                  {/* masaüstü: başlıklar */}
+                  <span className="mt-1 hidden min-w-0 flex-col gap-0.5 sm:flex">
+                    {evs.slice(0, 3).map((e) => (
+                      <span
+                        key={e.id}
+                        className="truncate rounded-md px-1 py-0.5 text-[10px] font-semibold leading-tight"
+                        style={{
+                          background: e.allDay ? "color-mix(in srgb, var(--color-warn) 22%, transparent)" : e.meet ? "color-mix(in srgb, #00897b 18%, transparent)" : "color-mix(in srgb, var(--color-blue) 16%, transparent)",
+                        }}
+                        title={e.title}
+                      >
+                        {!e.allDay && <span className="text-ink-3">{hm(e.start)} </span>}
+                        {e.title}
+                      </span>
+                    ))}
+                    {evs.length > 3 && <span className="px-1 text-[10px] font-bold text-ink-3">+{evs.length - 3} daha</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+
+      <div>
+        <div className={`mb-2 px-1 text-sm font-extrabold ${selected === today ? "text-blue" : "text-ink-2"}`}>{dayLabel(selected)}</div>
+        {dayEvents.length ? (
+          <div className="clay divide-y divide-line overflow-hidden">
+            {dayEvents.map((e) => (
+              <EventRow key={e.id} e={e} />
+            ))}
+          </div>
+        ) : (
+          <Empty emoji="🌤️" text="Bu gün için etkinlik yok." />
+        )}
       </div>
     </div>
   );
