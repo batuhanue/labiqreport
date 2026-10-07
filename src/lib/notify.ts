@@ -3,6 +3,7 @@ import { AREAS } from "./checklist";
 import { areaProgress, deadlineInfo, defaultPeriod, periodLabel } from "./period";
 import type { PeriodData } from "./types";
 import type { Todo } from "./todo";
+import type { GEvent } from "./google-types";
 
 export interface NotifyPrefs {
   deadlines: boolean; // rapor alanı terminleri
@@ -11,12 +12,13 @@ export interface NotifyPrefs {
   friday: boolean; // Cuma 12:00 toplantı özeti
   monthStart: boolean; // ay başı: yeni kapanış hatırlatması
   todos: boolean; // kişisel görevler
+  calendar?: boolean; // Google Takvim: bugünün toplantıları
 }
 
-export const DEFAULT_PREFS: NotifyPrefs = { deadlines: true, daysBefore: 2, actions: true, friday: true, monthStart: true, todos: true };
+export const DEFAULT_PREFS: NotifyPrefs = { deadlines: true, daysBefore: 2, actions: true, friday: true, monthStart: true, todos: true, calendar: true };
 
 export interface NotifyMessage {
-  kind: "deadline" | "overdue" | "action" | "friday" | "month" | "todo";
+  kind: "deadline" | "overdue" | "action" | "friday" | "month" | "todo" | "calendar";
   title: string;
   body: string;
   url: string;
@@ -36,7 +38,7 @@ const isoOf = (d: Date) =>
 export function buildMessages(
   data: PeriodData | null,
   prefs: NotifyPrefs,
-  opts: { today?: Date; activePeriod?: string | null; todos?: Todo[] } = {},
+  opts: { today?: Date; activePeriod?: string | null; todos?: Todo[]; events?: GEvent[] } = {},
 ): NotifyMessage[] {
   const today = opts.today ?? istanbulToday();
   const out: NotifyMessage[] = [];
@@ -69,6 +71,23 @@ export function buildMessages(
         url: "/gorevler",
         tag: `todo-${t}`,
         level: late.length ? "warn" : "info",
+      });
+    }
+  }
+
+  if (prefs.calendar !== false && opts.events?.length) {
+    const t = isoOf(today);
+    // Takvim API'si saatleri Europe/Istanbul ofsetiyle döndürür; ilk 10 karakter İstanbul tarihidir.
+    const list = opts.events.filter((e) => !e.allDay && e.response !== "declined" && e.start.slice(0, 10) === t);
+    if (list.length) {
+      const hm = (s: string) => new Date(s).toLocaleTimeString("tr-TR", { timeZone: "Europe/Istanbul", hour: "2-digit", minute: "2-digit" });
+      out.push({
+        kind: "calendar",
+        title: `📅 Bugün ${list.length} toplantı`,
+        body: list.slice(0, 3).map((e) => `${hm(e.start)} ${e.title}`).join(" · ") + (list.length > 3 ? " …" : ""),
+        url: "/google",
+        tag: `cal-${t}`,
+        level: "info",
       });
     }
   }

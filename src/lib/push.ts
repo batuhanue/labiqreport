@@ -3,6 +3,7 @@ import webpush from "web-push";
 import { store, type StoredSub } from "./db";
 import { buildMessages, DEFAULT_PREFS, type NotifyMessage, type NotifyPrefs } from "./notify";
 import type { TodoStore } from "./todo";
+import { getSnapshot, status as googleStatus, sync as googleSync } from "./google";
 
 const pub = process.env.VAPID_PUBLIC_KEY || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "";
 const priv = process.env.VAPID_PRIVATE_KEY || "";
@@ -54,7 +55,12 @@ export async function runDaily(opts: { dry?: boolean; today?: Date } = {}) {
   const { activePeriod } = await s.getState();
   const data = activePeriod ? await s.getPeriod(activePeriod) : null;
   const todos = (await s.getKV<TodoStore>("todos"))?.todos ?? [];
-  const messages = buildMessages(data, prefs, { today: opts.today, activePeriod, todos });
+  // Google bağlıysa önce senkronla (sabah verisi taze olsun); hata bildirimleri engellemez
+  let events = (await getSnapshot().catch(() => null))?.calendar.items;
+  if ((await googleStatus("", false).catch(() => null))?.connected) {
+    events = (await googleSync({ force: true }).catch(() => null))?.calendar.items ?? events;
+  }
+  const messages = buildMessages(data, prefs, { today: opts.today, activePeriod, todos, events });
   if (opts.dry || messages.length === 0 || !pushConfigured()) return { messages, result: null };
   return { messages, result: await sendToAll(messages) };
 }

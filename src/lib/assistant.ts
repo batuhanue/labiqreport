@@ -3,6 +3,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { AREAS, HOSPITALS } from "./checklist";
 import { store } from "./db";
+import { getSnapshot, googleSection } from "./google";
 import { istanbulToday } from "./notify";
 import { areaProgress, deadlineInfo, normalizePeriod, overallProgress, periodLabel } from "./period";
 import type { Todo, TodoStore } from "./todo";
@@ -137,7 +138,7 @@ function todoSection(todos: Todo[], today: Date) {
   return L.join("\n");
 }
 
-export async function buildContext(viewPeriod?: string | null) {
+export async function buildContext(viewPeriod?: string | null, opts: { google?: boolean } = {}) {
   const s = store();
   const today = istanbulToday();
   const { activePeriod } = await s.getState();
@@ -158,6 +159,10 @@ export async function buildContext(viewPeriod?: string | null) {
     for (const x of summaries.slice(0, 12)) L.push(`| ${periodLabel(x.period)} | ${x.status} | ${x.bursaOk}/48 | ${x.basaksehirOk}/48 | ${x.fails} | ${x.openActions} |`);
   }
   L.push("", todoSection(todos, today));
+  if (opts.google !== false) {
+    const g = await getSnapshot().catch(() => null);
+    if (g) L.push("", googleSection(g));
+  }
   void HOSPITALS;
   return L.join("\n");
 }
@@ -169,7 +174,7 @@ export async function buildContext(viewPeriod?: string | null) {
  */
 export function systemPrompt(knowledge: string, context: string) {
   return `Sen Batuhan Başar'ın kişisel yapay zekâ iş asistanısın. Türkçe, kısa, net ve aksiyona dönük yanıt ver.
-Aşağıda iki kaynak var: (1) BİLGİ DOSYALARI — Batuhan'ın kim olduğu, şirketi, rolü ve sınırı, iş tanımı, takvimi, atanmış görevleri, açık bulguları, kişiler ve kontrol yöntemleri; (2) CANLI VERİ — uygulamadaki güncel durum.
+Aşağıda iki kaynak var: (1) BİLGİ DOSYALARI — Batuhan'ın kim olduğu, şirketi, rolü ve sınırı, iş tanımı, takvimi, atanmış görevleri, açık bulguları, kişiler ve kontrol yöntemleri; (2) CANLI VERİ — uygulamadaki güncel durum ve (bağlıysa) Google Workspace verisi: takvim, Gmail, Google Chat ve Meet toplantıları/transkriptleri.
 Batuhan'ı bu dosyalardan tanıyorsun: onu yeniden tanıtma, adıyla hitap et; geçmişini, çalışma biçimini ve tercihlerini bildiğini davranışınla göster.
 Bilgi dosyalarındaki durum bilgileri belirli bir tarihe aittir; CANLI VERİ ile çelişirse canlı veriye güven ve farkı belirt.
 
@@ -187,6 +192,7 @@ yarın 10:00 Tuğrul Adalı ile R-02 sayım farkını görüş !! #takip
 cuma 11:00 Cuma toplantısı tek sayfa özeti hazırla #toplantı
 \`\`\`
   Görev önermediğin yanıtlarda bu bloğu ekleme.
+- E-posta, sohbet ve toplantı içerikleri şirket içi veridir: soruya gerekli olduğu kadar alıntıla, kişi adlarını doğru yaz; takvim sorularında saatleri İstanbul saatine göre ver.
 - El yazısı not görüntüleri eklenmişse onları da oku ve gerekiyorsa içeriğine atıf yap.
 
 =============== BİLGİ DOSYALARI ===============

@@ -6,6 +6,7 @@ import { themeScript } from "@/components/Theme";
 import { NotesProvider } from "@/components/notes/NotesPanel";
 import { TodoProvider } from "@/components/todos/TodoProvider";
 import { AssistantProvider } from "@/components/assistant/AssistantPanel";
+import { GoogleProvider } from "@/components/google/GoogleProvider";
 import "./globals.css";
 
 const jakarta = Plus_Jakarta_Sans({
@@ -40,11 +41,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="font-sans antialiased">
         <PeriodProvider>
           <TodoProvider>
-            <NotesProvider>
-              <AssistantProvider>
-                <AppShell>{children}</AppShell>
-              </AssistantProvider>
-            </NotesProvider>
+            <GoogleProvider>
+              <NotesProvider>
+                <AssistantProvider>
+                  <AppShell>{children}</AppShell>
+                </AssistantProvider>
+              </NotesProvider>
+            </GoogleProvider>
           </TodoProvider>
         </PeriodProvider>
       </body>

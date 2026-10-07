@@ -9,6 +9,7 @@ import { periodLabel } from "@/lib/period";
 import { inkToJpeg } from "../notes/InkCanvas";
 import { usePeriod } from "../PeriodProvider";
 import { useTodos } from "../todos/TodoProvider";
+import { useGoogle } from "../google/GoogleProvider";
 import { Icon } from "../ui";
 import { spring } from "@/lib/motion";
 
@@ -112,6 +113,8 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
   const [busy, setBusy] = useState(false);
   const [deep, setDeep] = useState(false);
   const [sendInk, setSendInk] = useState(true);
+  const [withGoogle, setWithGoogle] = useState(true);
+  const googleOn = !!useGoogle()?.status?.connected;
   const [status, setStatus] = useState<{ configured: boolean; model: string } | null>(null);
   const [view, setView] = useState<"chat" | "knowledge">("chat");
   const [diag, setDiag] = useState<Diag | null>(null);
@@ -166,15 +169,16 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
       const p = JSON.parse(localStorage.getItem(LS_PREFS) || "{}");
       if (typeof p.deep === "boolean") setDeep(p.deep);
       if (typeof p.sendInk === "boolean") setSendInk(p.sendInk);
+      if (typeof p.google === "boolean") setWithGoogle(p.google);
     } catch {}
   }, []);
   useEffect(() => {
     if (!mounted) return;
     try {
       localStorage.setItem(LS_CHAT, JSON.stringify(msgs.slice(-60)));
-      localStorage.setItem(LS_PREFS, JSON.stringify({ deep, sendInk }));
+      localStorage.setItem(LS_PREFS, JSON.stringify({ deep, sendInk, google: withGoogle }));
     } catch {}
-  }, [msgs, deep, sendInk, mounted]);
+  }, [msgs, deep, sendInk, withGoogle, mounted]);
 
   useEffect(() => {
     if (!open || status) return;
@@ -219,6 +223,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
         period: data?.period,
         images,
         deep,
+        google: withGoogle,
       };
       const setBot = (patch: Partial<Msg>) => setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, ...patch } : x)));
 
@@ -286,7 +291,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
         abort.current = null;
       }
     },
-    [busy, msgs, data, deep, sendInk],
+    [busy, msgs, data, deep, sendInk, withGoogle],
   );
 
   // dışarıdan gelen soru (ör. "Asistana sor")
@@ -313,7 +318,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
 
   const p = data ? periodLabel(data.period) : "bu dönem";
   const SUGGEST = [
-    "Bugün ne yapmalıyım? Öncelik sırasıyla söyle.",
+    googleOn ? "Bugün ne yapmalıyım? Toplantılarımı, e-postalarımı ve görevlerimi birlikte değerlendir." : "Bugün ne yapmalıyım? Öncelik sırasıyla söyle.",
     `${p} kapanışının durumu ne? Hangi alanlar geride?`,
     "Açık bulguları ve anomali notlarını sorumlulara göre listele.",
     "Cuma toplantısı için tek sayfa özet hazırla.",
@@ -434,6 +439,11 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
                     <button onClick={() => setSendInk((v) => !v)} className={`rounded-full px-3 py-1.5 ${sendInk ? "bg-blue text-white" : "bg-track"}`} title="Dönemdeki el yazısı notları görüntü olarak gönderilir">
                       ✍️ El yazısı notları {sendInk ? "dahil" : "hariç"}
                     </button>
+                    {googleOn && (
+                      <button onClick={() => setWithGoogle((v) => !v)} className={`rounded-full px-3 py-1.5 ${withGoogle ? "bg-blue text-white" : "bg-track"}`} title="Takvim, Gmail, Chat ve Meet verisi asistana gönderilir">
+                        📬 Google {withGoogle ? "dahil" : "hariç"}
+                      </button>
+                    )}
                     <span className="ml-auto hidden sm:inline">Enter gönder · Shift+Enter satır · Esc kapat</span>
                   </div>
                   <form

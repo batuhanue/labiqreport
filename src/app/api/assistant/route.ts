@@ -102,7 +102,7 @@ export async function POST(req: Request) {
   const key = process.env.GEMINI_API_KEY?.trim();
   if (!key) return bad("GEMINI_API_KEY tanımlı değil. Vercel → Settings → Environment Variables'a ekleyip Redeploy yapın.", 503);
 
-  const body = (await req.json().catch(() => null)) as { messages?: Msg[]; period?: string; images?: Img[]; deep?: boolean; stream?: boolean } | null;
+  const body = (await req.json().catch(() => null)) as { messages?: Msg[]; period?: string; images?: Img[]; deep?: boolean; stream?: boolean; google?: boolean } | null;
   const messages = (body?.messages ?? []).filter((x) => x.text?.trim()).slice(-20);
   if (!messages.length || messages[messages.length - 1].role !== "user") return bad("Soru boş");
   const period = body?.period && PERIOD_RE.test(body.period) ? body.period : null;
@@ -111,7 +111,7 @@ export async function POST(req: Request) {
 
   let system: string;
   try {
-    const [k, ctx] = await Promise.all([loadKnowledge(), buildContext(period)]);
+    const [k, ctx] = await Promise.all([loadKnowledge(), buildContext(period, { google: body?.google !== false })]);
     system = systemPrompt(k, ctx);
   } catch (e) {
     return bad(`Bağlam hazırlanamadı: ${e instanceof Error ? e.message : e}`, 500);

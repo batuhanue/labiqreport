@@ -1,0 +1,94 @@
+/** Google Workspace senkron verisi — sunucu ve istemci ortak tipleri. */
+
+export interface GAccount {
+  email: string;
+  name: string;
+  picture?: string;
+}
+
+export interface GEvent {
+  id: string;
+  title: string;
+  /** ISO tarih-saat; tüm gün etkinliklerinde YYYY-MM-DD */
+  start: string;
+  end: string;
+  allDay: boolean;
+  location?: string;
+  description?: string;
+  meet?: string;
+  link: string;
+  organizer?: string;
+  attendees: { name: string; email: string; status?: string }[];
+  /** kullanıcının yanıtı: accepted / declined / tentative / needsAction */
+  response?: string;
+}
+
+export interface GMail {
+  id: string;
+  threadId: string;
+  from: string;
+  fromEmail: string;
+  subject: string;
+  snippet: string;
+  date: string;
+  unread: boolean;
+  important: boolean;
+  link: string;
+}
+
+export interface GChatMsg {
+  id: string;
+  sender: string;
+  mine: boolean;
+  text: string;
+  time: string;
+}
+
+export interface GChatSpace {
+  id: string;
+  title: string;
+  kind: "SPACE" | "GROUP_CHAT" | "DIRECT_MESSAGE";
+  lastActive?: string;
+  link: string;
+  messages: GChatMsg[];
+}
+
+export interface GMeeting {
+  id: string;
+  code?: string;
+  title?: string;
+  start: string;
+  end?: string;
+  participants: string[];
+  transcripts: { url?: string; state?: string; name?: string }[];
+  recordings: { url?: string }[];
+  /** transkript metninin başı (asistan için) */
+  transcriptText?: string;
+}
+
+interface Part<T> {
+  items: T[];
+  error?: string;
+}
+
+export interface GoogleSnapshot {
+  syncedAt: string;
+  ms: number;
+  account: GAccount;
+  calendar: Part<GEvent>;
+  gmail: Part<GMail> & { unread?: number };
+  chat: Part<GChatSpace>;
+  meet: Part<GMeeting>;
+}
+
+export interface GoogleStatus {
+  /** GOOGLE_CLIENT_ID / SECRET tanımlı mı */
+  configured: boolean;
+  connected: boolean;
+  /** yetki iptal edildi / süresi doldu: yeniden bağlanmalı */
+  needsReauth?: boolean;
+  account?: GAccount;
+  scopes?: string[];
+  snapshot?: GoogleSnapshot | null;
+  redirectUri?: string;
+}

@@ -46,6 +46,11 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   yaklaşan/geçen rapor alanı terminleri, termini gelen/geciken aksiyonlar, Cuma 12:00 toplantı özeti ve ay başı
   hatırlatması. Zil menüsü aynı hatırlatmaları uygulama içinde de gösterir; hangi bildirimlerin geleceği oradan seçilir.
   iPhone/iPad'de önce Safari → Paylaş → **Ana Ekrana Ekle** (iOS 16.4+), sonra uygulamayı oradan açıp bildirimi aç.
+- **Google Workspace (Takvim, Gmail, Chat, Meet):** "Google" sayfasından şirket hesabı tek tıkla bağlanır (salt okunur).
+  Takvim (sıradaki toplantı + Meet'e katıl), gelen kutusu (okunmamış/önemli), Chat alanları ve DM'ler, Meet toplantı
+  kayıtları (katılımcılar, transkript/kayıt bağlantıları) görünür; her öğeden tek tuşla görev oluşturulur.
+  Senkron: uygulama açıkken 5 dakikada bir, elle yenileme ve her sabah cron. Asistan bu verileri (ve son toplantı
+  transkriptlerini) okur; asistan panelindeki "📬 Google" düğmesiyle kapatılabilir. Sabah bildirimine bugünkü toplantılar eklenir.
 
 ## Vercel'e kurulum
 1. Repo'yu Vercel'e import et (Framework: Next.js).
@@ -57,7 +62,16 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
    - `VAPID_SUBJECT=mailto:eposta@adresin`
    - `CRON_SECRET` = rastgele uzun bir değer (Vercel Cron bunu otomatik `Authorization` başlığıyla gönderir)
    - Zamanlama `vercel.json` içinde: `0 6 * * *` (UTC) = her gün 09:00 İstanbul
-5. Yeniden dağıt (Redeploy).
+5. Google Workspace bağlantısı (bir kerelik):
+   - console.cloud.google.com → şirket hesabıyla yeni proje
+   - **APIs & Services → Library**: Gmail API, Google Calendar API, Google Chat API, Google Meet REST API, People API → Enable
+   - **OAuth consent screen**: User type **Internal** (yalnızca şirket hesapları; Google doğrulaması gerekmez)
+   - **Credentials → Create credentials → OAuth client ID → Web application**;
+     Authorized redirect URI: `https://<vercel-alan-adın>/api/google/callback`
+   - **Google Chat API → Configuration**: uygulama adı, simge URL'si ve açıklama gir, kaydet (Chat okumak için zorunlu)
+   - Vercel'e `GOOGLE_CLIENT_ID` ve `GOOGLE_CLIENT_SECRET` ekle (farklı alan adı kullanıyorsan `GOOGLE_REDIRECT_URI`)
+   - Uygulamada **Google → Google ile bağlan**
+6. Yeniden dağıt (Redeploy).
 
 ## Yerel geliştirme
 ```bash

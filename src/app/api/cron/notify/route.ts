@@ -3,6 +3,7 @@ import { handle } from "@/lib/api";
 import { runDaily } from "@/lib/push";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /** Vercel Cron her sabah çağırır (vercel.json). CRON_SECRET ile korunur. */
 export async function GET(req: Request) {

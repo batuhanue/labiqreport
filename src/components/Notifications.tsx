@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { buildMessages, DEFAULT_PREFS, type NotifyMessage, type NotifyPrefs } from "@/lib/notify";
 import { usePeriod } from "./PeriodProvider";
 import { useTodos } from "./todos/TodoProvider";
+import { useGoogle } from "./google/GoogleProvider";
 import { useTheme, type ThemePref } from "./Theme";
 import { Icon, Sheet } from "./ui";
 
@@ -61,7 +62,8 @@ export function NotificationBell() {
 
   const prefs = info?.prefs ?? DEFAULT_PREFS;
   const { store: todoStore } = useTodos();
-  const messages = useMemo(() => buildMessages(data, prefs, { todos: todoStore.todos }), [data, prefs, todoStore.todos]);
+  const events = useGoogle()?.status?.snapshot?.calendar.items;
+  const messages = useMemo(() => buildMessages(data, prefs, { todos: todoStore.todos, events }), [data, prefs, todoStore.todos, events]);
   const alertCount = messages.filter((m) => m.kind !== "friday").length;
 
   const load = useCallback(async () => {
@@ -265,6 +267,7 @@ export function NotificationBell() {
           <Toggle on={prefs.friday} onChange={(v) => savePrefs({ ...prefs, friday: v })} label="Cuma toplantı özeti" sub="Cuma sabahı: kapanan / açık aksiyonlar, sorunlu maddeler" />
           <Toggle on={prefs.monthStart} onChange={(v) => savePrefs({ ...prefs, monthStart: v })} label="Ay başı hatırlatması" sub="Yeni ayın ilk günlerinde kapanışı başlat" />
           <Toggle on={prefs.todos} onChange={(v) => savePrefs({ ...prefs, todos: v })} label="Kişisel görevler" sub="Bugün termini olan ve geciken görevlerim" />
+          <Toggle on={prefs.calendar !== false} onChange={(v) => savePrefs({ ...prefs, calendar: v })} label="Google Takvim" sub="Her sabah bugünkü toplantılarım" />
         </div>
       </Sheet>
     </>
