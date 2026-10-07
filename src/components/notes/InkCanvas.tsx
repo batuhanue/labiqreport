@@ -8,7 +8,7 @@ import type { InkColor, InkTool, NoteInk, Stroke } from "@/lib/types";
  * Düşük gecikmeli el yazısı tuvali.
  * - İki katman: alt katmanda kaydedilmiş çizgiler (önbellekli Path2D), üst katmanda yalnızca çizilen çizgi.
  * - Pointer Events + getCoalescedEvents (120–240 Hz kalem örnekleri) + getPredictedEvents (gecikme telafisi).
- * - desynchronized canvas bağlamı (Chrome/Edge'de ekran gecikmesini düşürür).
+ * - Şeffaf (alpha) çizim katmanı; desynchronized bilerek kullanılmaz (bazı cihazlarda siyah ekran).
  * - Avuç içi reddi: kalem algılandıktan sonra parmak çizmez, kaydırır. İki parmak her zaman kaydırır.
  * - Koordinatlar mantıksal (sayfa genişliği 800) — her cihazda aynı oranla görünür.
  */
@@ -190,7 +190,9 @@ export const InkCanvas = forwardRef<InkCanvasHandle, Props>(function InkCanvas({
     if (!c) return;
     let ctx = (c as HTMLCanvasElement & { _ctx?: CanvasRenderingContext2D })._ctx;
     if (!ctx) {
-      ctx = (c.getContext("2d", { desynchronized: true }) ?? c.getContext("2d"))!;
+      // Not: { desynchronized: true } kullanılmıyor — Chrome/Edge bazı kalemli cihazlarda bu modda
+      // tuvali donanım katmanına alıp şeffaf alanı SİYAH gösteriyor (ilk dokunuşta ekran kararıyordu).
+      ctx = c.getContext("2d", { alpha: true })!;
       (c as HTMLCanvasElement & { _ctx?: CanvasRenderingContext2D })._ctx = ctx;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

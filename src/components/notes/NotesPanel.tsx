@@ -430,7 +430,7 @@ function NotesPanel({ open, onClose, seedArea }: { open: boolean; onClose: () =>
 
                       {/* içerik */}
                       {/* çizim alanı opak ve ayrı katmanda: cam efekti her karede yeniden hesaplanmasın */}
-                      <div className={`relative min-h-0 flex-1 ${sel.mode === "ink" ? "bg-card [contain:strict] [will-change:transform]" : ""}`}>
+                      <div className={`relative min-h-0 flex-1 ${sel.mode === "ink" ? "bg-card [contain:strict]" : ""}`}>
                         {sel.mode === "text" ? (
                           <textarea
                             id="note-text"
