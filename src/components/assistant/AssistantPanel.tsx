@@ -117,11 +117,35 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
   const [diag, setDiag] = useState<Diag | null>(null);
   const runDiag = useCallback(async () => {
     setDiag({ loading: true });
-    try {
-      const r = await fetch("/api/assistant?test=1", { cache: "no-store" });
-      setDiag(await r.json());
-    } catch (e) {
-      setDiag({ testError: `Sunucuya ulaşılamadı: ${(e as Error).message}` });
+    /** JSON beklenen bir isteği yapar; JSON gelmezse durum kodunu ve gövdenin başını hata olarak döndürür. */
+    const get = async (url: string, ms: number): Promise<Record<string, unknown>> => {
+      const t0 = Date.now();
+      try {
+        const r = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(ms) });
+        const raw = await r.text();
+        try {
+          return { ...JSON.parse(raw), _status: r.status, _ms: Date.now() - t0 };
+        } catch {
+          return { _status: r.status, _ms: Date.now() - t0, _raw: raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240) || "(boş gövde)" };
+        }
+      } catch (e) {
+        const err = e as Error;
+        return { _ms: Date.now() - t0, _raw: err.name === "TimeoutError" ? `${ms / 1000} sn içinde yanıt gelmedi` : `${err.name}: ${err.message}` };
+      }
+    };
+    // 1) sunucu ayakta mı (Gemini'ye gitmeden)
+    const ping = await get("/api/assistant", 15000);
+    if (ping.configured === undefined) {
+      setDiag({ server: { ok: false, detail: `HTTP ${ping._status ?? "—"} · ${String(ping.error ?? ping._raw ?? "")}` } });
+    } else if (!ping.configured) {
+      setDiag({ server: { ok: true, detail: `${ping._ms} ms` }, configured: false });
+    } else {
+      setDiag({ loading: true, server: { ok: true, detail: `${ping._ms} ms` } });
+      // 2) Gemini teşhisi
+      const t = await get("/api/assistant?test=1", 70000);
+      const server = { ok: true, detail: `${ping._ms} ms` };
+      if (t.configured === undefined) setDiag({ server, configured: true, keyHint: ping.keyHint as string, model: ping.model as string, testError: `HTTP ${t._status ?? "—"} · ${String(t.error ?? t._raw ?? "")}` });
+      else setDiag({ ...(t as Diag), server });
     }
     requestAnimationFrame(() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }));
   }, []);
@@ -204,7 +228,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...payload, stream }),
-          signal: ctrl.signal,
+          signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(75000)]),
         });
         if (!res.ok || !res.body) {
           const err = await res.json().catch(() => ({ error: `Sunucu hatası ${res.status}` }));
@@ -236,7 +260,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
           if (/_\(bağlantı kesildi[^)]*\)_\s*$/.test(text)) throw new Error("akış koptu");
         } catch (e) {
           // kullanıcı durdurmadıysa ve sunucu açık bir hata vermediyse: akışsız yeniden dene
-          if (userStopped.current || (e as { server?: boolean }).server) throw e;
+          if (userStopped.current || (e as { server?: boolean }).server || (e as Error).name === "TimeoutError") throw e;
           setBot({ text: "" });
           text = await run(false);
         }
@@ -250,7 +274,9 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
           setMsgs((m) => m.map((x) => (x.id === bot.id ? { ...x, text: (x.text || "") + "\n\n_(durduruldu)_" } : x)));
         } else {
           const msg = (e as Error).message;
-          const friendly = /failed to fetch|network|load failed|aborted/i.test(msg)
+          const friendly = (e as Error).name === "TimeoutError"
+            ? "Yanıt 75 sn içinde gelmedi. “Bağlantıyı test et” ile nerede takıldığına bakalım."
+            : /failed to fetch|network|load failed|aborted/i.test(msg)
             ? "Sunucuyla bağlantı kurulamadı ya da yarıda kesildi. İnternet bağlantını kontrol edip tekrar dene; sürerse “Bağlantıyı test et”."
             : msg;
           setBot({ text: friendly, error: true });
@@ -458,6 +484,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
 /* ------------------------------------------------------------------ bağlantı teşhisi */
 interface Diag {
   loading?: boolean;
+  server?: { ok: boolean; detail: string };
   configured?: boolean;
   model?: string;
   keyHint?: string | null;
@@ -489,9 +516,10 @@ function DiagCard({ d, onClose }: { d: Diag; onClose: () => void }) {
         <Icon name="close" size={14} />
       </button>
       <div className="mb-1 font-extrabold">🔌 Bağlantı testi</div>
+      {d.server && row(d.server.ok, "Uygulama sunucusu yanıt veriyor", d.server.ok ? d.server.detail : `${d.server.detail} · Vercel → Deployments → son deploy → Logs`)}
       {d.loading ? (
-        <div className="py-2 text-sm text-ink-3">Gemini'ye bağlanılıyor…</div>
-      ) : (
+        <div className="py-2 text-sm text-ink-3">{d.server ? "Gemini'ye bağlanılıyor… (30 sn sürebilir)" : "Sunucu kontrol ediliyor…"}</div>
+      ) : d.server && !d.server.ok ? null : (
         <>
           {row(d.configured, "GEMINI_API_KEY tanımlı", d.configured ? d.keyHint : "Vercel → Settings → Environment Variables (Production) + Redeploy")}
           {d.warning && row(false, "Anahtar biçimi", d.warning)}

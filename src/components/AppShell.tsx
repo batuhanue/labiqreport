@@ -78,7 +78,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 className="relative flex items-center gap-3 rounded-2xl px-4 py-3 font-bold in-data-[sidebar=closed]:justify-center in-data-[sidebar=closed]:px-0"
               >
                 {active && <motion.span layoutId="side-nav" className="clay-pressed absolute inset-0 rounded-2xl" transition={{ type: "spring", stiffness: 400, damping: 34 }} />}
-                <motion.span className={`relative ${active ? "text-blue" : "text-ink-2"}`} animate={{ scale: active ? 1.12 : 1, rotate: active ? [0, -8, 0] : 0 }} transition={spring.wobbly}>
+                <motion.span className={`relative ${active ? "text-blue" : "text-ink-2"}`} animate={{ scale: active ? 1.12 : 1, rotate: active ? [0, -8, 0] : 0 }} transition={{ scale: spring.wobbly, rotate: { duration: 0.4, ease: "easeOut" } }}>
                   <Icon name={n.icon} />
                 </motion.span>
                 <span className={`relative whitespace-nowrap in-data-[sidebar=closed]:hidden ${active ? "text-blue" : "text-ink-2"}`}>{n.label}</span>
