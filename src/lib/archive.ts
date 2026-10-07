@@ -209,3 +209,126 @@ export async function clearArchive() {
   await ready;
   await sql`DELETE FROM google_archive`;
 }
+
+// ------------------------------------------------------------------ listeleme (aylık / sohbet bazlı)
+export interface ListRow {
+  source: ArchiveSource;
+  id: string;
+  ts: string;
+  title: string;
+  who: string;
+  preview: string;
+  link?: string;
+  meta?: Record<string, unknown> | null;
+}
+const toRow = (x: ArchiveItem, n = 220): ListRow => ({
+  source: x.source,
+  id: x.id,
+  ts: new Date(x.ts).toISOString(),
+  title: x.title,
+  who: x.who,
+  preview: x.body.replace(/\s+/g, " ").slice(0, n),
+  link: x.link ?? undefined,
+  meta: x.meta ?? null,
+});
+
+/** Kaynaktaki ayların listesi (YYYY-MM, İstanbul saatine göre) ve kayıt sayıları; yeniden eskiye. */
+export async function months(source: ArchiveSource): Promise<{ month: string; count: number }[]> {
+  if (!url) {
+    const m = new Map<string, number>();
+    for (const x of await readAll()) {
+      if (x.source !== source) continue;
+      const k = new Date(Date.parse(x.ts) + 3 * 3600000).toISOString().slice(0, 7);
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([month, count]) => ({ month, count }));
+  }
+  const sql = pg();
+  await ready;
+  const rows = (await sql.query(
+    `SELECT to_char(ts AT TIME ZONE 'Europe/Istanbul', 'YYYY-MM') AS month, count(*)::int AS count
+     FROM google_archive WHERE source = $1 GROUP BY 1 ORDER BY 1 DESC`,
+    [source],
+  )) as { month: string; count: number }[];
+  return rows;
+}
+
+/** Bir aydaki kayıtlar (yeniden eskiye). */
+export async function listMonth(source: ArchiveSource, month: string, limit = 1000): Promise<ListRow[]> {
+  if (!/^\d{4}-\d{2}$/.test(month)) return [];
+  const from = new Date(`${month}-01T00:00:00+03:00`);
+  const to = new Date(from);
+  to.setUTCMonth(to.getUTCMonth() + 1);
+  if (!url) {
+    return (await readAll())
+      .filter((x) => x.source === source && x.ts >= from.toISOString() && Date.parse(x.ts) < to.getTime())
+      .sort((a, b) => b.ts.localeCompare(a.ts))
+      .slice(0, limit)
+      .map((x) => toRow(x));
+  }
+  const sql = pg();
+  await ready;
+  const rows = (await sql.query(
+    `SELECT source, id, ts, title, who, left(body, 400) AS body, link, meta FROM google_archive
+     WHERE source = $1 AND ts >= $2 AND ts < $3 ORDER BY ts DESC LIMIT ${Math.min(limit, 2000)}`,
+    [source, from.toISOString(), to.toISOString()],
+  )) as ArchiveItem[];
+  return rows.map((x) => toRow(x));
+}
+
+/** Aynı bağlantıya (ör. bir Chat sohbeti) ait kayıtlar; `before` verilirse ondan eskiler. Yeniden eskiye. */
+export async function listByLink(source: ArchiveSource, link: string, before?: string, limit = 60): Promise<ListRow[]> {
+  if (!url) {
+    return (await readAll())
+      .filter((x) => x.source === source && x.link === link && (!before || x.ts < before))
+      .sort((a, b) => b.ts.localeCompare(a.ts))
+      .slice(0, limit)
+      .map((x) => toRow(x, 6000));
+  }
+  const sql = pg();
+  await ready;
+  const rows = (await sql.query(
+    `SELECT source, id, ts, title, who, body, link, meta FROM google_archive
+     WHERE source = $1 AND link = $2 AND ($3::timestamptz IS NULL OR ts < $3) ORDER BY ts DESC LIMIT ${Math.min(limit, 200)}`,
+    [source, link, before ?? null],
+  )) as ArchiveItem[];
+  return rows.map((x) => toRow(x, 6000));
+}
+
+export interface ChatThread {
+  link: string;
+  title: string;
+  kind?: string;
+  last: string;
+  count: number;
+  lastWho: string;
+  lastText: string;
+}
+
+/** Arşivdeki tüm Chat sohbetleri (son mesajıyla), en son aktif olandan başlayarak. */
+export async function chatThreads(limit = 300): Promise<ChatThread[]> {
+  if (!url) {
+    const m = new Map<string, ChatThread>();
+    for (const x of await readAll()) {
+      if (x.source !== "chat" || !x.link) continue;
+      const t = m.get(x.link);
+      if (!t) m.set(x.link, { link: x.link, title: x.title, kind: x.meta?.kind as string | undefined, last: x.ts, count: 1, lastWho: x.who, lastText: x.body.slice(0, 160) });
+      else {
+        t.count++;
+        if (x.ts > t.last) Object.assign(t, { last: x.ts, title: x.title, lastWho: x.who, lastText: x.body.slice(0, 160) });
+      }
+    }
+    return [...m.values()].sort((a, b) => b.last.localeCompare(a.last)).slice(0, limit);
+  }
+  const sql = pg();
+  await ready;
+  const rows = (await sql.query(
+    `SELECT DISTINCT ON (link) link, title, meta->>'kind' AS kind, ts AS last, who AS "lastWho", left(body, 160) AS "lastText",
+       count(*) OVER (PARTITION BY link)::int AS count
+     FROM google_archive WHERE source = 'chat' AND link IS NOT NULL ORDER BY link, ts DESC`,
+  )) as ChatThread[];
+  return rows
+    .map((r) => ({ ...r, last: new Date(r.last).toISOString() }))
+    .sort((a, b) => b.last.localeCompare(a.last))
+    .slice(0, limit);
+}

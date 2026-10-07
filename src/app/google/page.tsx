@@ -1,16 +1,19 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAssistant } from "@/components/assistant/AssistantPanel";
 import { useGoogle } from "@/components/google/GoogleProvider";
 import { usePeriod } from "@/components/PeriodProvider";
 import { TiltCard } from "@/components/TiltCard";
 import { useTodos } from "@/components/todos/TodoProvider";
 import { Skeleton } from "@/components/fx";
-import { Icon, Segmented } from "@/components/ui";
+import { Icon, Segmented, Sheet } from "@/components/ui";
 import { spring } from "@/lib/motion";
 import { iso, newTodo } from "@/lib/todo";
+
+/** Türkçe duyarsız karşılaştırma */
+const norm = (s: string) => s.toLocaleLowerCase("tr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i");
 import type { ArchiveHit, ArchiveProgress, ArchiveSource, GChatSpace, GEvent, GMail, GMeeting, GoogleSnapshot } from "@/lib/google-types";
 
 type Tab = "calendar" | "gmail" | "chat" | "meet" | "archive";
@@ -22,7 +25,7 @@ function dayLabel(key: string) {
   const today = iso(new Date());
   const d = new Date(`${key}T12:00:00`);
   const diff = Math.round((d.getTime() - new Date(`${today}T12:00:00`).getTime()) / 86400000);
-  const base = d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
+  const base = d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
   return diff === 0 ? `Bugün · ${base}` : diff === 1 ? `Yarın · ${base}` : diff === -1 ? `Dün · ${base}` : base;
 }
 function ago(s: string, now = Date.now()) {
@@ -506,13 +509,95 @@ function EventRow({ e }: { e: GEvent }) {
 }
 
 // ------------------------------------------------------------------ Gmail
+/** Liste satırı (son gelenler ya da arşivden bir ay) */
+interface MailLite {
+  id: string;
+  from: string;
+  subject: string;
+  snippet: string;
+  date: string;
+  unread: boolean;
+  important: boolean;
+}
+const fromSnapshot = (m: GMail): MailLite => ({ id: m.id, from: m.from, subject: m.subject, snippet: m.snippet, date: m.date, unread: m.unread, important: m.important });
+const fromArchive = (r: ArchiveRow): MailLite => {
+  const labels = (r.meta?.labels as string[] | undefined) ?? [];
+  const sent = !!r.meta?.sent;
+  const [fromPart, to] = r.who.split(" → ");
+  const name = fromPart.replace(/\s*<[^>]*>\s*$/, "");
+  return {
+    id: r.id,
+    from: sent ? `Sen → ${(to ?? "").replace(/\s*<[^>]*>/g, "").split(",")[0]}` : name,
+    subject: r.title,
+    snippet: r.preview,
+    date: r.ts,
+    unread: labels.includes("UNREAD"),
+    important: labels.includes("IMPORTANT"),
+  };
+};
+interface ArchiveRow {
+  source: ArchiveSource;
+  id: string;
+  ts: string;
+  title: string;
+  who: string;
+  preview: string;
+  link?: string;
+  meta?: Record<string, unknown> | null;
+}
+const monthLabel = (m: string) => new Date(`${m}-15T12:00:00`).toLocaleDateString("tr-TR", { month: "long", year: "numeric" });
+
 function GmailTab({ snap }: { snap: GoogleSnapshot }) {
   const [f, setF] = useState<"all" | "unread" | "important">("all");
-  const list = snap.gmail.items.filter((m) => (f === "unread" ? m.unread : f === "important" ? m.important : true));
+  const [month, setMonth] = useState<string>("recent");
+  const [monthList, setMonthList] = useState<{ month: string; count: number }[]>([]);
+  const [rows, setRows] = useState<MailLite[] | null>(null);
+  const [open, setOpen] = useState<MailLite | null>(null);
   const { ask } = useAssistant();
+
+  useEffect(() => {
+    fetch("/api/google/archive?months=gmail", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j?.months && setMonthList(j.months))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (month === "recent") return;
+    setRows(null);
+    fetch(`/api/google/archive?source=gmail&month=${month}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { rows: [] }))
+      .then((j) => setRows((j.rows as ArchiveRow[]).map(fromArchive)))
+      .catch(() => setRows([]));
+  }, [month]);
+
+  const base = month === "recent" ? snap.gmail.items.map(fromSnapshot) : rows;
+  const list = base?.filter((m) => (f === "unread" ? m.unread : f === "important" ? m.important : true)) ?? null;
+  const groups = useMemo(() => {
+    if (!list) return [];
+    const m = new Map<string, MailLite[]>();
+    for (const x of list) {
+      const k = iso(new Date(x.date));
+      (m.get(k) ?? m.set(k, []).get(k)!).push(x);
+    }
+    return [...m.entries()];
+  }, [list]);
+
   return (
     <div>
       <SourceError text={snap.gmail.error} />
+      {/* ay seçici */}
+      <div className="no-scrollbar -mx-4 mb-3 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+        {[{ month: "recent", count: snap.gmail.items.length }, ...monthList].map((m) => (
+          <button
+            key={m.month}
+            onClick={() => setMonth(m.month)}
+            className={`clay-sm shrink-0 rounded-full px-4 py-2 text-xs font-bold ${month === m.month ? "bg-blue text-white" : "text-ink-2"}`}
+          >
+            {m.month === "recent" ? "Son gelenler" : monthLabel(m.month)}
+            <span className={`ml-1.5 ${month === m.month ? "text-white/75" : "text-ink-3"}`}>{m.count.toLocaleString("tr-TR")}</span>
+          </button>
+        ))}
+      </div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {(
           [
@@ -521,33 +606,71 @@ function GmailTab({ snap }: { snap: GoogleSnapshot }) {
             ["important", "Önemli"],
           ] as const
         ).map(([v, l]) => (
-          <button key={v} onClick={() => setF(v)} className={`clay-sm rounded-full px-4 py-2 text-xs font-bold ${f === v ? "bg-blue text-white" : "text-ink-2"}`}>
+          <button key={v} onClick={() => setF(v)} className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${f === v ? "bg-ink text-paper" : "bg-track text-ink-2"}`}>
             {l}
           </button>
         ))}
-        <button onClick={() => ask("Gelen kutumdaki okunmamış ve önemli e-postaları özetle; hangilerine yanıt vermem ya da aksiyon almam gerekiyor?")} className="clay-sm ml-auto rounded-full px-4 py-2 text-xs font-bold text-ink-2">
+        <button
+          onClick={() =>
+            ask(
+              month === "recent"
+                ? "Gelen kutumdaki okunmamış ve önemli e-postaları özetle; hangilerine yanıt vermem ya da aksiyon almam gerekiyor?"
+                : `${monthLabel(month)} ayındaki e-postalarımı arşivden incele: önemli konular, kimden ne geldi, açık kalan işler neler?`,
+            )
+          }
+          className="ml-auto rounded-full bg-track px-3.5 py-1.5 text-xs font-bold text-ink-2"
+        >
           ✨ Asistana özetlet
         </button>
       </div>
-      {!list.length && <Empty emoji="📭" text="Bu filtrede e-posta yok." />}
-      <div className="clay divide-y divide-line overflow-hidden">
-        {list.map((m, i) => (
-          <MailRow key={m.id} m={m} i={i} />
-        ))}
-      </div>
+      {!monthList.length && month === "recent" && (
+        <div className="mb-3 px-1 text-xs text-ink-3">Geçmiş e-postalar arşive indikçe burada ay ay listelenir (Arşiv sekmesinden ilerlemeyi görebilirsin).</div>
+      )}
+      {!list ? (
+        <div className="space-y-2">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-16 rounded-2xl" />
+          ))}
+        </div>
+      ) : !list.length ? (
+        <Empty emoji="📭" text="Bu görünümde e-posta yok." />
+      ) : (
+        <div className="space-y-4">
+          {groups.map(([day, mails]) => (
+            <section key={day}>
+              <div className="mb-1.5 px-1 text-xs font-extrabold text-ink-3">{dayLabel(day)}</div>
+              <div className="clay divide-y divide-line overflow-hidden">
+                {mails.map((m, i) => (
+                  <MailRow key={m.id} m={m} i={i} onOpen={() => setOpen(m)} />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+      <MailReader mail={open} onClose={() => setOpen(null)} />
     </div>
   );
 }
 
-function MailRow({ m, i }: { m: GMail; i: number }) {
+function MailRow({ m, i, onOpen }: { m: MailLite; i: number; onOpen: () => void }) {
   return (
-    <motion.a initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: Math.min(i, 12) * 0.025 }} href={m.link} target="_blank" rel="noreferrer" className="flex items-start gap-3 px-4 py-3 hover:bg-track/50">
+    <motion.div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => e.key === "Enter" && onOpen()}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay: Math.min(i, 12) * 0.02 }}
+      className="flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-track/50"
+    >
       <Avatar name={m.from} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className={`truncate ${m.unread ? "font-extrabold" : "font-semibold text-ink-2"}`}>{m.from}</span>
           {m.important && <span className="text-xs text-warn" title="Önemli">●</span>}
-          <span className="ml-auto shrink-0 text-xs text-ink-3">{ago(m.date)}</span>
+          <span className="ml-auto shrink-0 text-xs text-ink-3">{hm(m.date)}</span>
         </div>
         <div className={`truncate text-sm ${m.unread ? "font-bold" : "text-ink-2"}`}>
           {m.unread && <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-blue align-middle" />}
@@ -555,68 +678,343 @@ function MailRow({ m, i }: { m: GMail; i: number }) {
         </div>
         <div className="line-clamp-1 text-xs text-ink-3">{m.snippet}</div>
       </div>
-      <TaskButton make={() => newTodo({ title: `E-posta: ${m.subject} (${m.from})`, due: iso(new Date()), tags: ["eposta"], notes: m.link })} />
-    </motion.a>
+      <TaskButton make={() => newTodo({ title: `E-posta: ${m.subject} (${m.from})`, due: iso(new Date()), tags: ["eposta"] })} />
+    </motion.div>
+  );
+}
+
+interface FullMail {
+  id: string;
+  subject: string;
+  from: string;
+  fromEmail: string;
+  to: string;
+  cc: string;
+  date: string;
+  html: string;
+  text: string;
+  files: { name: string; size: number }[];
+  link?: string;
+  live: boolean;
+}
+
+/** E-postayı uygulama içinde açar; HTML gövde betik çalıştırmayan korumalı iframe'de gösterilir. */
+function MailReader({ mail, onClose }: { mail: MailLite | null; onClose: () => void }) {
+  const [full, setFull] = useState<FullMail | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const { ask } = useAssistant();
+  useEffect(() => {
+    if (!mail) return;
+    setFull(null);
+    setErr(null);
+    fetch(`/api/google/mail?id=${mail.id}`, { cache: "no-store" })
+      .then(async (r) => {
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error ?? "E-posta açılamadı");
+        setFull(j);
+      })
+      .catch((e) => setErr(e.message));
+  }, [mail]);
+
+  return (
+    <Sheet open={!!mail} onClose={onClose} wide title={<span className="line-clamp-2 text-lg">{mail?.subject}</span>}>
+      {mail && (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            <Avatar name={full?.from ?? mail.from} size={44} />
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="font-extrabold">{full?.from ?? mail.from}</div>
+              {full && <div className="truncate text-xs text-ink-3">{full.fromEmail}</div>}
+              {full?.to && <div className="mt-0.5 line-clamp-2 text-xs text-ink-3">Kime: {full.to}</div>}
+              {full?.cc && <div className="line-clamp-1 text-xs text-ink-3">Bilgi: {full.cc}</div>}
+            </div>
+            <div className="shrink-0 text-right text-xs text-ink-3">
+              {new Date(full?.date ?? mail.date).toLocaleString("tr-TR", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </div>
+          </div>
+          {!!full?.files.length && (
+            <div className="flex flex-wrap gap-2">
+              {full.files.map((f, i) => (
+                <span key={i} className="rounded-full bg-track px-3 py-1.5 text-xs font-bold text-ink-2">
+                  📎 {f.name} {f.size ? `· ${Math.max(1, Math.round(f.size / 1024))} KB` : ""}
+                </span>
+              ))}
+            </div>
+          )}
+          {err ? (
+            <div className="rounded-2xl bg-tint-fail px-4 py-3 text-sm">⚠️ {err}</div>
+          ) : !full ? (
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-3/4 rounded" />
+              <Skeleton className="h-4 w-full rounded" />
+              <Skeleton className="h-4 w-5/6 rounded" />
+              <Skeleton className="h-40 w-full rounded-2xl" />
+            </div>
+          ) : full.html ? (
+            <MailFrame html={full.html} />
+          ) : (
+            <div className="whitespace-pre-wrap break-words rounded-2xl bg-card p-4 text-[15px] leading-relaxed">{full.text || "(boş)"}</div>
+          )}
+          {full && !full.live && <div className="text-xs text-ink-3">Gmail'e şu an ulaşılamadığı için arşivdeki metin gösteriliyor.</div>}
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => {
+                onClose();
+                ask(`"${mail.subject}" konulu, ${mail.from} kaynaklı e-postayı (arşiv kimliği gmail/${mail.id}) oku ve özetle: benden ne bekleniyor, nasıl yanıt vermeliyim?`);
+              }}
+              className="clay-color rounded-full bg-blue px-4 py-2.5 text-sm font-bold text-white"
+            >
+              ✨ Asistana özetlet
+            </button>
+            <TaskButtonWide make={() => newTodo({ title: `E-posta: ${mail.subject} (${mail.from})`, due: iso(new Date()), tags: ["eposta"], notes: full?.link ?? "" })} />
+            {full?.link && (
+              <a href={full.link} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 rounded-full bg-track px-4 py-2.5 text-sm font-bold text-ink-2">
+                Gmail'de aç <Icon name="external" size={14} />
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+function MailFrame({ html }: { html: string }) {
+  const ref = useRef<HTMLIFrameElement>(null);
+  const [h, setH] = useState(320);
+  const doc = useMemo(
+    () => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none'; frame-src 'none'">
+<base target="_blank"><style>html,body{margin:0;background:#fff;color:#1f2330;font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow-wrap:anywhere}
+body{padding:14px}img{max-width:100%!important;height:auto!important}table{max-width:100%!important}pre{white-space:pre-wrap}a{color:#3f5ef0}</style></head><body>${html}</body></html>`,
+    [html],
+  );
+  const fit = () => {
+    const d = ref.current?.contentDocument;
+    if (d?.body) setH(Math.min(Math.max(d.documentElement.scrollHeight, 120), 20000));
+  };
+  return (
+    <iframe
+      ref={ref}
+      title="E-posta içeriği"
+      srcDoc={doc}
+      // betik yok; yalnızca yükseklik ölçümü için aynı köken ve bağlantıların yeni sekmede açılması
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      onLoad={() => {
+        fit();
+        setTimeout(fit, 400);
+        setTimeout(fit, 1500);
+      }}
+      className="w-full rounded-2xl border border-line bg-white"
+      style={{ height: h }}
+    />
+  );
+}
+
+function TaskButtonWide({ make }: { make: () => ReturnType<typeof newTodo> }) {
+  const { add } = useTodos();
+  const { toast } = usePeriod();
+  return (
+    <button
+      onClick={() => {
+        add(make());
+        toast("Görevlere eklendi");
+      }}
+      className="flex items-center gap-1.5 rounded-full bg-track px-4 py-2.5 text-sm font-bold text-ink-2"
+    >
+      <Icon name="todo" size={16} /> Görev yap
+    </button>
   );
 }
 
 // ------------------------------------------------------------------ Chat
+interface Thread {
+  link: string;
+  title: string;
+  kind?: string;
+  last: string;
+  count?: number;
+  lastWho: string;
+  lastText: string;
+  fallback?: GChatSpace;
+}
+
 function ChatTab({ snap }: { snap: GoogleSnapshot }) {
+  const [threads, setThreads] = useState<Thread[] | null>(null);
+  const [open, setOpen] = useState<Thread | null>(null);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    fetch("/api/google/archive?threads=1", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { threads: [] }))
+      .then((j) => setThreads(j.threads ?? []))
+      .catch(() => setThreads([]));
+  }, []);
+  // anlık görüntüdeki (en güncel) sohbetler + arşivdeki tüm sohbetler, tekilleştirilmiş
+  const list = useMemo(() => {
+    const m = new Map<string, Thread>();
+    for (const s of snap.chat.items) {
+      const last = s.messages.at(-1);
+      m.set(s.link, { link: s.link, title: s.title, kind: s.kind, last: last?.time ?? s.lastActive ?? "", lastWho: last?.sender ?? "", lastText: last?.text ?? "", fallback: s });
+    }
+    for (const t of threads ?? []) {
+      const cur = m.get(t.link);
+      if (!cur) m.set(t.link, t);
+      else m.set(t.link, { ...cur, count: t.count, ...(t.last > cur.last ? { last: t.last, lastWho: t.lastWho, lastText: t.lastText } : {}) });
+    }
+    const n = norm(q);
+    return [...m.values()].filter((t) => !n || norm(t.title).includes(n)).sort((a, b) => b.last.localeCompare(a.last));
+  }, [snap, threads, q]);
+
   return (
     <div>
       <SourceError text={snap.chat.error} />
-      {!snap.chat.items.length && !snap.chat.error && <Empty emoji="💬" text="Son 3 haftada sohbet yok." />}
-      <div className="grid gap-4 md:grid-cols-2">
-        {snap.chat.items.map((s, i) => (
-          <SpaceCard key={s.id} s={s} i={i} />
+      <div className="clay-pressed mb-3 flex items-center gap-2 rounded-full px-4 py-1">
+        <span className="text-ink-3">🔎</span>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Sohbet ara" className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-ink-3" />
+      </div>
+      {!list.length && threads && <Empty emoji="💬" text="Henüz sohbet yok." />}
+      {!threads && !list.length && <Skeleton className="h-48 rounded-[28px]" />}
+      <div className="clay divide-y divide-line overflow-hidden">
+        {list.map((t, i) => (
+          <motion.button
+            key={t.link}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: Math.min(i, 15) * 0.02 }}
+            onClick={() => setOpen(t)}
+            className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-track/50"
+          >
+            {t.kind === "DIRECT_MESSAGE" ? (
+              <Avatar name={t.title} size={44} />
+            ) : (
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-white" style={{ background: colorOf(t.title) }}>
+                <Icon name="chat" size={20} />
+              </span>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-2">
+                <span className="truncate font-extrabold">{t.title}</span>
+                <span className="ml-auto shrink-0 text-xs text-ink-3">{t.last ? ago(t.last) : ""}</span>
+              </div>
+              <div className="truncate text-sm text-ink-2">
+                {t.lastWho && <span className="font-semibold">{t.lastWho}: </span>}
+                {t.lastText}
+              </div>
+            </div>
+            <Icon name="chevron" size={16} className="shrink-0 text-ink-3" />
+          </motion.button>
         ))}
       </div>
+      <ChatSheet thread={open} onClose={() => setOpen(null)} />
     </div>
   );
 }
 
-function SpaceCard({ s, i }: { s: GChatSpace; i: number }) {
-  const [all, setAll] = useState(false);
+interface CMsg {
+  id: string;
+  who: string;
+  mine: boolean;
+  text: string;
+  ts: string;
+}
+
+function ChatSheet({ thread, onClose }: { thread: Thread | null; onClose: () => void }) {
+  const [msgs, setMsgs] = useState<CMsg[] | null>(null);
+  const [more, setMore] = useState(false);
+  const [loading, setLoading] = useState(false);
   const { ask } = useAssistant();
-  const msgs = all ? s.messages : s.messages.slice(-4);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const load = async (before?: string) => {
+    if (!thread) return;
+    setLoading(true);
+    try {
+      const p = new URLSearchParams({ source: "chat", link: thread.link });
+      if (before) p.set("before", before);
+      const r = await fetch(`/api/google/archive?${p}`, { cache: "no-store" });
+      const rows: ArchiveRow[] = r.ok ? (await r.json()).rows : [];
+      const got = rows.map((x) => ({ id: x.id, who: x.who, mine: !!x.meta?.mine || x.who === "Sen", text: x.preview, ts: x.ts })).reverse();
+      setMore(rows.length >= 60);
+      setMsgs((cur) => {
+        if (before) return [...got, ...(cur ?? [])];
+        // arşiv boşsa anlık görüntüdeki son mesajlar
+        if (!got.length && thread.fallback) return thread.fallback.messages.map((m) => ({ id: m.id, who: m.sender, mine: m.mine, text: m.text, ts: m.time }));
+        return got;
+      });
+      if (!before) setTimeout(() => endRef.current?.scrollIntoView({ block: "end" }), 350);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    setMsgs(null);
+    if (thread) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread]);
+
+  let lastDay = "";
   return (
-    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.enter, delay: Math.min(i, 8) * 0.04 }} className="clay flex flex-col p-4">
-      <div className="mb-3 flex items-center gap-3">
-        {s.kind === "DIRECT_MESSAGE" ? <Avatar name={s.title} size={36} /> : (
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white" style={{ background: colorOf(s.title) }}>
-            <Icon name="chat" size={18} />
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-extrabold">{s.title}</div>
-          <div className="text-xs text-ink-3">{s.kind === "DIRECT_MESSAGE" ? "Doğrudan mesaj" : s.kind === "GROUP_CHAT" ? "Grup sohbeti" : "Alan"}{s.lastActive ? ` · ${ago(s.lastActive)}` : ""}</div>
-        </div>
-        <a href={s.link} target="_blank" rel="noreferrer" className="grid h-9 w-9 place-items-center rounded-full text-ink-3 hover:bg-track" title="Chat'te aç" aria-label="Chat'te aç">
-          <Icon name="external" size={16} />
-        </a>
-      </div>
-      <div className="space-y-2">
-        {msgs.map((m) => (
-          <div key={m.id} className={`flex ${m.mine ? "justify-end" : ""}`}>
-            <div className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm ${m.mine ? "rounded-br-md bg-blue text-white" : "rounded-bl-md bg-track"}`}>
-              {!m.mine && s.kind !== "DIRECT_MESSAGE" && <div className="text-[11px] font-extrabold" style={{ color: colorOf(m.sender) }}>{m.sender}</div>}
-              <div className="whitespace-pre-wrap break-words">{m.text}</div>
-              <div className={`mt-0.5 text-right text-[10px] ${m.mine ? "text-white/70" : "text-ink-3"}`}>{ago(m.time)}</div>
-            </div>
+    <Sheet open={!!thread} onClose={onClose} wide title={thread?.title}>
+      {thread && (
+        <div>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => {
+                onClose();
+                ask(`Google Chat'teki "${thread.title}" sohbetini arşivden incele ve özetle. Benden beklenen bir şey ya da takip etmem gereken bir konu var mı?`);
+              }}
+              className="rounded-full bg-blue px-3.5 py-1.5 text-xs font-bold text-white"
+            >
+              ✨ Özetle
+            </button>
+            <a href={thread.link} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded-full bg-track px-3.5 py-1.5 text-xs font-bold text-ink-2">
+              Chat'te aç <Icon name="external" size={12} />
+            </a>
           </div>
-        ))}
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {s.messages.length > 4 && (
-          <button onClick={() => setAll((v) => !v)} className="rounded-full bg-track px-3 py-1.5 text-xs font-bold text-ink-2">
-            {all ? "Daha az" : `Tümü (${s.messages.length})`}
-          </button>
-        )}
-        <button onClick={() => ask(`Google Chat'teki "${s.title}" sohbetinin son mesajlarını özetle. Benden beklenen bir şey ya da takip etmem gereken bir konu var mı?`)} className="rounded-full bg-track px-3 py-1.5 text-xs font-bold text-ink-2">
-          ✨ Özetle
-        </button>
-      </div>
-    </motion.div>
+          {more && (
+            <div className="mb-3 text-center">
+              <button disabled={loading} onClick={() => msgs?.[0] && load(msgs[0].ts)} className="rounded-full bg-track px-4 py-2 text-xs font-bold text-ink-2">
+                {loading ? "Yükleniyor…" : "Daha eski mesajlar"}
+              </button>
+            </div>
+          )}
+          {!msgs ? (
+            <div className="space-y-2">
+              {[0, 1, 2].map((i) => (
+                <Skeleton key={i} className={`h-12 rounded-2xl ${i % 2 ? "ml-auto w-2/3" : "w-3/4"}`} />
+              ))}
+            </div>
+          ) : !msgs.length ? (
+            <Empty emoji="💬" text="Bu sohbetin mesajları henüz arşive inmedi." />
+          ) : (
+            <div className="space-y-2">
+              {msgs.map((m) => {
+                const day = iso(new Date(m.ts));
+                const sep = day !== lastDay;
+                lastDay = day;
+                return (
+                  <div key={m.id}>
+                    {sep && <div className="my-3 text-center text-[11px] font-bold text-ink-3">{dayLabel(day)}</div>}
+                    <div className={`flex ${m.mine ? "justify-end" : ""}`}>
+                      <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${m.mine ? "rounded-br-md bg-blue text-white" : "rounded-bl-md bg-track"}`}>
+                        {!m.mine && thread.kind !== "DIRECT_MESSAGE" && (
+                          <div className="text-[11px] font-extrabold" style={{ color: colorOf(m.who) }}>
+                            {m.who}
+                          </div>
+                        )}
+                        <div className="whitespace-pre-wrap break-words">{m.text}</div>
+                        <div className={`mt-0.5 text-right text-[10px] ${m.mine ? "text-white/70" : "text-ink-3"}`}>{hm(m.ts)}</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div ref={endRef} />
+            </div>
+          )}
+        </div>
+      )}
+    </Sheet>
   );
 }
 

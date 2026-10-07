@@ -122,7 +122,7 @@ function mailItem(m: FullMsg, email: string): ArchiveItem {
     title: h("subject") || "(konu yok)",
     who: `${sent ? "Sen" : from.name} <${from.email}>${to ? ` → ${to.slice(0, 300)}` : ""}`,
     body: (text || decode(m.snippet ?? "")) + (files.length ? `\n[Ekler: ${files.join(", ")}]` : ""),
-    link: `https://mail.google.com/mail/u/${encodeURIComponent(email)}/#all/${m.threadId}`,
+    link: `https://mail.google.com/mail/?authuser=${encodeURIComponent(email)}#all/${m.threadId}`,
     meta: { threadId: m.threadId, labels: m.labelIds ?? [], cc: h("cc") || undefined, sent },
   };
 }

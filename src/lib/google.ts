@@ -304,7 +304,7 @@ async function syncGmail(get: Get, email: string): Promise<{ items: GMail[]; unr
         date: new Date(Number(m.internalDate ?? 0)).toISOString(),
         unread: !!m.labelIds?.includes("UNREAD"),
         important: !!m.labelIds?.includes("IMPORTANT"),
-        link: `https://mail.google.com/mail/u/${encodeURIComponent(email)}/#inbox/${m.threadId}`,
+        link: `https://mail.google.com/mail/?authuser=${encodeURIComponent(email)}#all/${m.threadId}`,
       };
     });
   return { items, unread: inbox.messagesUnread };
