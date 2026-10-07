@@ -34,7 +34,7 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   çizmez, parmak kaydırır; iki parmak her zaman kaydırır. Araçlar: kalem, fosforlu, silgi, 6 renk, 3 kalınlık, çizgili/kareli/boş kâğıt.
   Kısayollar: `N` yeni not · `T` yazı · `P` kalem · `H` fosforlu · `E` silgi · `1–6` renk · `⌘/Ctrl+Z` geri al · `⌘/Ctrl+Shift+Z` yinele · `Esc` kapat.
 - **Yapay zekâ asistanı (Gemini 3.8 Flash):** Üst bardaki ✨ düğmesi ya da **J** / **Alt+J**. Her soruda
-  `knowledge/asistan.md` (iş tanımı, önemi, ilkeler, yapılacaklar — uygulama içinden düzenlenebilir veya yeni .md
+  `knowledge/*.md` dosyalarını (00 okuma kılavuzu · 01 iş tanımı ve iş süreci · 02 aylık kontrol iş akışı — uygulama içinden düzenlenebilir veya yeni .md
   yüklenebilir) ile canlı veriyi birlikte okur: 10 başlığın iki hastane için güncel durumu, madde notları / anomaliler,
   aksiyonlar, dönem notları (el yazısı notlar görüntü olarak gönderilir), kişisel görevler, terminler ve geçmiş dönem özeti.
   Yanıtlar akışla gelir; önerdiği görevler tek tuşla Görevler'e eklenir. Alan sayfasında "✨ Asistana sor" düğmesi var.

@@ -1,28 +1,31 @@
-import { store } from "@/lib/db";
 import { bad, handle } from "@/lib/api";
-import { loadKnowledge } from "@/lib/assistant";
+import { listKnowledge, removeKnowledge, safeName, saveKnowledge } from "@/lib/assistant";
 
 export const dynamic = "force-dynamic";
 
+/** Asistanın okuduğu tüm bilgi dosyaları. */
 export async function GET() {
-  return handle(() => loadKnowledge());
+  return handle(async () => ({ files: await listKnowledge() }));
 }
 
-/** Bilgi dosyasını günceller (uygulama içinden düzenleme / .md yükleme). */
+/** Dosya kaydet / yeni dosya ekle: { name, md } */
 export async function PUT(req: Request) {
-  const { md } = ((await req.json().catch(() => ({}))) ?? {}) as { md?: string };
+  const { name, md } = ((await req.json().catch(() => ({}))) ?? {}) as { name?: string; md?: string };
+  if (!name || !safeName(name).replace(/\.md$/, "")) return bad("Dosya adı gerekli");
   if (typeof md !== "string" || !md.trim()) return bad("Boş içerik");
   if (md.length > 400_000) return bad("Dosya çok büyük (400 KB üstü)");
   return handle(async () => {
-    await store().setKV("assistant-md", { md, updatedAt: new Date().toISOString() });
-    return loadKnowledge();
+    await saveKnowledge(name, md);
+    return { files: await listKnowledge() };
   });
 }
 
-/** Varsayılan dosyaya (knowledge/asistan.md) döner. */
-export async function DELETE() {
+/** ?name=… — düzenlenmiş varsayılanı sıfırlar ya da eklenen dosyayı siler */
+export async function DELETE(req: Request) {
+  const name = new URL(req.url).searchParams.get("name");
+  if (!name) return bad("Dosya adı gerekli");
   return handle(async () => {
-    await store().setKV("assistant-md", { md: "", updatedAt: new Date().toISOString() });
-    return loadKnowledge();
+    await removeKnowledge(name);
+    return { files: await listKnowledge() };
   });
 }

@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   let system: string;
   try {
     const [k, ctx] = await Promise.all([loadKnowledge(), buildContext(period)]);
-    system = systemPrompt(k.md, ctx);
+    system = systemPrompt(k, ctx);
   } catch (e) {
     return bad(`Bağlam hazırlanamadı: ${e instanceof Error ? e.message : e}`, 500);
   }

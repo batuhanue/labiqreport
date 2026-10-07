@@ -269,7 +269,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
                   {status?.model || "Gemini"} · {data ? periodLabel(data.period) : "dönem seçili değil"} verisiyle
                 </div>
               </div>
-              <button onClick={() => setView(view === "chat" ? "knowledge" : "chat")} className={`grid h-10 w-10 place-items-center rounded-full ${view === "knowledge" ? "clay-pressed text-blue" : "clay-sm"}`} title="Bilgi dosyası (.md)" aria-label="Bilgi dosyası">
+              <button onClick={() => setView(view === "chat" ? "knowledge" : "chat")} className={`grid h-10 w-10 place-items-center rounded-full ${view === "knowledge" ? "clay-pressed text-blue" : "clay-sm"}`} title="Bilgi dosyaları (.md)" aria-label="Bilgi dosyası">
                 <Icon name="note" size={18} />
               </button>
               {msgs.length > 0 && view === "chat" && (
@@ -487,76 +487,108 @@ function TaskSuggestions({ tasks }: { tasks: string[] }) {
   );
 }
 
-/* ------------------------------------------------------------------ bilgi dosyası düzenleyici */
+/* ------------------------------------------------------------------ bilgi dosyaları düzenleyici */
+interface KFile {
+  name: string;
+  md: string;
+  source: "default" | "edited" | "custom";
+  updatedAt?: string;
+}
+const SOURCE_LABEL: Record<KFile["source"], string> = { default: "Varsayılan (depoda)", edited: "Düzenlendi", custom: "Eklenen dosya" };
+
 function KnowledgeEditor() {
   const { toast } = usePeriod();
+  const [files, setFiles] = useState<KFile[]>([]);
+  const [sel, setSel] = useState<string | null>(null);
   const [md, setMd] = useState("");
-  const [source, setSource] = useState<"custom" | "default" | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const apply = (list: KFile[], pick?: string) => {
+    setFiles(list);
+    const name = pick && list.some((f) => f.name === pick) ? pick : sel && list.some((f) => f.name === sel) ? sel : list[0]?.name ?? null;
+    setSel(name);
+    setMd(list.find((f) => f.name === name)?.md ?? "");
+    setDirty(false);
+  };
+
   useEffect(() => {
     fetch("/api/assistant/knowledge", { cache: "no-store" })
       .then((r) => r.json())
-      .then((k) => {
-        setMd(k.md ?? "");
-        setSource(k.source);
-      });
+      .then((k) => apply(k.files ?? []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const save = async (text = md) => {
+  const cur = files.find((f) => f.name === sel);
+
+  const save = async (name: string, text: string) => {
     setBusy(true);
-    const r = await fetch("/api/assistant/knowledge", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ md: text }) });
+    const r = await fetch("/api/assistant/knowledge", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, md: text }) });
     setBusy(false);
-    if (r.ok) {
-      const k = await r.json();
-      setSource(k.source);
-      setDirty(false);
-      toast("Bilgi dosyası kaydedildi");
-    } else toast("Kaydedilemedi");
+    if (!r.ok) return toast((await r.json().catch(() => ({}))).error || "Kaydedilemedi");
+    const k = await r.json();
+    apply(k.files, (k.files as KFile[]).find((f) => f.name.toLowerCase() === name.toLowerCase() || f.name.startsWith(name.replace(/\.md$/i, "")))?.name ?? name);
+    toast("Bilgi dosyası kaydedildi");
   };
+
+  const remove = async () => {
+    if (!cur) return;
+    const msg = cur.source === "edited" ? `${cur.name} varsayılan haline dönsün mü?` : `${cur.name} silinsin mi?`;
+    if (!confirm(msg)) return;
+    const r = await fetch(`/api/assistant/knowledge?name=${encodeURIComponent(cur.name)}`, { method: "DELETE" });
+    if (r.ok) apply((await r.json()).files, cur.source === "edited" ? cur.name : undefined);
+  };
+
+  const total = files.reduce((a, f) => a + f.md.length, 0);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 sm:p-5">
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">
-          <div className="font-extrabold">Bilgi dosyası (iş tanımı, önemi, yapılacaklar)</div>
-          <div className="text-xs text-ink-3">{source === "custom" ? "Düzenlenmiş sürüm kullanılıyor" : "Varsayılan: knowledge/asistan.md"} · Asistan her soruda bunu okur</div>
+          <div className="font-extrabold">Bilgi dosyaları — asistan seni bunlardan tanır</div>
+          <div className="text-xs text-ink-3">
+            {files.length} dosya · {Math.round(total / 1000)} bin karakter · her soruda hepsi sırayla okunur
+          </div>
         </div>
         <input
           ref={fileRef}
           type="file"
+          multiple
           accept=".md,.markdown,.txt,text/markdown,text/plain"
           className="hidden"
           onChange={async (e) => {
-            const f = e.target.files?.[0];
-            if (!f) return;
-            const text = await f.text();
-            setMd(text);
-            await save(text);
+            const list = [...(e.target.files ?? [])];
+            for (const f of list) await save(f.name, await f.text());
             e.target.value = "";
           }}
         />
         <button onClick={() => fileRef.current?.click()} className="clay-sm flex items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-bold">
-          <Icon name="upload" size={15} /> .md yükle
+          <Icon name="upload" size={15} /> .md ekle
         </button>
-        {source === "custom" && (
+      </div>
+
+      {/* dosya sekmeleri */}
+      <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        {files.map((f) => (
           <button
-            onClick={async () => {
-              if (!confirm("Varsayılan bilgi dosyasına dönülsün mü?")) return;
-              const r = await fetch("/api/assistant/knowledge", { method: "DELETE" });
-              const k = await r.json();
-              setMd(k.md);
-              setSource(k.source);
+            key={f.name}
+            onClick={() => {
+              if (dirty && !confirm("Kaydedilmemiş değişiklikler kaybolsun mu?")) return;
+              setSel(f.name);
+              setMd(f.md);
               setDirty(false);
             }}
-            className="rounded-full px-3 py-2 text-sm font-bold text-ink-3"
+            className={`relative shrink-0 rounded-2xl px-3.5 py-2 text-left text-xs font-bold ${sel === f.name ? "clay-dark" : "clay-sm"}`}
           >
-            Varsayılana dön
+            <div className="max-w-[220px] truncate">{f.name}</div>
+            <div className={`text-[10px] font-semibold ${sel === f.name ? "opacity-70" : "text-ink-3"}`}>
+              {SOURCE_LABEL[f.source]} · {Math.round(f.md.length / 1000)}k
+            </div>
           </button>
-        )}
+        ))}
       </div>
+
       <textarea
         className="field min-h-0 flex-1 resize-none font-mono text-[13px] leading-relaxed"
         value={md}
@@ -565,10 +597,17 @@ function KnowledgeEditor() {
           setDirty(true);
         }}
         spellCheck={false}
+        disabled={!cur}
       />
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs text-ink-3">{md.length.toLocaleString("tr-TR")} karakter</span>
-        <button disabled={!dirty || busy} onClick={() => save()} className="clay-dark rounded-full px-6 py-3 font-extrabold disabled:opacity-40">
+        {cur && cur.source !== "default" ? (
+          <button onClick={remove} className="rounded-full px-3 py-2 text-sm font-bold text-ink-3 hover:text-fail">
+            {cur.source === "edited" ? "Varsayılana dön" : "Dosyayı sil"}
+          </button>
+        ) : (
+          <span className="text-xs text-ink-3">{md.length.toLocaleString("tr-TR")} karakter</span>
+        )}
+        <button disabled={!dirty || busy || !cur} onClick={() => cur && save(cur.name, md)} className="clay-dark rounded-full px-6 py-3 font-extrabold disabled:opacity-40">
           {busy ? "Kaydediliyor…" : "Kaydet"}
         </button>
       </div>

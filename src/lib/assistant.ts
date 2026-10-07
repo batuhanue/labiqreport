@@ -10,18 +10,68 @@ import type { Mark, PeriodData } from "./types";
 
 export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 
-/* ------------------------------------------------------------------ bilgi dosyası */
-export interface Knowledge {
+/* ------------------------------------------------------------------ bilgi dosyaları */
+// knowledge/*.md (varsayılanlar, depoda) + uygulama içinden yapılan düzenlemeler/eklenen dosyalar (veritabanı).
+export interface KnowledgeFile {
+  name: string;
   md: string;
-  source: "custom" | "default";
+  source: "default" | "edited" | "custom";
   updatedAt?: string;
 }
+interface KbStore {
+  files: Record<string, { md: string; updatedAt: string }>;
+}
 
-export async function loadKnowledge(): Promise<Knowledge> {
-  const custom = await store().getKV<{ md: string; updatedAt: string }>("assistant-md");
-  if (custom?.md?.trim()) return { md: custom.md, source: "custom", updatedAt: custom.updatedAt };
-  const md = await fs.readFile(path.join(process.cwd(), "knowledge", "asistan.md"), "utf8");
-  return { md, source: "default" };
+const KB_KEY = "assistant-kb";
+const kbDir = () => path.join(process.cwd(), "knowledge");
+export const safeName = (n: string) =>
+  n
+    .normalize("NFC")
+    .replace(/[^\p{L}\p{N}._ -]/gu, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/(\.md)?$/i, ".md")
+    .slice(0, 80);
+
+async function readKb(): Promise<KbStore> {
+  return (await store().getKV<KbStore>(KB_KEY)) ?? { files: {} };
+}
+
+export async function listKnowledge(): Promise<KnowledgeFile[]> {
+  const out = new Map<string, KnowledgeFile>();
+  try {
+    for (const f of (await fs.readdir(kbDir())).filter((x) => x.endsWith(".md")).sort()) {
+      out.set(f, { name: f, md: await fs.readFile(path.join(kbDir(), f), "utf8"), source: "default" });
+    }
+  } catch {}
+  const kb = await readKb();
+  for (const [name, v] of Object.entries(kb.files)) {
+    if (!v.md?.trim()) continue;
+    out.set(name, { name, md: v.md, source: out.has(name) ? "edited" : "custom", updatedAt: v.updatedAt });
+  }
+  // eski tek dosyalık düzenleme (önceki sürüm) varsa ek dosya olarak koru
+  const legacy = await store().getKV<{ md: string; updatedAt: string }>("assistant-md");
+  if (legacy?.md?.trim() && !out.has("ozel-notlar.md")) out.set("ozel-notlar.md", { name: "ozel-notlar.md", md: legacy.md, source: "custom", updatedAt: legacy.updatedAt });
+  return [...out.values()].sort((a, b) => a.name.localeCompare(b.name, "tr"));
+}
+
+export async function saveKnowledge(name: string, md: string) {
+  const kb = await readKb();
+  kb.files[safeName(name)] = { md, updatedAt: new Date().toISOString() };
+  await store().setKV(KB_KEY, kb);
+}
+
+/** Düzenlenmiş varsayılan dosyayı sıfırlar; eklenen dosyayı siler. */
+export async function removeKnowledge(name: string) {
+  const kb = await readKb();
+  delete kb.files[name];
+  await store().setKV(KB_KEY, kb);
+  if (name === "ozel-notlar.md") await store().setKV("assistant-md", { md: "", updatedAt: new Date().toISOString() });
+}
+
+export async function loadKnowledge() {
+  const files = await listKnowledge();
+  return files.map((f) => `\n\n######## DOSYA: ${f.name} ########\n\n${f.md.trim()}`).join("\n");
 }
 
 /* ------------------------------------------------------------------ canlı bağlam */
@@ -114,7 +164,9 @@ export async function buildContext(viewPeriod?: string | null) {
 
 export function systemPrompt(knowledge: string, context: string) {
   return `Sen Batuhan Başar'ın kişisel yapay zekâ iş asistanısın. Türkçe, kısa, net ve aksiyona dönük yanıt ver.
-Aşağıda iki kaynak var: (1) BİLGİ DOSYASI — işin tanımı, önemi, ilkeler ve yöntemler; (2) CANLI VERİ — uygulamadaki güncel durum.
+Aşağıda iki kaynak var: (1) BİLGİ DOSYALARI — Batuhan'ın kim olduğu, şirketi, rolü ve sınırı, iş tanımı, takvimi, atanmış görevleri, açık bulguları, kişiler ve kontrol yöntemleri; (2) CANLI VERİ — uygulamadaki güncel durum.
+Batuhan'ı bu dosyalardan tanıyorsun: onu yeniden tanıtma, adıyla hitap et; geçmişini, çalışma biçimini ve tercihlerini bildiğini davranışınla göster.
+Bilgi dosyalarındaki durum bilgileri belirli bir tarihe aittir; CANLI VERİ ile çelişirse canlı veriye güven ve farkı belirt.
 
 Kurallar:
 - Soruları önce CANLI VERİ'ye dayanarak yanıtla; madde kodu (ör. R-02-4), hastane ve not alıntısıyla kanıt göster.
@@ -132,7 +184,7 @@ cuma 11:00 Cuma toplantısı tek sayfa özeti hazırla #toplantı
   Görev önermediğin yanıtlarda bu bloğu ekleme.
 - El yazısı not görüntüleri eklenmişse onları da oku ve gerekiyorsa içeriğine atıf yap.
 
-=============== BİLGİ DOSYASI ===============
+=============== BİLGİ DOSYALARI ===============
 ${knowledge}
 
 =============== CANLI VERİ ===============
