@@ -81,7 +81,7 @@ export async function POST(req: Request) {
   if (!claudeConfigured()) return bad("ANTHROPIC_API_KEY tanımlı değil. Vercel → Settings → Environment Variables'a ekleyip Redeploy yapın.", 503);
 
   const body = (await req.json().catch(() => null)) as { messages?: Msg[]; period?: string; images?: Img[]; deep?: boolean; stream?: boolean; google?: boolean } | null;
-  const history = (body?.messages ?? []).filter((x) => x.text?.trim()).slice(-20);
+  const history = normalizeHistory((body?.messages ?? []).filter((x) => x.text?.trim() && (x.role === "user" || x.role === "assistant")).slice(-20));
   if (!history.length || history[history.length - 1].role !== "user") return bad("Soru boş");
   const period = body?.period && PERIOD_RE.test(body.period) ? body.period : null;
   const images = (body?.images ?? []).filter((x) => /^image\/(png|jpeg|webp)$/.test(x.mime) && x.data.length < 1_500_000).slice(0, 6);
@@ -118,10 +118,11 @@ export async function POST(req: Request) {
     content.push({ type: "text", text: `SORU: ${x.text.slice(0, 20000)}` });
     return { role: "user", content };
   });
-  const systemBlocks: Anthropic.TextBlockParam[] = [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+  // sistem 1 saat önbellekte kalır: seyrek sorularda da (5 dk'dan uzun aralık) önbellekten okunur
+  const systemBlocks: Anthropic.TextBlockParam[] = [{ type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } }];
   const effort = body?.deep ? "high" : "low";
 
-  const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+  const usage = { input: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, output: 0 };
   let rounds = 0;
   let retries = 0;
   let finalError: string | undefined;
@@ -166,6 +167,7 @@ export async function POST(req: Request) {
           round--;
           continue;
         }
+        console.error("[assistant] Claude hatası:", e);
         finalError = friendlyError(e);
         emit(`\n\n⚠️ ${finalError}`);
         return;
@@ -173,6 +175,7 @@ export async function POST(req: Request) {
       usage.input += message.usage.input_tokens ?? 0;
       usage.cacheRead += message.usage.cache_read_input_tokens ?? 0;
       usage.cacheWrite += message.usage.cache_creation_input_tokens ?? 0;
+      usage.cacheWrite1h += message.usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
       usage.output += message.usage.output_tokens ?? 0;
       if (!streaming) for (const b of message.content) if (b.type === "text") emit(b.text);
 
@@ -209,7 +212,7 @@ export async function POST(req: Request) {
   const totals = () => ({ prompt: usage.input + usage.cacheRead + usage.cacheWrite, cached: usage.cacheRead, written: usage.cacheWrite, output: usage.output });
   const meta = () => `\u001eMETA${JSON.stringify({ ...totals(), model: ASSISTANT_MODEL, rounds, cost: costUsd(ASSISTANT_MODEL, usage) })}`;
   const log = () =>
-    recordUsage({ at: new Date().toISOString(), model: ASSISTANT_MODEL, rounds, ...totals(), cost: costUsd(ASSISTANT_MODEL, usage), ms: Date.now() - started, error: finalError?.slice(0, 200), retries, ctxChars: context.length });
+    recordUsage({ at: new Date().toISOString(), model: ASSISTANT_MODEL, rounds, ...totals(), cost: costUsd(ASSISTANT_MODEL, usage), ms: Date.now() - started, error: finalError?.slice(0, 600), retries, ctxChars: context.length });
 
   // akışsız (yedek yol)
   if (!streaming) {
@@ -237,6 +240,21 @@ export async function POST(req: Request) {
     },
   });
   return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no", "X-Model": ASSISTANT_MODEL } });
+}
+
+/**
+ * Messages API kuralları: ilk mesaj kullanıcıdan olmalı, roller sırayla gelmeli.
+ * Hatayla biten turlarda yanıtsız kalan kullanıcı mesajı (ardından yine kullanıcı gelir) atılır,
+ * böylece model önceki başarısız soruya takılmaz.
+ */
+function normalizeHistory(list: Msg[]) {
+  const out: Msg[] = [];
+  for (const m of list) {
+    if (!out.length && m.role !== "user") continue;
+    if (out.length && out[out.length - 1].role === m.role) out[out.length - 1] = m;
+    else out.push(m);
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ araçlar (Google arşivi)

@@ -945,12 +945,13 @@ function UsageView() {
             <div key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
               <span className="w-[86px] shrink-0 font-bold tabular-nums text-ink-3">{new Date(r.at).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
               {r.error ? (
-                <span className="min-w-0 flex-1 truncate font-semibold text-fail" title={r.error}>
-                  ⚠ {r.error}
-                </span>
+                <details className="min-w-0 flex-1 font-semibold text-fail">
+                  <summary className="cursor-pointer truncate">⚠ {r.error}</summary>
+                  <div className="mt-1 whitespace-pre-wrap break-words font-medium">{r.error}</div>
+                </details>
               ) : (
                 <span className="min-w-0 flex-1 font-semibold tabular-nums">
-                  {k(r.prompt)} giriş ({k(r.cached)} önbellek) · {k(r.output)} çıkış · {r.rounds} tur · {(r.ms / 1000).toFixed(1)} sn
+                  {k(r.prompt)} giriş ({k(r.cached)} önbellekten{r.written ? ` · ${k(r.written)} önbelleğe yazıldı` : ""}) · {k(r.output)} çıkış · {r.rounds} tur · {(r.ms / 1000).toFixed(1)} sn
                 </span>
               )}
               {!!r.retries && <span className="rounded-full bg-track px-1.5 font-bold">{r.retries} tekrar</span>}

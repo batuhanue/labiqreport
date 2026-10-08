@@ -23,6 +23,12 @@ export const isTransient = (e: unknown) =>
   (e instanceof Anthropic.APIError && (e.status === 429 || e.status === 529 || (typeof e.status === "number" && e.status >= 500))) ||
   /overloaded|rate.?limit/i.test(String((e as Error)?.message ?? ""));
 
+/** API hata gövdesindeki asıl açıklama ("400 {json}" yerine yalnızca mesaj). */
+function apiMessage(e: InstanceType<typeof Anthropic.APIError>) {
+  const body = e.error as { error?: { message?: string } } | undefined;
+  return body?.error?.message || e.message;
+}
+
 /** Kullanıcıya gösterilecek kısa hata metni. */
 export function friendlyError(e: unknown) {
   if (e instanceof Anthropic.AuthenticationError) return "Anthropic API anahtarı geçersiz (401). Vercel'de ANTHROPIC_API_KEY'i kontrol edip yeniden dağıt.";
@@ -31,7 +37,11 @@ export function friendlyError(e: unknown) {
   if (e instanceof Anthropic.RateLimitError) return "Anthropic hız sınırına ulaşıldı (429). Biraz bekleyip “Tekrar dene”ye bas.";
   if (e instanceof Anthropic.APIConnectionError) return "Anthropic'e bağlanılamadı (ağ/zaman aşımı). Tekrar dene.";
   if (e instanceof Anthropic.APIError && (e.status === 529 || (e.status ?? 0) >= 500)) return `Claude şu an çok yoğun (${e.status}); birkaç deneme yanıt vermedi. Biraz sonra “Tekrar dene”ye bas.`;
-  if (e instanceof Anthropic.BadRequestError) return `İstek reddedildi (400): ${e.message.slice(0, 300)}`;
+  if (e instanceof Anthropic.BadRequestError) {
+    const msg = apiMessage(e);
+    if (/credit balance/i.test(msg)) return "Anthropic hesabında kredi yok (400). Console → Billing'den kredi yükleyip tekrar dene.";
+    return `İstek reddedildi (400): ${msg.slice(0, 500)}`;
+  }
   return `Claude hatası: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`;
 }
 
@@ -42,11 +52,12 @@ const PRICES: Record<string, { in: number; out: number; read: number }> = {
   "claude-opus-5-5": { in: 4, out: 20, read: 0.05 },
   "claude-fable-5-1": { in: 10, out: 50, read: 0.025 },
 };
-/** Tahmini maliyet: önbellek okuması ×read, 5 dk önbellek yazımı ×1.25. Bilinmeyen modelde null. */
-export function costUsd(model: string, u: { input: number; cacheRead: number; cacheWrite: number; output: number }) {
+/** Tahmini maliyet: önbellek okuması ×read, önbellek yazımı 5 dk ×1.25 / 1 sa ×2. Bilinmeyen modelde null. */
+export function costUsd(model: string, u: { input: number; cacheRead: number; cacheWrite: number; cacheWrite1h?: number; output: number }) {
   const p = PRICES[model];
   if (!p) return null;
-  return (u.input * p.in + u.cacheRead * p.in * p.read + u.cacheWrite * p.in * 1.25 + u.output * p.out) / 1_000_000;
+  const w1h = Math.min(u.cacheWrite1h ?? 0, u.cacheWrite);
+  return (u.input * p.in + u.cacheRead * p.in * p.read + (u.cacheWrite - w1h) * p.in * 1.25 + w1h * p.in * 2 + u.output * p.out) / 1_000_000;
 }
 
 // ------------------------------------------------------------------ kullanım kaydı
