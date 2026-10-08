@@ -69,10 +69,6 @@ export default function WorldView({
     ro.observe(el);
     return () => ro.disconnect();
   }, [panelOpen]);
-  // bir bina seçilince panel kendiliğinden açılır
-  useEffect(() => {
-    if (focus) setPanelOpen(true);
-  }, [focus]);
 
   const stats = useMemo(() => {
     const out: Record<string, BuildingStats> = {};
@@ -85,13 +81,16 @@ export default function WorldView({
     return out;
   }, [data]);
 
+  // bir bina ya da rampa seçilince panel (gizliyse) kendiliğinden açılır
   const onSelect = useCallback((code: string | null) => {
     setFocus(code);
     setSelectedItem(null);
+    if (code) setPanelOpen(true);
   }, []);
   const onSelectItem = useCallback((code: string, itemId: string) => {
     setFocus(code);
     setSelectedItem(itemId);
+    setPanelOpen(true);
   }, []);
 
   useEffect(() => {
@@ -125,7 +124,14 @@ export default function WorldView({
   const detailItem = detailArea?.items.find((i) => i.id === detail);
 
   return (
-    <div className={`relative h-[calc(100dvh-15rem)] min-h-[560px] overflow-hidden rounded-[30px] lg:h-[calc(100dvh-8.5rem)] lg:min-h-[620px] ${pal.dark ? "bg-[#151a25]" : "bg-[#eaf0f8]"}`}>
+    <div
+      // overflow-hidden kutu programla kaydırılabilir; sahne hiçbir koşulda yana kaymasın
+      onScroll={(e) => {
+        e.currentTarget.scrollLeft = 0;
+        e.currentTarget.scrollTop = 0;
+      }}
+      className={`relative h-[calc(100dvh-15rem)] min-h-[560px] overflow-hidden rounded-[30px] lg:h-[calc(100dvh-8.5rem)] lg:min-h-[620px] ${pal.dark ? "bg-[#151a25]" : "bg-[#eaf0f8]"}`}
+    >
       <Scene pal={pal} items={data.items} stats={stats} focus={focus} selectedItem={selectedItem} onSelect={onSelect} onSelectItem={onSelectItem} api={api} panelPx={panelPx} fireworks={fireworks} labels={labels} />
 
       {/* bina rozetleri: konumları sahnede her karede güncellenir */}
@@ -161,6 +167,7 @@ export default function WorldView({
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: 24, scale: 0.98 }}
             transition={{ type: "spring", stiffness: 320, damping: 30 }}
+            data-panel-scroll
             className={`pointer-events-auto min-h-0 flex-1 overflow-y-auto rounded-[24px] p-4 ${glass}`}
           >
             {area ? (
@@ -495,7 +502,15 @@ function AreaPanel({
   const dl = deadlineInfo(data.period, area);
   const refs = useRef<Record<string, HTMLDivElement | null>>({});
   useEffect(() => {
-    if (selectedItem) refs.current[selectedItem]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    // scrollIntoView kullanılmaz: panel gizliyken tarayıcı bütün sahneyi kaydırıyordu. Yalnızca panelin içi kaydırılır.
+    const el = selectedItem ? refs.current[selectedItem] : null;
+    const box = el?.closest<HTMLElement>("[data-panel-scroll]");
+    if (!el || !box) return;
+    const t = setTimeout(() => {
+      const d = el.getBoundingClientRect().top - box.getBoundingClientRect().top;
+      if (d < 8 || d + el.offsetHeight > box.clientHeight - 8) box.scrollTo({ top: box.scrollTop + d - 12, behavior: "smooth" });
+    }, 60);
+    return () => clearTimeout(t);
   }, [selectedItem]);
 
   const setMark = (id: string, h: Hospital, m: Mark) => {
