@@ -669,6 +669,8 @@ const clean = (raw: string) => {
 /** Arşiv aramaları: yanıt beklerken son adım canlı, sonra katlanmış özet. */
 function Steps({ steps, live }: { steps: string[]; live: boolean }) {
   const [open, setOpen] = useState(false);
+  const searches = steps.filter((x) => /^(🔎|📄)/u.test(x)).length;
+  const memory = steps.filter((x) => x.startsWith("🧠")).length;
   if (live) {
     return (
       <motion.div key={steps.length} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-ink-3">
@@ -680,7 +682,14 @@ function Steps({ steps, live }: { steps: string[]; live: boolean }) {
   return (
     <div className="mb-2 text-xs text-ink-3">
       <button onClick={() => setOpen((v) => !v)} className="font-bold hover:text-blue">
-        📚 Arşivde {steps.length} arama {open ? "▴" : "▾"}
+        {[
+          searches && `📚 Arşivde ${searches} arama`,
+          memory && `🧠 Belleğe ${memory} kayıt`,
+          !searches && !memory && `${steps.length} adım`,
+        ]
+          .filter(Boolean)
+          .join(" · ")}{" "}
+        {open ? "▴" : "▾"}
       </button>
       {open && (
         <ul className="mt-1 space-y-0.5 pl-1">

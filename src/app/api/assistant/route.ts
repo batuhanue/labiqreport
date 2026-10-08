@@ -133,6 +133,16 @@ export async function POST(req: Request) {
   let rounds = 0;
   let retries = 0;
   let finalError: string | undefined;
+  let reply = "";
+  const memoryNotes: { topic: string; eklenen: number; degistirilen: number }[] = [];
+  /** belleğe yazıldıysa yanıtın sonuna kesin bilgi (model ayrıca yazmaz) */
+  const memoryLine = () => {
+    if (!memoryNotes.length) return "";
+    const parts = memoryNotes.map((n) =>
+      n.eklenen || n.degistirilen ? `${n.topic} (${[n.eklenen && `+${n.eklenen} madde`, n.degistirilen && `${n.degistirilen} güncellendi`].filter(Boolean).join(", ")})` : `${n.topic} (zaten kayıtlıydı)`,
+    );
+    return `${reply.trim() ? "\n\n" : ""}🧠 **Belleğe yazıldı:** ${parts.join(" · ")}`;
+  };
 
   /** Tek model turu: metni akıtır, tamamlanan mesajı döndürür. */
   async function turn(emit: (s: string) => void) {
@@ -158,15 +168,25 @@ export async function POST(req: Request) {
     for (let round = 0; round < 6; round++) {
       rounds++;
       let emitted = 0;
+      let fresh = true;
+      /** görünen metin; turlar arasına paragraf boşluğu konur (yoksa cümleler birbirine yapışır) */
+      const say = (t: string) => {
+        if (!t) return;
+        if (fresh && reply && !/\s$/.test(reply)) t = `\n\n${t}`;
+        fresh = false;
+        reply += t;
+        emitted += t.length;
+        emit(t);
+      };
       let message: Anthropic.Message;
       try {
-        message = await turn((t) => {
-          emitted += t.length;
-          emit(t);
-        });
+        message = await turn(say);
       } catch (e) {
         // akış ortasında koptuysa yarım metni istemcide sil (\u001fX<n>\u001f) ve turu yeniden iste
-        if (emitted) emit(`\u001fX${emitted}\u001f`);
+        if (emitted) {
+          emit(`\u001fX${emitted}\u001f`);
+          reply = reply.slice(0, reply.length - emitted);
+        }
         if (isTransient(e) && roundRetries < 1 && left() > 12000) {
           roundRetries++;
           retries++;
@@ -184,7 +204,7 @@ export async function POST(req: Request) {
       usage.cacheWrite += message.usage.cache_creation_input_tokens ?? 0;
       usage.cacheWrite1h += message.usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
       usage.output += message.usage.output_tokens ?? 0;
-      if (!streaming) for (const b of message.content) if (b.type === "text") emit(b.text);
+      if (!streaming) for (const b of message.content) if (b.type === "text") say(b.text);
 
       if (message.stop_reason === "refusal") {
         emit("\n\n_(Claude bu isteği yanıtlamadı — soruyu farklı ifade etmeyi dene)_");
@@ -205,7 +225,9 @@ export async function POST(req: Request) {
       for (const c of calls) {
         emit(`\u001fS${statusOf(c)}\u001f`);
         try {
-          results.push({ type: "tool_result", tool_use_id: c.id, content: JSON.stringify(await runTool(c)) });
+          const out = await runTool(c);
+          if (c.name === "remember" && "topic" in out) memoryNotes.push(out);
+          results.push({ type: "tool_result", tool_use_id: c.id, content: JSON.stringify(out) });
         } catch (e) {
           results.push({ type: "tool_result", tool_use_id: c.id, is_error: true, content: e instanceof Error ? e.message : String(e) });
         }
@@ -225,6 +247,7 @@ export async function POST(req: Request) {
   if (!streaming) {
     let text = "";
     await converse((s) => (text += s));
+    text += memoryLine();
     await log();
     if (!text.replace(/\u001f[^\u001f]*\u001f/g, "").trim()) text += "_(boş yanıt)_";
     return new Response(text + meta(), { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
@@ -236,6 +259,8 @@ export async function POST(req: Request) {
     async start(controller) {
       try {
         await converse((s) => controller.enqueue(enc.encode(s)));
+        const mem = memoryLine();
+        if (mem) controller.enqueue(enc.encode(mem));
       } catch (e) {
         finalError = friendlyError(e);
         controller.enqueue(enc.encode(`\n\n⚠️ ${finalError}`));
