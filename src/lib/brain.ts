@@ -2,14 +2,15 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
 import { getItem, search } from "./archive";
-import { loadKnowledge, loadMemory, memoryPrompt } from "./assistant";
+import { TOOLS as ARCHIVE_TOOLS, runTool, statusOf } from "./agent-tools";
+import { listKnowledge, loadKnowledge, loadMemory, memoryPrompt, saveKnowledge } from "./assistant";
 import { AREAS } from "./checklist";
 import { ASSISTANT_MODEL, claude, claudeConfigured, costUsd, recordUsage } from "./claude";
 import { store } from "./db";
 import { getSnapshot } from "./google";
 import { areaProgress, deadlineInfo, normalizePeriod, periodLabel } from "./period";
 import { emptyStore, type TodoStore } from "./todo";
-import type { AgentId, AgentRun, BrainFocus, BrainItem, BrainRun, BrainState, ItemSource, Signal } from "./brain-types";
+import { agentById, type AgentId, type AgentRun, type BrainFocus, type BrainItem, type BrainRun, type BrainState, type ItemSource, type ItemWork, type Signal } from "./brain-types";
 
 /*
  * Beyin döngüsü (her "düşünme"):
@@ -308,6 +309,7 @@ function apply(items: BrainItem[], agent: AgentId, outs: AgentOut[], signals: Si
   let created = 0;
   let updated = 0;
   const touched: BrainItem[] = [];
+  const createdIds: string[] = [];
   for (const o of outs) {
     const srcs: ItemSource[] = o.signal_ids
       .map((id) => byId.get(id))
@@ -352,9 +354,10 @@ function apply(items: BrainItem[], agent: AgentId, outs: AgentOut[], signals: Si
     };
     items.unshift(it);
     touched.push(it);
+    createdIds.push(it.id);
     created++;
   }
-  return { created, updated, touched };
+  return { created, updated, touched, createdIds };
 }
 
 // ------------------------------------------------------------------ 3) dosya ajanı
@@ -427,6 +430,7 @@ export async function think(opts: { trigger: BrainRun["trigger"]; budgetMs?: num
     ];
     const agents = (Object.keys(signals) as AgentId[]).filter((a) => a !== "dosya" && signals[a].length && (!opts.only || opts.only.includes(a))) as Exclude<AgentId, "dosya">[];
     const touched: BrainItem[] = [];
+    const createdIds: string[] = [];
     // ajanlar paralel çalışır; her biri en fazla 20 sinyal (kalanı sonraki düşünmede)
     const results = await Promise.all(
       agents.map(async (a) => {
@@ -449,11 +453,13 @@ export async function think(opts: { trigger: BrainRun["trigger"]; budgetMs?: num
         ar.created = x.created;
         ar.updated = x.updated;
         touched.push(...x.touched);
+        createdIds.push(...x.createdIds);
         for (const s of r.batch) meta.seen[s.id] = now; // yalnızca başarılı ajanın sinyalleri işlenmiş sayılır
       }
       run.agents.push(ar);
     }
     meta.captures = meta.captures.filter((c) => !meta.seen[c.id]);
+    run.createdIds = createdIds;
     run.files = await attachFiles(touched);
     run.agents.push({ agent: "dosya", signals: touched.length, created: 0, updated: run.files, ms: 0 });
 
@@ -527,7 +533,7 @@ export async function state(): Promise<BrainState> {
   };
 }
 
-export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "status" | "steps" | "priority" | "due" | "title" | "todoId">>) {
+export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "status" | "steps" | "priority" | "due" | "title" | "todoId" | "agent">>) {
   const items = await readItems();
   const it = items.find((x) => x.id === id);
   if (!it) return null;
@@ -537,6 +543,7 @@ export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "sta
   if (patch.due !== undefined) it.due = /^\d{4}-\d{2}-\d{2}$/.test(patch.due ?? "") ? patch.due : undefined;
   if (patch.title?.trim()) it.title = patch.title.trim().slice(0, 200);
   if (patch.todoId) it.todoId = patch.todoId;
+  if (patch.agent && agentById(patch.agent)) it.agent = patch.agent;
   it.updatedAt = new Date().toISOString();
   await store().setKV(ITEMS_KEY, items);
   return it;
@@ -547,4 +554,194 @@ export async function due(minMinutes: number) {
   const meta = await readMeta();
   if (meta.lock && meta.lock > Date.now()) return false;
   return !meta.lastRun || Date.now() - Date.parse(meta.lastRun) > minMinutes * 60_000 || meta.captures.length > 0;
+}
+
+// ------------------------------------------------------------------ ajan işi yapar (teslimat)
+/*
+ * "Ajana ver": ajan işin kaynaklarını (e-posta/sohbet/transkript gövdeleri), dosyaları ve arşivi araçlarla okuyup
+ * teslimatı yazar: yanıt taslağı, özet, analiz, hazırlık notu. Kural: okumak serbest; dışarıya bir şey gidecekse
+ * (e-posta, mesaj, paylaşım) yalnızca taslak hazırlar ve onaya bırakır.
+ */
+const WORK_HINT: Record<AgentId, string> = {
+  posta: "E-posta işlerinde yanıt gerekiyorsa gönderilmeye hazır Türkçe yanıt taslağını (Konu/Kime dahil) yaz; gerekiyorsa önce eski yazışmaları arşivde ara.",
+  sohbet: "Sohbetteki isteğe verilecek kısa ve net yanıt taslağını ya da istenen bilgiyi hazırla.",
+  takvim: "Toplantı için bir sayfalık hazırlık notu yaz: amaç, katılımcılar, Batuhan'ın getirmesi gereken veri/dosya, sorulacaklar, önceki toplantılardan açık kalanlar.",
+  toplanti: "Transkriptten kararlar, sorumlu-termin listesi ve takip edilmesi gerekenleri çıkar; gerekiyorsa katılımcılara gidecek özet e-posta taslağını yaz.",
+  denetim: "Kontrol yöntemine uygun kontrol planı ve gerekirse sorumluya gidecek kısa, suçlamayan bilgi/talep metnini hazırla.",
+  dosya: "İlgili dosyaları arşivde bul, içeriklerini oku ve işe yarayan kısımları özetle.",
+  gorev: "İşi yap: gereken bilgiyi arşivden topla ve istenen çıktıyı (taslak, liste, özet, plan) yaz.",
+};
+
+const RULES_FILE = "ajan-kurallari.md";
+/** Düzeltmeden çıkan kalıcı kuralı ajanın başlığı altına yazar (bilgi dosyaları panelinde görünür, her işte okunur). */
+async function addRule(agent: AgentId, rule: string) {
+  const name = agentById(agent)?.name ?? agent;
+  const files = await listKnowledge();
+  let md = files.find((f) => f.name === RULES_FILE)?.md?.trim() || "# Ajan kuralları\n\nBatuhan'ın düzeltmelerinden çıkan kalıcı kurallar. Her ajan kendi başlığındaki kurallara her işte uyar. Silersen unutulur.";
+  const day = istDay();
+  const line = `- (${day}) ${rule.replace(/\s+/g, " ").trim()}`;
+  const lines = md.split("\n");
+  const h = lines.findIndex((l) => l.trim() === `## ${name}`);
+  if (h < 0) md = `${md.trimEnd()}\n\n## ${name}\n${line}`;
+  else {
+    let end = h + 1;
+    while (end < lines.length && !/^##\s/.test(lines[end])) end++;
+    while (end > h + 1 && !lines[end - 1].trim()) end--;
+    lines.splice(end, 0, line);
+    md = lines.join("\n");
+  }
+  await saveKnowledge(RULES_FILE, `${md.trim()}\n`);
+}
+
+const RULE_SCHEMA = {
+  type: "object",
+  properties: {
+    standing: { type: "boolean", description: "kalıcı tercih/kural mı (true) yoksa yalnızca bu işe özel mi (false)" },
+    rule: { type: "string", description: "kalıcıysa genel, tek cümlelik emir kipinde kural (kişi/proje adı olmadan); değilse boş" },
+  },
+  required: ["standing", "rule"],
+  additionalProperties: false,
+} as const;
+
+async function classify(agent: AgentId, title: string, feedback: string, usage: Usage) {
+  const res = await claude().messages.parse({
+    model: ASSISTANT_MODEL,
+    max_tokens: 1000,
+    output_config: { effort: "low", format: jsonSchemaOutputFormat(RULE_SCHEMA) },
+    messages: [
+      {
+        role: "user",
+        content: `Batuhan, ${agentById(agent)?.name ?? agent} ajanının "${title}" işindeki teslimatını şu düzeltmeyle geri gönderdi: "${feedback}"\nBu düzeltme yalnızca bu işe mi özel (bu taslak, bu kişi, "bu sefer") yoksa bundan sonraki benzer işlerde de uygulanacak kalıcı bir tercih mi ("her zaman", "asla", biçim/ton tercihi, kırmızı çizgi)?`,
+      },
+    ],
+  });
+  addUsage(usage, res);
+  const p = res.parsed_output;
+  return p?.standing && p.rule.trim() ? p.rule.trim() : null;
+}
+
+export async function work(id: string, opts: { feedback?: string; budgetMs?: number } = {}): Promise<BrainItem | null> {
+  if (!claudeConfigured()) throw new Error("ANTHROPIC_API_KEY tanımlı değil");
+  const t0 = Date.now();
+  const budget = opts.budgetMs ?? 55000;
+  const left = () => budget - (Date.now() - t0);
+  let items = await readItems();
+  const it = items.find((x) => x.id === id);
+  if (!it) return null;
+  const prev = it.work;
+  it.work = { status: "running", output: prev?.output ?? "", used: [], revisions: prev?.revisions ?? [], at: new Date().toISOString() };
+  if (it.status === "inbox" || it.status === "todo") it.status = "doing";
+  await store().setKV(ITEMS_KEY, items);
+
+  const usage: Usage = { input: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, output: 0 };
+  let rule: string | null = null;
+  const w: ItemWork = it.work;
+  try {
+    const [knowledge, memory] = await Promise.all([loadKnowledge(), loadMemory()]);
+    const system: Anthropic.TextBlockParam[] = [
+      { type: "text", text: brainSystem(knowledge), cache_control: { type: "ephemeral", ttl: "1h" } },
+      { type: "text", text: memoryPrompt(memory), cache_control: { type: "ephemeral", ttl: "1h" } },
+    ];
+    // kaynakların tam metni (arşivden)
+    const bodies = await Promise.all(
+      it.sources.slice(0, 6).map(async (s) => {
+        const full = s.ref ? await getItem(s.ref.source as "gmail", s.ref.id).catch(() => null) : null;
+        return `### ${s.title}${s.who ? ` — ${s.who}` : ""} (${trTime(s.ts)})\n${clip(full?.body ?? "", 5000) || "(metin arşivde yok; gerekirse ara)"}`;
+      }),
+    );
+    const agent = agentById(it.agent);
+    const ruleLine = `${agent?.name ?? "Ajan"} olarak çalışıyorsun. ${WORK_HINT[it.agent]} Bilgi dosyalarındaki "${RULES_FILE}" içinde kendi başlığın altındaki kurallara mutlaka uy.`;
+    const content = `ŞU AN: ${ruleLine}
+Bugün: ${istDay()}.
+
+İŞ: ${it.title}
+Özet: ${it.summary}
+Neden: ${it.why}
+${it.due ? `Termin: ${it.due}\n` : ""}${it.person ? `İlgili kişi: ${it.person}\n` : ""}${it.area ? `Denetim başlığı: ${it.area}\n` : ""}Adımlar: ${it.steps.map((s) => `${s.done ? "✓" : "☐"} ${s.title}`).join(" · ")}
+
+KAYNAKLAR:
+${bodies.join("\n\n") || "(yok)"}
+
+BULUNAN DOSYALAR:
+${it.files.map((f) => `- [${f.id}] ${f.name}: ${f.excerpt ?? ""}`).join("\n") || "(yok — gerekirse arşivde source=drive ile ara, get_archive_item ile oku)"}
+${opts.feedback && prev?.output ? `\nÖNCEKİ TESLİMATIN:\n${prev.output}\n\nBATUHAN'IN DÜZELTMESİ: "${opts.feedback}" — teslimatı buna göre yeniden yaz.` : ""}
+
+Teslimatın kendisini yaz, ne yapacağını anlatma. Türkçe, kısa başlık + kısa bölümler/maddeler; taslak metinler gönderilmeye hazır olsun. Eksik bilgi varsa (varsayım) diye işaretle; veri uydurma.
+Dışarıya hiçbir şey gönderemezsin. Bir e-posta/mesaj gönderilmesi gerekiyorsa taslağını yaz ve EN SONA tek satır ekle: "GİDECEK: <kime, hangi kanaldan, ne>". Gerekmiyorsa bu satırı ekleme.
+Kullandığın kaynak/dosyaları sonda tek satırda belirt ("Kaynak: …").`;
+    const messages: Anthropic.MessageParam[] = [{ role: "user", content }];
+    let text = "";
+    for (let round = 0; round < 6; round++) {
+      const res = await claude().messages.create(
+        { model: ASSISTANT_MODEL, max_tokens: 8000, system, tools: ARCHIVE_TOOLS, output_config: { effort: "medium" }, messages },
+        { timeout: Math.max(8000, left() - 3000) },
+      );
+      addUsage(usage, res);
+      text = res.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("\n").trim() || text;
+      const calls = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+      if (res.stop_reason !== "tool_use" || !calls.length || left() < 12000) break;
+      messages.push({ role: "assistant", content: res.content });
+      const results: Anthropic.ToolResultBlockParam[] = [];
+      for (const c of calls) {
+        w.used.push(statusOf(c));
+        try {
+          results.push({ type: "tool_result", tool_use_id: c.id, content: JSON.stringify(await runTool(c)) });
+        } catch (e) {
+          results.push({ type: "tool_result", tool_use_id: c.id, is_error: true, content: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      messages.push({ role: "user", content: results });
+    }
+    if (!text) throw new Error("Ajan boş teslimat döndürdü");
+    const m = text.match(/\n?\s*GİDECEK:\s*(.+)\s*$/i);
+    w.outbound = m?.[1].trim();
+    w.output = m ? text.slice(0, m.index).trim() : text;
+    w.status = w.outbound ? "waiting_ok" : "ready";
+    if (opts.feedback) {
+      rule = await classify(it.agent, it.title, opts.feedback, usage).catch(() => null);
+      w.revisions.push({ at: new Date().toISOString(), feedback: opts.feedback, rule: rule ?? undefined });
+      if (rule) await addRule(it.agent, rule);
+    }
+  } catch (e) {
+    w.status = "error";
+    w.error = e instanceof Error ? e.message.slice(0, 300) : String(e);
+  } finally {
+    w.ms = Date.now() - t0;
+    w.cost = costUsd(ASSISTANT_MODEL, usage);
+    // çalışırken başka değişiklik olmuş olabilir: güncel listeye yaz
+    items = await readItems();
+    const cur = items.find((x) => x.id === id);
+    if (cur) {
+      cur.work = w;
+      if (w.status === "waiting_ok") cur.status = "waiting";
+      cur.updatedAt = new Date().toISOString();
+      await store().setKV(ITEMS_KEY, items);
+    }
+    await recordUsage({
+      at: new Date().toISOString(),
+      model: ASSISTANT_MODEL,
+      rounds: 1,
+      prompt: usage.input + usage.cacheRead + usage.cacheWrite,
+      cached: usage.cacheRead,
+      written: usage.cacheWrite,
+      output: usage.output,
+      cost: w.cost ?? null,
+      ms: w.ms ?? 0,
+      error: w.error,
+      label: `${agentById(it.agent)?.emoji ?? "🧠"} İş`,
+    });
+  }
+  return (await readItems()).find((x) => x.id === id) ?? null;
+}
+
+/** Onay: taslak onaylandı (gönderim şimdilik Batuhan'da — Gmail'de açıp gönderir). */
+export async function approve(id: string) {
+  const items = await readItems();
+  const it = items.find((x) => x.id === id);
+  if (!it?.work) return null;
+  it.work.status = "approved";
+  it.status = "done";
+  it.updatedAt = new Date().toISOString();
+  await store().setKV(ITEMS_KEY, items);
+  return it;
 }

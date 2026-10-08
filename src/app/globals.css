@@ -392,3 +392,16 @@ body {
   border: none;
   border-top: 1px solid var(--color-line);
 }
+
+/* sanal ofis: servis kabloları (kesikli çizgi akar; ajan çalışırken hızlanır) */
+@keyframes office-wire {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+.office-wire {
+  animation: office-wire 2.4s linear infinite;
+}
+.office-wire-live {
+  animation: office-wire 0.5s linear infinite;
+}

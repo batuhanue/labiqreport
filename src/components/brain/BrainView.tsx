@@ -8,6 +8,7 @@ import { useTodos } from "@/components/todos/TodoProvider";
 import { Skeleton } from "@/components/fx";
 import { Icon, Sheet } from "@/components/ui";
 import { AGENTS, KIND_LABEL, STATUS_META, agentById, type AgentId, type BrainItem, type BrainRun, type BrainState, type ItemStatus } from "@/lib/brain-types";
+import { renderMd } from "@/lib/markdown";
 import { dueLabel, newTodo, PRIORITY, uid } from "@/lib/todo";
 
 type Col = Exclude<ItemStatus, "dismissed">;
@@ -100,6 +101,43 @@ export default function BrainView() {
     }
   };
 
+  /** ajan işi yapar (teslimat); feedback ile düzeltir */
+  const runWork = useCallback(
+    async (id: string, feedback?: string) => {
+      const mark = (x: BrainItem): BrainItem => ({ ...x, status: x.status === "inbox" || x.status === "todo" ? "doing" : x.status, work: { status: "running", output: x.work?.output ?? "", used: [], revisions: x.work?.revisions ?? [], at: new Date().toISOString() } });
+      setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? mark(x) : x)) } : s));
+      setOpen((o) => (o && o.id === id ? mark(o) : o));
+      try {
+        const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "work", id, feedback }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+        const item = j.item as BrainItem;
+        setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? item : x)) } : s));
+        setOpen((o) => (o && o.id === id ? item : o));
+        const last = item.work?.revisions.at(-1);
+        toast(item.work?.status === "error" ? `Ajan hata verdi: ${item.work.error}` : feedback && last?.rule ? `Kalıcı kural öğrenildi: ${last.rule}` : item.work?.status === "waiting_ok" ? "Taslak hazır — onayını bekliyor" : "Teslimat hazır");
+      } catch (e) {
+        toast((e as Error).message);
+        load();
+      }
+    },
+    [toast, load],
+  );
+  const approveWork = async (id: string) => {
+    const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "approve", id }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.item) return toast("Onaylanamadı");
+    setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? j.item : x)) } : s));
+    setOpen(j.item);
+    toast("Onaylandı");
+  };
+  const working = !!st?.items.some((x) => x.work?.status === "running");
+  useEffect(() => {
+    if (!working) return;
+    const t = setInterval(load, 6000);
+    return () => clearInterval(t);
+  }, [working, load]);
+
   const items = useMemo(() => (st?.items ?? []).filter((x) => !agent || x.agent === agent || x.sources.some((s) => s.agent === agent)), [st, agent]);
   const byCol = useMemo(() => {
     const m = Object.fromEntries(COLS.map((c) => [c, [] as BrainItem[]])) as Record<Col, BrainItem[]>;
@@ -124,9 +162,13 @@ export default function BrainView() {
     <div className="space-y-5">
       <Hero st={st} busy={busy} onThink={think} agent={agent} onAgent={setAgent} />
       <Capture
-        onDone={(s) => {
+        onDone={(s, newId, doNow) => {
           setSt(s);
-          toast("Beyin notu işe çevirdi");
+          const it = newId ? s.items.find((x) => x.id === newId) : undefined;
+          if (it && doNow) {
+            toast(`${agentById(it.agent)?.name ?? "Ajan"} işe başladı`);
+            runWork(it.id);
+          } else toast(it ? "Beyin notu işe çevirdi" : "Not işlendi");
         }}
       />
       {st.focus && <Focus st={st} onOpen={setOpen} />}
@@ -169,7 +211,7 @@ export default function BrainView() {
       </div>
 
       <Runs runs={st.runs} />
-      <ItemSheet x={open} onClose={() => setOpen(null)} onPatch={patch} />
+      <ItemSheet x={open} onClose={() => setOpen(null)} onPatch={patch} onWork={runWork} onApprove={approveWork} />
     </div>
   );
 }
@@ -313,9 +355,11 @@ function Hero({ st, busy, onThink, agent, onAgent }: { st: BrainState; busy: boo
   );
 }
 
-// ------------------------------------------------------------------ beyne yaz
-function Capture({ onDone }: { onDone: (s: BrainState) => void }) {
+// ------------------------------------------------------------------ görev çubuğu
+function Capture({ onDone }: { onDone: (s: BrainState, newId: string | undefined, doNow: boolean) => void }) {
   const [text, setText] = useState("");
+  const [agent, setAgent] = useState<AgentId | "">("");
+  const [doNow, setDoNow] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const submit = async (e: React.FormEvent) => {
@@ -325,11 +369,11 @@ function Capture({ onDone }: { onDone: (s: BrainState) => void }) {
     setBusy(true);
     setErr(null);
     try {
-      const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "capture", text: t }) });
+      const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "capture", text: t, agent: agent || undefined }) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
       setText("");
-      onDone(j.state);
+      onDone(j.state, j.run?.createdIds?.[0], doNow);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -337,8 +381,22 @@ function Capture({ onDone }: { onDone: (s: BrainState) => void }) {
     }
   };
   return (
-    <form onSubmit={submit}>
-      <div className="clay-pressed flex items-end gap-2 rounded-[24px] p-2 pl-4">
+    <form onSubmit={submit} className="clay p-2.5">
+      <div className="flex flex-wrap items-center gap-2 px-1 pb-2">
+        <select value={agent} onChange={(e) => setAgent(e.target.value as AgentId | "")} className="clay-sm rounded-full bg-transparent px-3 py-1.5 text-xs font-extrabold outline-none" aria-label="Ajan">
+          <option value="">🧠 Beyin seçsin</option>
+          {AGENTS.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.emoji} {a.name}
+            </option>
+          ))}
+        </select>
+        <button type="button" onClick={() => setDoNow((v) => !v)} className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${doNow ? "bg-blue text-white" : "bg-track text-ink-2"}`} title="Açık: ajan işi hemen yapıp teslimatı yazar. Kapalı: yalnızca iş olarak kaydedilir.">
+          ⚡ Hemen yapsın {doNow ? "açık" : "kapalı"}
+        </button>
+        <span className="hidden text-[11px] font-semibold text-ink-3 sm:inline">Okumak serbest; dışarıya bir şey gidecekse taslak hazırlar, onayını bekler.</span>
+      </div>
+      <div className="clay-pressed flex items-end gap-2 rounded-[22px] p-2 pl-4">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -349,11 +407,11 @@ function Capture({ onDone }: { onDone: (s: BrainState) => void }) {
             }
           }}
           rows={1}
-          placeholder="Beyne yaz: bir iş, not ya da istek…"
+          placeholder="Bir iş ver: “Ceren Hanım'a Bursa dönem sonucu için hatırlatma taslağı yaz”"
           className="max-h-40 min-h-[44px] flex-1 resize-none bg-transparent py-2.5 text-[15px] outline-none placeholder:text-ink-3"
         />
         <motion.button whileTap={{ scale: 0.92 }} disabled={busy || !text.trim()} className="clay-color grid h-11 shrink-0 place-items-center rounded-full bg-blue px-4 text-sm font-extrabold text-white disabled:opacity-50">
-          {busy ? "Anlıyor…" : "Beyne yaz"}
+          {busy ? "Anlıyor…" : "Ver"}
         </motion.button>
       </div>
       {err && <div className="mt-1 px-3 text-xs font-semibold text-fail">{err}</div>}
@@ -429,6 +487,10 @@ function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () =>
           )}
           {x.files.length > 0 && <span>📎 {x.files.length}</span>}
           {x.todoId && <span>✅ görevde</span>}
+          {x.work?.status === "running" && <span className="animate-pulse text-blue">⏳ ajan çalışıyor</span>}
+          {x.work?.status === "ready" && <span className="text-ok">📝 teslimat hazır</span>}
+          {x.work?.status === "waiting_ok" && <span className="text-warn">✋ onay bekliyor</span>}
+          {x.work?.status === "error" && <span className="text-fail">⚠ hata</span>}
         </div>
       </button>
       {x.status === "inbox" && (
@@ -446,7 +508,7 @@ function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () =>
 }
 
 // ------------------------------------------------------------------ ayrıntı
-function ItemSheet({ x, onClose, onPatch }: { x: BrainItem | null; onClose: () => void; onPatch: (id: string, p: Partial<BrainItem>) => void }) {
+function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: BrainItem | null; onClose: () => void; onPatch: (id: string, p: Partial<BrainItem>) => void; onWork: (id: string, feedback?: string) => void; onApprove: (id: string) => void }) {
   const { add } = useTodos();
   const { toast } = usePeriod();
   const { ask } = useAssistant();
@@ -492,6 +554,8 @@ function ItemSheet({ x, onClose, onPatch }: { x: BrainItem | null; onClose: () =
             <div className="text-[15px] leading-relaxed">{x.summary}</div>
             {x.why && <div className="mt-2 text-sm text-ink-2">💡 {x.why}</div>}
           </div>
+
+          <WorkSection x={x} onWork={onWork} onApprove={onApprove} />
 
           {/* durum */}
           <div className="flex flex-wrap gap-1.5">
@@ -643,6 +707,120 @@ function Runs({ runs }: { runs: BrainRun[] }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ teslimat
+function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: string, feedback?: string) => void; onApprove: (id: string) => void }) {
+  const { toast } = usePeriod();
+  const [fb, setFb] = useState("");
+  const a = agentById(x.agent)!;
+  const w = x.work;
+  const html = useMemo(() => (w?.output ? renderMd(w.output) : ""), [w?.output]);
+  const mailLink = x.sources.find((s) => s.ref?.source === "gmail" && s.link)?.link;
+  if (!w) {
+    return (
+      <button onClick={() => onWork(x.id)} className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed px-4 py-3 text-left hover:bg-track/50" style={{ borderColor: `${a.color}66` }}>
+        <span className="grid h-10 w-10 place-items-center rounded-xl text-xl" style={{ background: `${a.color}22` }}>
+          {a.emoji}
+        </span>
+        <span>
+          <span className="block font-extrabold">🤖 {a.name} bu işi yapsın</span>
+          <span className="block text-xs text-ink-3">Kaynakları ve arşivi okuyup teslimatı yazar (taslak, özet, hazırlık notu). Dışarıya bir şey göndermez.</span>
+        </span>
+      </button>
+    );
+  }
+  if (w.status === "running") {
+    return (
+      <div className="rounded-2xl p-4" style={{ background: `${a.color}14` }}>
+        <div className="flex items-center gap-2 font-extrabold">
+          <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="inline-block h-4 w-4 rounded-full border-2 border-blue border-t-transparent" />
+          {a.name} çalışıyor…
+        </div>
+        <div className="mt-1 text-xs text-ink-3">Kaynakları okuyor, gerekirse arşivde arıyor. 15–40 sn sürebilir.</div>
+      </div>
+    );
+  }
+  const lastRule = w.revisions.at(-1)?.rule;
+  return (
+    <div className="overflow-hidden rounded-2xl ring-1 ring-black/5 dark:ring-white/10">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 text-xs font-extrabold" style={{ background: `${a.color}18` }}>
+        <span>
+          {a.emoji} {a.name} teslimatı
+        </span>
+        <span className={w.status === "waiting_ok" ? "text-warn" : w.status === "approved" ? "text-ok" : w.status === "error" ? "text-fail" : "text-ink-3"}>
+          · {w.status === "waiting_ok" ? "onayını bekliyor" : w.status === "approved" ? "onaylandı" : w.status === "error" ? "hata" : "hazır"}
+        </span>
+        <span className="ml-auto font-semibold text-ink-3">
+          {w.ms ? `${Math.round(w.ms / 1000)} sn` : ""}
+          {w.cost != null ? ` · $${w.cost.toFixed(4)}` : ""}
+        </span>
+      </div>
+      {w.status === "error" ? (
+        <div className="px-4 py-3 text-sm text-fail">⚠ {w.error}</div>
+      ) : (
+        <div className="md max-h-[50vh] overflow-y-auto bg-card px-4 py-3 text-[14.5px] leading-relaxed" dangerouslySetInnerHTML={{ __html: html }} />
+      )}
+      {w.used.length > 0 && (
+        <details className="border-t border-line bg-card px-4 py-2 text-xs text-ink-3">
+          <summary className="cursor-pointer font-bold">🔎 {w.used.length} araç kullanıldı</summary>
+          <ul className="mt-1 space-y-0.5">
+            {w.used.map((u, i) => (
+              <li key={i}>{u}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {w.outbound && w.status === "waiting_ok" && (
+        <div className="border-t border-line bg-tint-warn px-4 py-3 text-sm">
+          <div className="font-extrabold">✋ Onaylanınca gidecek</div>
+          <div className="mt-0.5">{w.outbound}</div>
+          <div className="mt-1 text-xs text-ink-3">Gönderim şimdilik sende: taslağı kopyalayıp gönder, sonra onayla (iş biter).</div>
+        </div>
+      )}
+      {lastRule && <div className="border-t border-line bg-tint-info px-4 py-2 text-xs font-semibold">📏 Kalıcı kural öğrenildi: {lastRule}</div>}
+      <div className="flex flex-wrap gap-2 border-t border-line bg-card px-4 py-3">
+        {w.output && (
+          <button
+            onClick={async () => {
+              await navigator.clipboard.writeText(w.output).catch(() => {});
+              toast("Kopyalandı");
+            }}
+            className="rounded-full bg-track px-3 py-1.5 text-xs font-extrabold"
+          >
+            📋 Kopyala
+          </button>
+        )}
+        {mailLink && (
+          <a href={mailLink} target="_blank" rel="noreferrer" className="rounded-full bg-track px-3 py-1.5 text-xs font-extrabold">
+            ✉️ Gmail'de aç
+          </a>
+        )}
+        {w.status === "waiting_ok" && (
+          <button onClick={() => onApprove(x.id)} className="rounded-full bg-ok px-3 py-1.5 text-xs font-extrabold text-white">
+            ✓ Gönderdim, onayla
+          </button>
+        )}
+        <button onClick={() => onWork(x.id)} className="rounded-full bg-track px-3 py-1.5 text-xs font-extrabold">
+          ↻ Yeniden yap
+        </button>
+      </div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!fb.trim()) return;
+          onWork(x.id, fb.trim());
+          setFb("");
+        }}
+        className="flex gap-2 border-t border-line bg-card px-3 py-2.5"
+      >
+        <input value={fb} onChange={(e) => setFb(e.target.value)} placeholder="Düzelt: “daha kısa yaz, resmi hitap kullan” — kalıcıysa ajan öğrenir" className="min-w-0 flex-1 rounded-full bg-track px-4 py-2 text-sm outline-none placeholder:text-ink-3" />
+        <button disabled={!fb.trim()} className="rounded-full bg-blue px-4 py-2 text-xs font-extrabold text-white disabled:opacity-40">
+          Düzelt
+        </button>
+      </form>
     </div>
   );
 }

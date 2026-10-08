@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { bad, handle } from "@/lib/api";
-import { capture, due, state, think, updateItem } from "@/lib/brain";
-import type { BrainItem, ItemStatus } from "@/lib/brain-types";
+import { approve, capture, due, state, think, updateItem, work } from "@/lib/brain";
+import { agentById, type AgentId, type BrainItem, type ItemStatus } from "@/lib/brain-types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -19,16 +19,34 @@ export async function GET() {
  * { action: "capture", text }    — beyne not yaz; görev ajanı hemen işe çevirir
  */
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => null)) as { action?: string; text?: string } | null;
+  const b = (await req.json().catch(() => null)) as { action?: string; text?: string; id?: string; feedback?: string; agent?: string } | null;
   if (b?.action === "capture") {
     const text = b.text?.trim();
     if (!text) return bad("Boş not");
     if (text.length > 4000) return bad("Not çok uzun");
     return handle(async () => {
       await capture(text);
-      const run = await think({ trigger: "capture", only: ["gorev"], budgetMs: 45000 });
+      const run = await think({ trigger: "capture", only: ["gorev"], budgetMs: 25000 });
+      // seçilen ajan işi üstlenir
+      const pick = b.agent && agentById(b.agent) ? (b.agent as AgentId) : undefined;
+      if (pick) for (const id of run?.createdIds ?? []) await updateItem(id, { agent: pick });
       return { run, state: await state() };
     });
+  }
+  // ajan işi yapar (teslimat); feedback verilirse önceki teslimatı düzeltir ve kalıcıysa kuralı öğrenir
+  if (b?.action === "work") {
+    if (!b.id) return bad("İş seçilmedi");
+    const id = b.id;
+    return handle(async () => {
+      const item = await work(id, { feedback: b.feedback?.trim() || undefined });
+      if (!item) return bad("İş bulunamadı", 404);
+      return { item };
+    });
+  }
+  if (b?.action === "approve") {
+    if (!b.id) return bad("İş seçilmedi");
+    const id = b.id;
+    return handle(async () => ({ item: await approve(id) }));
   }
   if (b?.action === "auto") {
     return handle(async () => {

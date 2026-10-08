@@ -51,7 +51,7 @@ export const STATUS_META: Record<Exclude<ItemStatus, "dismissed">, { label: stri
   inbox: { label: "Öneriler", hint: "Ajanlar önerdi, onayını bekliyor", color: "#8b5cf6" },
   todo: { label: "Yapılacak", hint: "Onaylandı", color: "#5b7cff" },
   doing: { label: "Devam ediyor", hint: "Üzerinde çalışıyorsun", color: "#ffa53d" },
-  waiting: { label: "Bekliyor", hint: "Başkasından yanıt/veri bekleniyor", color: "#9aa3b5" },
+  waiting: { label: "Bekliyor", hint: "Onayın ya da başkasının yanıtı bekleniyor", color: "#9aa3b5" },
   done: { label: "Bitti", hint: "Son 7 gün", color: "#34c26b" },
 };
 
@@ -70,6 +70,23 @@ export interface ItemFile {
   name: string;
   link?: string;
   excerpt?: string;
+}
+
+/** Ajanın bu iş için ürettiği teslimat (taslak yanıt, özet, analiz…). */
+export interface ItemWork {
+  status: "running" | "ready" | "waiting_ok" | "approved" | "error";
+  /** markdown teslimat */
+  output: string;
+  /** dışarıya gidecekse ne gideceği (onay kapısı) */
+  outbound?: string;
+  /** kullandığı araçlar (ör. "🔎 E-postalarda aranıyor: sayım") */
+  used: string[];
+  /** düzeltme geçmişi */
+  revisions: { at: string; feedback: string; rule?: string }[];
+  at: string;
+  ms?: number;
+  cost?: number | null;
+  error?: string;
 }
 
 export interface BrainItem {
@@ -91,6 +108,7 @@ export interface BrainItem {
   status: ItemStatus;
   /** Görevler listesine aktarıldıysa görev kimliği */
   todoId?: string;
+  work?: ItemWork;
   createdAt: string;
   updatedAt: string;
 }
@@ -122,6 +140,8 @@ export interface BrainRun {
   tokens: number;
   cost: number | null;
   error?: string;
+  /** bu düşünmede açılan işler */
+  createdIds?: string[];
 }
 
 export interface BrainState {

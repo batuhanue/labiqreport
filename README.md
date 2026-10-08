@@ -65,6 +65,13 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   Devam → Bekliyor → Bitti; her iş adımlar, bulunan dosyalar ve kaynak bağlantılarıyla açılır, tek tuşla görev listesine
   aktarılır (görev bitince iş de biter). Tetikleme: "Şimdi düşün", uygulama açıkken Google senkronundan sonra (en fazla
   30 dk'da bir) ve her sabah cron. Kişisel görev listesi "Görevlerim" sekmesinde aynen duruyor.
+  **Ajanlar iş yapar:** bir işi ajana verince ("🤖 … bu işi yapsın" ya da görev çubuğunda "⚡ Hemen yapsın") ajan
+  kaynakların tam metnini, bulunan dosyaları ve arşivi araçlarla okuyup teslimatı yazar: yanıt taslağı, toplantı hazırlık
+  notu, karar/aksiyon listesi, kontrol planı. Kural: okumak serbest; dışarıya bir şey gidecekse (e-posta, mesaj) yalnızca
+  taslak hazırlar ve **onayını bekler** (gönderim şimdilik sende: kopyala → Gmail'de aç → "Gönderdim, onayla").
+  **Düzeltmelerden öğrenir:** teslimatı "Düzelt: …" ile geri gönder; Claude düzeltmenin bu işe özel mi kalıcı tercih mi
+  olduğuna karar verir, kalıcıysa `ajan-kurallari.md` bilgi dosyasında o ajanın başlığı altına yazar ve ajan her işte uyar
+  (dosyadan silersen unutur). Görev çubuğunda ajanı kendin seçebilir ya da "Beyin seçsin" diyebilirsin.
 - **Google Workspace (Takvim, Gmail, Chat, Meet, Drive):** "Google" sayfasından şirket hesabı tek tıkla bağlanır (salt okunur).
   Takvim (sıradaki toplantı + Meet'e katıl), gelen kutusu (okunmamış/önemli), Chat alanları ve DM'ler, Meet toplantı
   kayıtları (katılımcılar, transkript/kayıt bağlantıları) görünür; her öğeden tek tuşla görev oluşturulur.
@@ -86,8 +93,10 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   sohbet bir masa, yeni mesajda parlayan konuşma balonu), Toplantı salonu (toplantı sürerken ekran kırmızı yanıp söner,
   transkript kâğıtları), Dosya arşivi (rafta türüne göre renkli klasörler), Hafıza (her kaynak için sunucu dolabı;
   LED'ler indirme durumunu gösterir). Rozetler odanın durumunu (çalışıyor / iş bekliyor / sakin / sorun) gösterir;
-  odaya tıklayınca kamera oraya uçar ve sağ panelde o kaynağın içeriği açılır. Koltuklar ve ortadaki "Agent merkezi"
-  boş: ileride agent'lar masalara atanacak.
+  pod'a tıklayınca kamera oraya uçar ve sağ panelde o kaynağın içeriği açılır. v2 tasarım: ortada dönen not ağıyla Beyin
+  platformu, çevresinde yürüme yollarıyla bağlı pod'lar; her pod kartında açık iş sayısı ve YAP · SIRA · BİTTİ (beyin
+  ajanlarının işleri); üstte bağlı servisler şeridi ve pod'lara giden kablolar (ajan çalışırken hızlanır); sağda tüm
+  ofisin GÖREV DURUMU listesi (ilerleme yüzdeli).
 
 - **Kampüs görünümü (tablet + masaüstü):** Denetim sayfası 3B, "cozy" bir kampüs olarak açılır (React Three Fiber).
   10 rapor alanı = 10 depo binası, her kontrol maddesi = binanın önündeki yükleme rampası. Rampanın önünde iki palet

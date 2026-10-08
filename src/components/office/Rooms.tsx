@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { ArchiveProgress, ArchiveSource, GoogleSnapshot } from "@/lib/google-types";
-import { Blink, Bob, Box, Chair, Desk, Plant, RoundTable, Sofa, Stack, type OfficePal } from "./Furniture";
+import { Blink, Bob, Box, Chair, Desk, Plant, Stack, type OfficePal } from "./Furniture";
 import { ROOM_D, ROOM_W, type Zone, type ZoneStat } from "./layout";
 
 /*
@@ -302,25 +302,6 @@ export function Room(props: RoomProps & { archive: ArchiveProgress | null; archi
       {zone.id === "meet" && <MeetRoom {...props} />}
       {zone.id === "drive" && <DriveRoom {...props} />}
       {zone.id === "archive" && <ArchiveRoom {...props} />}
-    </group>
-  );
-}
-
-/** Koridor: agent merkezi (boş koltuklu yuvarlak masa), dinlenme köşesi, su sebili. */
-export function Corridor({ pal, xMax }: { pal: OfficePal; xMax: number }) {
-  return (
-    <group>
-      <RoundTable x={0} z={0} rad={1.1} pal={pal} chairs={5} chairColor="#8b5cf6" />
-      <Blink p={[0, 0.84, 0]} s={[0.3, 0.06, 0.3]} color="#8b5cf6" speed={1.4} />
-      <Sofa x={-xMax + 2.2} z={0} r={-Math.PI / 2} pal={pal} />
-      <Box p={[-xMax + 3.6, 0.3, 0]} s={[0.9, 0.5, 1.4]} c={pal.wood} />
-      <Plant x={-xMax + 1.2} z={-2.1} pal={pal} h={1.2} />
-      {/* su sebili */}
-      <Box p={[xMax - 1.2, 0.6, -1.6]} s={[0.6, 1.2, 0.6]} c="#ffffff" />
-      <Blink p={[xMax - 1.2, 1.45, -1.6]} s={[0.4, 0.5, 0.4]} color="#7fc8ff" speed={0.8} />
-      <Plant x={xMax - 1.2} z={1.8} pal={pal} h={1.1} />
-      <Plant x={-10} z={2} pal={pal} h={0.7} />
-      <Plant x={10} z={-2} pal={pal} h={0.7} />
     </group>
   );
 }

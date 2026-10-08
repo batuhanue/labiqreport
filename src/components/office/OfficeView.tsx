@@ -2,11 +2,13 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Icon } from "@/components/ui";
+import { AGENTS, agentById, STATUS_META, type BrainItem, type BrainState } from "@/lib/brain-types";
 import type { ArchiveProgress, GoogleSnapshot } from "@/lib/google-types";
 import { OFFICE_DARK, OFFICE_LIGHT, type OfficePal } from "./Furniture";
-import { STATUS_COLOR, STATUS_LABEL, ZONES, zoneById, zoneStats, type ZoneId, type ZoneStat } from "./layout";
-import { OfficeScene, type CameraApi } from "./OfficeScene";
+import { STATUS_COLOR, STATUS_LABEL, ZONE_AGENT, ZONES, zoneById, zoneStats, type ZoneId, type ZoneStat } from "./layout";
+import { OfficeScene, type CameraApi, type Screen } from "./OfficeScene";
 
 function usePal(): OfficePal {
   const [dark, setDark] = useState(false);
@@ -56,6 +58,35 @@ export default function OfficeView({
   const [panelOpen, setPanelOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 1280);
   const api = useRef<CameraApi | null>(null);
   const labels = useRef<Record<string, HTMLDivElement | null>>({});
+  const screen: Screen = useRef({});
+  const brain = useBrain();
+  const wiresRef = useRef<SVGSVGElement>(null);
+  const chips = useRef<Record<string, HTMLElement | null>>({});
+  // servis şeridinden pod kartlarına kablolar (her karede, kart konumları sahneden gelir)
+  useEffect(() => {
+    let raf = 0;
+    const loop = () => {
+      const svg = wiresRef.current;
+      if (svg) {
+        const box = svg.getBoundingClientRect();
+        for (const c of CONNECTORS) {
+          const path = svg.querySelector<SVGPathElement>(`[data-wire="${c.id}"]`);
+          const chip = chips.current[c.id];
+          const end = screen.current?.[c.to];
+          if (!path || !chip || !end) continue;
+          const r = chip.getBoundingClientRect();
+          const x0 = r.left + r.width / 2 - box.left;
+          const y0 = r.bottom - box.top;
+          const y1 = end.y - 4;
+          path.setAttribute("d", `M${x0},${y0} C${x0},${y0 + 90} ${end.x},${y1 - 120} ${end.x},${y1}`);
+          path.style.opacity = end.on ? "" : "0";
+        }
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelPx, setPanelPx] = useState(0);
   // durumlar dakikada bir yeniden hesaplanır (canlı toplantı, "1 saat içinde" gibi zamanlı kurallar)
@@ -89,6 +120,20 @@ export default function OfficeView({
   }, [onSelect]);
 
   const zone = zoneById(focus);
+  const brainBusy = !!brain.st?.running || brain.thinking || !!brain.st?.items.some((x) => x.work?.status === "running");
+  const agentWork = useMemo(() => {
+    const m: Record<string, { doing: number; next: number; done: number; open: number; running: boolean }> = {};
+    for (const a of AGENTS) m[a.id] = { doing: 0, next: 0, done: 0, open: 0, running: false };
+    for (const x of brain.st?.items ?? []) {
+      const c = m[x.agent];
+      if (x.status === "doing" || x.status === "waiting") c.doing++;
+      else if (x.status === "inbox" || x.status === "todo") c.next++;
+      else if (x.status === "done") c.done++;
+      if (x.status !== "done" && x.status !== "dismissed") c.open++;
+      if (x.work?.status === "running") c.running = true;
+    }
+    return m;
+  }, [brain.st]);
   const counts = useMemo(() => {
     const v = Object.values(stats);
     return { busy: v.filter((s) => s.status === "busy").length, waiting: v.filter((s) => s.status === "waiting").length, idle: v.filter((s) => s.status === "idle").length, error: v.filter((s) => s.status === "error").length };
@@ -100,15 +145,27 @@ export default function OfficeView({
         e.currentTarget.scrollLeft = 0;
         e.currentTarget.scrollTop = 0;
       }}
-      className={`relative h-[calc(100dvh-14rem)] min-h-[540px] overflow-hidden rounded-[30px] lg:h-[calc(100dvh-12rem)] lg:min-h-[600px] ${pal.dark ? "bg-[#121620]" : "bg-[#e9edf3]"}`}
+      className={`relative h-[calc(100dvh-14rem)] min-h-[540px] overflow-hidden rounded-[30px] lg:h-[calc(100dvh-12rem)] lg:min-h-[600px] ${pal.dark ? "bg-[#121620]" : "bg-[#f3f0e9]"}`}
     >
-      <OfficeScene pal={pal} snap={snap} stats={stats} archive={archive} archiving={archiving} focus={focus} onSelect={onSelect} api={api} panelPx={panelPx} labels={labels} onHover={setHover} />
+      <OfficeScene pal={pal} snap={snap} stats={stats} archive={archive} archiving={archiving} focus={focus} onSelect={onSelect} api={api} panelPx={panelPx} labels={labels} screen={screen} onHover={setHover} busy={brainBusy} />
 
-      {/* oda rozetleri */}
+      {/* servis kabloları */}
+      <svg ref={wiresRef} className="pointer-events-none absolute inset-0 z-[5] h-full w-full" aria-hidden>
+        {CONNECTORS.map((c) => {
+          const agent = ZONE_AGENT[c.to as ZoneId];
+          const live = c.to === "hub" ? brainBusy : !!(agent && agentWork[agent]?.running) || (c.to === "archive" && archiving);
+          return <path key={c.id} data-wire={c.id} fill="none" stroke={c.color} strokeWidth={live ? 2.2 : 1.4} strokeOpacity={live ? 0.95 : 0.45} strokeDasharray="3 6" className={live ? "office-wire-live" : "office-wire"} />;
+        })}
+      </svg>
+
+      {/* pod kartları */}
       <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
         {ZONES.map((z) => {
           const s = stats[z.id];
+          const agent = ZONE_AGENT[z.id];
+          const w = agent ? agentWork[agent] : null;
           const on = focus === z.id || hover === z.id;
+          const big = agent ? w!.open : archive?.stats.total ?? 0;
           return (
             <div key={z.id} ref={(el) => void (labels.current[z.id] = el)} className="absolute left-0 top-0 will-change-transform" style={{ opacity: 0 }}>
               <button
@@ -117,38 +174,85 @@ export default function OfficeView({
                   e.stopPropagation();
                   onSelect(focus === z.id ? null : z.id);
                 }}
-                className={`pointer-events-auto flex items-center gap-2 rounded-2xl py-1.5 pl-1.5 pr-3 text-left transition-transform ${glass} ${on ? "scale-105" : ""}`}
-                style={{ boxShadow: focus === z.id ? `0 0 0 2px ${z.color}, 0 10px 30px -10px ${z.color}` : undefined }}
+                className={`pointer-events-auto mb-2 rounded-2xl px-3 pb-2 pt-2 text-left transition-all ${glass} ${on ? "w-[172px] scale-[1.03]" : "w-[132px]"}`}
+                style={{ boxShadow: focus === z.id ? `0 0 0 2px ${z.color}, 0 14px 34px -12px ${z.color}` : s.status === "error" ? `0 0 0 1.5px ${STATUS_COLOR.error}` : undefined }}
               >
-                <span className="relative grid h-9 w-9 place-items-center rounded-xl text-lg" style={{ background: `${z.color}26` }}>
-                  {z.emoji}
-                  {s.count > 0 && (
-                    <span className="absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full px-1 text-center text-[10px] font-extrabold leading-[18px] text-white" style={{ background: z.color }}>
-                      {s.count > 99 ? "99+" : s.count}
+                <div className="flex items-center gap-1.5 whitespace-nowrap text-[9.5px] font-extrabold uppercase tracking-[0.12em]">
+                  <span className={`h-2 w-2 rounded-full ${w?.running || s.status === "busy" ? "animate-pulse" : ""}`} style={{ background: z.color }} />
+                  {z.title}
+                  <span className="ml-auto text-sm leading-none">{z.emoji}</span>
+                </div>
+                <div className="mt-0.5 flex items-baseline gap-1.5">
+                  <span className="font-serif text-[24px] font-bold leading-none tabular-nums">{big > 9999 ? `${Math.round(big / 1000)}k` : big.toLocaleString("tr-TR")}</span>
+                  <span className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-ink-3">{agent ? "açık iş" : "kayıt"}</span>
+                </div>
+                {on && <div className="mt-1.5 space-y-0.5 border-t border-black/5 pt-1.5 text-[10.5px] dark:border-white/10">
+                  <div className="flex justify-between gap-2">
+                    <span className="truncate text-ink-3">{STATUS_LABEL[s.status]}</span>
+                    <span className="shrink-0 font-bold tabular-nums">{s.count}</span>
+                  </div>
+                  <div className="truncate font-semibold text-ink-2">{s.headline}</div>
+                </div>}
+                {w && (
+                  <div className="mt-1 flex gap-1.5 border-t border-black/5 pt-1 text-[8.5px] font-extrabold uppercase tracking-wider text-ink-3 dark:border-white/10" title="yapılıyor · sırada · bitti">
+                    <span>
+                      yap <b className="text-ink">{w.doing}</b>
                     </span>
-                  )}
-                </span>
-                <span className="min-w-0">
-                  <span className="block whitespace-nowrap text-[13px] font-extrabold leading-tight">{z.title}</span>
-                  <span className="flex items-center gap-1 whitespace-nowrap text-[10px] font-extrabold tracking-wide" style={{ color: STATUS_COLOR[s.status] }}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${s.status === "busy" ? "animate-pulse" : ""}`} style={{ background: STATUS_COLOR[s.status] }} />
-                    {on ? <span className="font-bold text-ink-2">{s.headline}</span> : STATUS_LABEL[s.status]}
-                  </span>
-                </span>
+                    <span>
+                      sıra <b className="text-ink">{w.next}</b>
+                    </span>
+                    <span>
+                      bitti <b className="text-ink">{w.done}</b>
+                    </span>
+                  </div>
+                )}
               </button>
             </div>
           );
         })}
         <div ref={(el) => void (labels.current.hub = el)} className="absolute left-0 top-0" style={{ opacity: 0 }}>
-          <div className={`whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-extrabold text-[#8b5cf6] ${glass}`}>🤖 Agent merkezi · yakında</div>
+          <Link href="/gorevler" onPointerDown={(e) => e.stopPropagation()} className={`pointer-events-auto mb-1 flex items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] font-extrabold ${glass}`}>
+            <span className={`h-2 w-2 rounded-full bg-[#8b5cf6] ${brainBusy ? "animate-pulse" : ""}`} />
+            BEYİN
+            <span className="font-bold text-ink-3">{brain.st ? `${brain.st.items.filter((x) => x.status !== "done").length} açık iş` : "…"}</span>
+            {brainBusy && <span className="text-[#8b5cf6]">düşünüyor…</span>}
+          </Link>
+        </div>
+      </div>
+
+      {/* üst: bağlı servisler */}
+      <div className={`absolute top-4 z-20 flex justify-center transition-[right] duration-300 ${panelOpen ? "left-[230px] right-[calc(min(440px,42%)+80px)]" : "left-[230px] right-[80px]"}`}>
+        <div className={`flex items-center gap-1.5 rounded-2xl px-2.5 py-1.5 ${glass}`}>
+          <span className="mr-1 hidden items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.16em] text-ink-3 xl:flex">
+            <span className="h-1.5 w-1.5 rounded-full bg-ok" /> Bağlı
+          </span>
+          {CONNECTORS.map((c) => {
+            const err = c.source && (snap[c.source]?.error ?? (c.source === "drive" && !snap.drive ? "izin yok" : undefined));
+            const agent = ZONE_AGENT[c.to as ZoneId];
+            const live = c.to === "hub" ? brainBusy : !!(agent && agentWork[agent]?.running);
+            return (
+              <button
+                key={c.id}
+                ref={(el) => void (chips.current[c.id] = el)}
+                onClick={() => (c.to === "hub" ? onSelect(null) : onSelect(c.to as ZoneId))}
+                title={err ? `${c.label}: ${err}` : `${c.label}: bağlı`}
+                className={`relative grid h-8 w-8 place-items-center rounded-xl text-base transition-transform hover:scale-110 ${live ? "scale-110" : ""} ${err ? "opacity-45 grayscale" : ""}`}
+                style={{ background: `${c.color}1f`, boxShadow: live ? `0 0 0 2px ${c.color}, 0 0 16px ${c.color}` : undefined }}
+              >
+                {c.icon}
+                {!err && <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-white bg-ok dark:border-[#1b1e27]" />}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* sol üst: başlık + senkron */}
       <div className={`absolute left-4 top-4 z-20 flex items-center gap-3 rounded-2xl px-4 py-2.5 ${glass}`}>
         <div>
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-ink-3">LabIQ Ofis</div>
-          <div className="text-sm font-extrabold">{snap.account.name}</div>
+          <div className="font-serif text-[15px] font-bold tracking-[0.08em]">
+            LABIQ OFİS <span className="text-[10px] text-ink-3">v2</span>
+          </div>
           <div className="text-[11px] font-semibold text-ink-3">Son senkron {ago(snap.syncedAt)}</div>
         </div>
         <motion.button whileTap={{ scale: 0.88 }} onClick={onSync} disabled={syncing} title="Şimdi senkronla" aria-label="Senkronla" className="grid h-9 w-9 place-items-center rounded-xl bg-blue text-white disabled:opacity-60">
@@ -158,21 +262,8 @@ export default function OfficeView({
         </motion.button>
       </div>
 
-      {/* üst orta: oda çipleri */}
-      <div className={`absolute top-4 z-20 hidden justify-center transition-[right] duration-300 xl:flex ${panelOpen ? "left-[260px] right-[calc(min(440px,42%)+90px)]" : "left-[260px] right-[90px]"}`}>
-        <div className={`flex flex-wrap justify-center gap-1 rounded-2xl p-1 ${glass}`}>
-          {ZONES.map((z) => (
-            <button key={z.id} onClick={() => onSelect(focus === z.id ? null : z.id)} className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-bold ${focus === z.id ? "bg-black/5 dark:bg-white/10" : ""}`}>
-              <span className="h-2 w-2 rounded-full" style={{ background: STATUS_COLOR[stats[z.id].status] }} />
-              {z.role}
-              {stats[z.id].count > 0 && <span className="tabular-nums text-ink-3">{stats[z.id].count}</span>}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* kamera araç çubuğu */}
-      <div className={`absolute top-4 z-20 flex flex-col gap-1 rounded-2xl p-1 transition-[right] duration-300 ${panelOpen ? "right-[calc(min(440px,42%)+28px)]" : "right-4"} ${glass}`}>
+      <div className={`absolute bottom-4 z-20 flex flex-col gap-1 rounded-2xl p-1 transition-[right] duration-300 ${panelOpen ? "right-[calc(min(440px,42%)+28px)]" : "right-4"} ${glass}`}>
         {[
           { icon: "plus", t: "Yakınlaştır", f: () => api.current?.zoom(0.7) },
           { icon: "minus", t: "Uzaklaştır", f: () => api.current?.zoom(1.4) },
@@ -208,6 +299,7 @@ export default function OfficeView({
                     <div className="text-lg font-extrabold leading-tight">{zone.title}</div>
                     <div className="text-xs font-bold" style={{ color: STATUS_COLOR[stats[zone.id].status] }}>
                       {zone.role} · {STATUS_LABEL[stats[zone.id].status]}
+                      {ZONE_AGENT[zone.id] && <span className="text-ink-3"> · {agentById(ZONE_AGENT[zone.id]!)?.name}</span>}
                     </div>
                     {stats[zone.id].sub && <div className="mt-0.5 line-clamp-2 text-xs text-ink-3">{stats[zone.id].sub}</div>}
                   </div>
@@ -215,17 +307,18 @@ export default function OfficeView({
                     <Icon name="close" size={16} />
                   </button>
                 </div>
+                {ZONE_AGENT[zone.id] && <TaskList items={(brain.st?.items ?? []).filter((x) => x.agent === ZONE_AGENT[zone.id])} compact onPick={() => {}} />}
                 <div className="@container">{renderZone(zone.id)}</div>
               </>
             ) : (
-              <Overview stats={stats} onPick={onSelect} />
+              <TaskStatus brain={brain} onPick={(x) => onSelect(zoneOfAgent(x.agent))} />
             )}
           </motion.div>
         </AnimatePresence>
       </div>
 
       {/* alt sol: durum çubuğu */}
-      <div className={`absolute bottom-4 left-4 z-20 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl px-4 py-2 font-mono text-[11px] text-ink-2 ${panelOpen ? "max-w-[calc(100%-min(440px,42%)-48px)]" : ""} ${glass}`}>
+      <div className={`absolute bottom-4 left-4 z-20 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl px-4 py-2 font-mono text-[11px] text-ink-2 ${panelOpen ? "max-w-[calc(100%-min(440px,42%)-110px)]" : "max-w-[calc(100%-110px)]"} ${glass}`}>
         <span style={{ color: STATUS_COLOR.busy }}>{counts.busy} çalışıyor</span>
         <span>·</span>
         <span style={{ color: STATUS_COLOR.waiting }}>{counts.waiting} iş bekliyor</span>
@@ -237,47 +330,144 @@ export default function OfficeView({
             <span style={{ color: STATUS_COLOR.error }}>{counts.error} sorun</span>
           </>
         )}
-        <span className="hidden text-ink-3 lg:inline">· sürükle: döndür · tekerlek: yakınlaştır · odaya tıkla</span>
+        <span className="hidden text-ink-3 lg:inline">· sürükle: döndür · tekerlek: yakınlaştır · pod'a tıkla</span>
       </div>
     </div>
   );
 }
 
-function Overview({ stats, onPick }: { stats: Record<ZoneId, ZoneStat>; onPick: (id: ZoneId) => void }) {
+/* ------------------------------------------------------------------ bağlı servisler */
+const CONNECTORS: { id: string; label: string; icon: string; color: string; to: ZoneId | "hub"; source?: "gmail" | "chat" | "calendar" | "meet" | "drive" }[] = [
+  { id: "gmail", label: "Gmail", icon: "✉️", color: "#ff5e6c", to: "gmail", source: "gmail" },
+  { id: "chat", label: "Google Chat", icon: "💬", color: "#2ec4b6", to: "chat", source: "chat" },
+  { id: "calendar", label: "Takvim", icon: "📅", color: "#5b7cff", to: "calendar", source: "calendar" },
+  { id: "meet", label: "Meet", icon: "🎥", color: "#8b5cf6", to: "meet", source: "meet" },
+  { id: "drive", label: "Drive", icon: "📁", color: "#ffa53d", to: "drive", source: "drive" },
+  { id: "claude", label: "Claude (Anthropic)", icon: "✳️", color: "#d97757", to: "hub" },
+];
+
+const zoneOfAgent = (a: string): ZoneId | null => (Object.keys(ZONE_AGENT) as ZoneId[]).find((z) => ZONE_AGENT[z] === a) ?? null;
+
+/* ------------------------------------------------------------------ beyin durumu */
+function useBrain() {
+  const [st, setSt] = useState<BrainState | null>(null);
+  const [thinking, setThinking] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch("/api/brain", { cache: "no-store" });
+      if (r.ok) setSt(await r.json());
+    } catch {}
+  }, []);
+  useEffect(() => {
+    load();
+    const busy = st?.running || st?.items.some((x) => x.work?.status === "running");
+    const t = setInterval(load, busy ? 5000 : 30000);
+    return () => clearInterval(t);
+  }, [load, st?.running, st?.items]);
+  const think = async () => {
+    setThinking(true);
+    try {
+      const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "think" }) });
+      const j = await r.json().catch(() => null);
+      if (r.ok && j?.state) setSt(j.state);
+    } finally {
+      setThinking(false);
+    }
+  };
+  return { st, thinking, think };
+}
+type BrainHook = ReturnType<typeof useBrain>;
+
+/** iş ilerlemesi: adımlar + ajan teslimatı */
+function progress(x: BrainItem) {
+  if (x.status === "done" || x.work?.status === "approved") return 100;
+  const steps = x.steps.length ? x.steps.filter((s) => s.done).length / x.steps.length : 0;
+  const work = x.work?.status === "waiting_ok" ? 0.85 : x.work?.status === "ready" ? 0.7 : x.work?.status === "running" ? 0.35 : 0;
+  const base = x.status === "inbox" ? 0.05 : x.status === "todo" ? 0.1 : 0.2;
+  return Math.round(Math.max(base, steps * 0.9, work) * 100);
+}
+
+type Filter = "all" | "inbox" | "doing" | "waiting" | "done";
+function TaskStatus({ brain, onPick }: { brain: BrainHook; onPick: (x: BrainItem) => void }) {
+  const [f, setF] = useState<Filter>("all");
+  const st = brain.st;
+  const items = (st?.items ?? []).filter((x) => x.status !== "dismissed");
+  const by = (k: Filter) => (k === "all" ? items.filter((x) => x.status !== "done") : k === "doing" ? items.filter((x) => x.status === "doing" || x.status === "todo") : items.filter((x) => x.status === k));
+  const busy = brain.thinking || !!st?.running;
   return (
     <div>
-      <div className="text-lg font-extrabold">Ofis</div>
-      <p className="mb-3 text-xs text-ink-3">Her oda bir Google kaynağı. Bekleyen işler masalarda görünür; bir odaya tıkla, içeriği burada açılsın. Koltuklar ileride agent'lara atanacak.</p>
-      <div className="space-y-2">
-        {ZONES.map((z, i) => {
-          const s = stats[z.id];
-          return (
-            <motion.button
-              key={z.id}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.04 }}
-              onClick={() => onPick(z.id)}
-              className="flex w-full items-center gap-3 rounded-2xl bg-white/60 p-3 text-left hover:bg-white dark:bg-white/5 dark:hover:bg-white/10"
-            >
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-xl" style={{ background: `${z.color}26` }}>
-                {z.emoji}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-2">
-                  <span className="truncate font-extrabold">{z.title}</span>
-                  <span className="shrink-0 rounded-full px-1.5 text-[9px] font-extrabold tracking-wide text-white" style={{ background: STATUS_COLOR[s.status] }}>
-                    {STATUS_LABEL[s.status]}
-                  </span>
-                </span>
-                <span className="block truncate text-xs font-semibold text-ink-2">{s.headline}</span>
-                {s.sub && <span className="block truncate text-[11px] text-ink-3">{s.sub}</span>}
-              </span>
-              <Icon name="chevron" size={16} className="shrink-0 text-ink-3" />
-            </motion.button>
-          );
-        })}
+      {/* beyin özeti */}
+      <div className="mb-4 flex items-center gap-3 rounded-2xl bg-white/60 p-3 dark:bg-white/5">
+        <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-2xl" style={{ background: "radial-gradient(circle at 35% 30%, #c4b5fd, #8b5cf6 60%, #5b21b6)" }}>
+          🧠
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.16em]">Beyin · {AGENTS.length} ajan</div>
+          <div className="truncate text-xs text-ink-3">
+            Son düşünme {st?.lastRun ? ago(st.lastRun) : "—"}
+            {st?.focus?.order.length ? ` · bugün ${st.focus.order.length} odak` : ""}
+          </div>
+          <Link href="/gorevler" className="text-xs font-extrabold text-blue">
+            Beyni aç →
+          </Link>
+        </div>
+        <motion.button whileTap={{ scale: 0.92 }} onClick={brain.think} disabled={busy} className="shrink-0 rounded-full bg-[#8b5cf6] px-3 py-2 text-xs font-extrabold text-white disabled:opacity-70">
+          {busy ? "Düşünüyor…" : "Düşün"}
+        </motion.button>
       </div>
+
+      <div className="mb-2 flex items-baseline justify-between">
+        <div className="font-serif text-xl font-bold tracking-wide">GÖREV DURUMU</div>
+        <span className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-ink-3">tüm ofis</span>
+      </div>
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {(
+          [
+            ["all", "Tümü"],
+            ["inbox", "Öneri"],
+            ["doing", "Devam"],
+            ["waiting", "Bekliyor"],
+            ["done", "Bitti"],
+          ] as [Filter, string][]
+        ).map(([k, l]) => (
+          <button key={k} onClick={() => setF(k)} className={`rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider ${f === k ? "bg-ink text-white dark:bg-white dark:text-[#1b1e27]" : "border border-black/10 text-ink-2 dark:border-white/15"}`}>
+            {l} <span className="opacity-60">{by(k).length}</span>
+          </button>
+        ))}
+      </div>
+      {!st ? <div className="py-6 text-center text-xs text-ink-3">Yükleniyor…</div> : <TaskList items={by(f)} onPick={onPick} />}
+    </div>
+  );
+}
+
+function TaskList({ items, onPick, compact }: { items: BrainItem[]; onPick: (x: BrainItem) => void; compact?: boolean }) {
+  const list = [...items].sort((a, b) => Number(b.work?.status === "running") - Number(a.work?.status === "running") || a.priority - b.priority || b.updatedAt.localeCompare(a.updatedAt));
+  if (!list.length) return compact ? null : <div className="py-6 text-center text-xs font-semibold text-ink-3">Bu durumda iş yok.</div>;
+  return (
+    <div className={`space-y-2 ${compact ? "mb-4" : ""}`}>
+      {compact && <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-ink-3">Ajanın işleri</div>}
+      {list.slice(0, compact ? 4 : 40).map((x) => {
+        const a = agentById(x.agent)!;
+        const p = progress(x);
+        const running = x.work?.status === "running";
+        return (
+          <button key={x.id} onClick={() => onPick(x)} className="block w-full rounded-2xl border border-black/5 bg-white/70 p-3 text-left hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10">
+            <div className="flex items-start gap-2.5">
+              <span className="mt-0.5 shrink-0 rounded-full border border-black/15 px-1.5 text-[10px] font-extrabold tabular-nums dark:border-white/20">{p}%</span>
+              <div className="min-w-0 flex-1">
+                <div className="line-clamp-2 text-[13px] font-bold leading-snug">{x.title}</div>
+                <div className="mt-0.5 truncate text-[10px] font-extrabold uppercase tracking-wider text-ink-3">
+                  {a.emoji} {a.name} · {running ? "çalışıyor" : x.work?.status === "waiting_ok" ? "onay bekliyor" : STATUS_META[x.status === "dismissed" ? "done" : x.status].label}
+                </div>
+              </div>
+              <span className="shrink-0 text-[10px] text-ink-3">{ago(x.updatedAt)}</span>
+            </div>
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-black/5 dark:bg-white/10">
+              <div className={`h-full rounded-full ${running ? "animate-pulse" : "bg-ink"}`} style={{ width: `${p}%`, background: running ? a.color : undefined }} />
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }
