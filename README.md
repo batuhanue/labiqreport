@@ -90,6 +90,17 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   zamanlama" başlıkları) yazar; tek ve sebepsiz bir seçimden kural çıkarmaz, örüntü arar. Ajanlar, önceliklendirme ve
   asistan son seçimlerini her istekte de görür (reddettiğin türde iş açılmaz). Beyin panelindeki "🎓 Seni tanıyorum"
   kartı öğrenilenleri gösterir; bellekten düzenleyip silebilirsin.
+  **Kazanılan güven:** her ajanın bir güven seviyesi var (ajan kartında): 🙋 Öner (her işi sorar) · ✅ Kendisi onaylasın
+  (yeni işleri sormadan Yapılacak'a alır; onay oranı düşük türleri yine sorar) · 🤖 Teslimatı da hazırlasın (onayladığı işi
+  kendisi yapar; işler sayfa açıkken ya da arka planda sırayla yapılır). Seviyeyi sen seçersin; seçimlerinden onay oranı
+  hesaplanır, hak edince "güveni hak etti — Yükselt" önerisi çıkar (6+ karar ve %80+ onay; teslimat için 3+ teslimat ve
+  ⅔ düzeltmesiz onay). Ajanın kendi onayladığı işi 14 gün içinde 2 kez "Gerek yok" dersen ya da teslimatlarını art arda
+  düzeltirsen seviyesi kendiliğinden bir düşer. Dışarıya giden hiçbir şey otomatik gitmez.
+  **Onayla → Gmail taslağı:** gidecek e-postası olan teslimatta Claude alıcı/konu/gövdeyi çıkarır (adresler yalnızca
+  kaynaklardan ve bilinen kişilerden) ve Gmail taslaklarına yazar; kaynak bir e-postaysa aynı yazışmaya yanıt olarak.
+  Göndermek sende: "Gmail'de aç ve gönder". Bunun için Google bağlantısında `gmail.compose` izni gerekir (Google sayfasındaki
+  "İzin ver" ile bir kez yeniden bağla; Cloud Console'da OAuth izin ekranına bu kapsamı eklemeyi unutma). E-posta değilse
+  (sohbet mesajı) eskisi gibi kopyalayıp "Gönderdim, onayla".
   **Ekip olarak yap:** işin sahibi ajan lider olur; işi 2-4 bağımsız parçaya böler ve her parçayı uygun ajana verir,
   parçalar aynı anda çalışır (birbirine/lidere "NOT @…" bırakabilir), lider hepsini tek teslimatta birleştirir ve kim ne
   yaptı satırını ekler. Düzeltme ekibi yeniden çalıştırmaz, lider teslimatı düzeltir.

@@ -74,7 +74,8 @@ export interface ItemFile {
 
 /** Ajanın bu iş için ürettiği teslimat (taslak yanıt, özet, analiz…). */
 export interface ItemWork {
-  status: "running" | "ready" | "waiting_ok" | "approved" | "error";
+  /** queued: ajan kendisi yapacak (güven seviyesi 2), sırada */
+  status: "queued" | "running" | "ready" | "waiting_ok" | "approved" | "error";
   /** markdown teslimat */
   output: string;
   /** dışarıya gidecekse ne gideceği (onay kapısı) */
@@ -89,6 +90,20 @@ export interface ItemWork {
   error?: string;
   /** ekip olarak yapıldıysa: lider işi parçalara böldü, ajanlar aynı anda çalıştı, lider birleştirdi */
   team?: TeamRun;
+  /** onaylanınca Gmail'e yazılan taslak (gönderim Batuhan'da: Gmail'de açıp "Gönder") */
+  draft?: MailDraft;
+}
+
+export interface MailDraft {
+  id: string;
+  messageId: string;
+  link: string;
+  to: string[];
+  cc: string[];
+  subject: string;
+  /** bir e-postaya yanıt olarak mı (aynı yazışmada) */
+  reply: boolean;
+  at: string;
 }
 
 export interface TeamPiece {
@@ -125,6 +140,8 @@ export interface BrainItem {
   status: ItemStatus;
   /** Görevler listesine aktarıldıysa görev kimliği */
   todoId?: string;
+  /** ajan güven seviyesiyle kendisi onayladı (Batuhan'a sormadan Yapılacak'a aldı) */
+  auto?: { at: string; level: TrustLevel };
   work?: ItemWork;
   createdAt: string;
   updatedAt: string;
@@ -159,6 +176,8 @@ export interface BrainRun {
   error?: string;
   /** bu düşünmede açılan işler */
   createdIds?: string[];
+  /** ajanların güven seviyesiyle kendisi onayladığı işler */
+  autoIds?: string[];
 }
 
 export interface BrainState {
@@ -171,6 +190,46 @@ export interface BrainState {
   pending?: Partial<Record<AgentId, number>>;
   /** seçimlerden öğrenme: bekleyen seçim sayısı ve son öğrenilenler */
   learning?: LearningState;
+  /** ajanların güven seviyeleri ve onay istatistikleri */
+  trust?: Record<AgentId, AgentTrustView>;
+}
+
+// ------------------------------------------------------------------ kazanılan güven
+/*
+ * 0 Öner: her işi sorar · 1 Kendisi onaylasın: güvenilir türdeki yeni işleri doğrudan Yapılacak'a alır ·
+ * 2 Teslimatı da hazırlasın: onayladığı işi hemen yapar. Dışarıya giden hiçbir şey otomatik gitmez.
+ * Seçimlerden onay oranı hesaplanır, hak edince yükseltme önerilir; yanlış otomatik onaylarda kendiliğinden düşer.
+ */
+export type TrustLevel = 0 | 1 | 2;
+export const TRUST_META: { label: string; short: string; hint: string }[] = [
+  { label: "Öner", short: "Öner", hint: "Her yeni işi sana sorar" },
+  { label: "Kendisi onaylasın", short: "Onaylar", hint: "Onay oranı yüksek türdeki yeni işleri sormadan Yapılacak'a alır" },
+  { label: "Teslimatı da hazırlasın", short: "Yapar", hint: "Onayladığı işi hemen yapar; gidecek bir şey varsa yine onayını bekler" },
+];
+export interface AgentTrust {
+  level: TrustLevel;
+  since?: string;
+  /** sistemin kendiliğinden düşürdüğü durumda açıklama */
+  note?: string;
+}
+export interface TrustStats {
+  /** son 60 gündeki kararların: onay (onay, görevlere ekleme, bitirme) ve ret */
+  accepted: number;
+  rejected: number;
+  /** teslimat: onay ve düzeltme */
+  delivered: number;
+  fixed: number;
+  /** yanlış otomatik onaylar (son 14 gün) */
+  wrongAuto: number;
+  /** türlere göre (onay, ret) — düşük oranlı türler yine sorulur */
+  byKind: Partial<Record<ItemKind, [number, number]>>;
+}
+export interface AgentTrustView extends AgentTrust {
+  stats: TrustStats;
+  /** hak ettiği bir üst seviye (öneri) */
+  suggest?: TrustLevel;
+  /** bu seviyede yine de sorulacak türler */
+  askKinds: ItemKind[];
 }
 
 // ------------------------------------------------------------------ seçimlerden öğrenme
@@ -224,6 +283,10 @@ export interface Choice {
   id: string;
   at: string;
   kind: ChoiceKind;
+  /** beyin işinin türü (güven: hangi tür işlerde onay oranı yüksek) */
+  itemKind?: ItemKind;
+  /** ajanın kendi onayladığı işe dair seçim (yanlış otomatik onay → güven düşer) */
+  auto?: boolean;
   /** nerede: beyin, görevler, asistan */
   where: "beyin" | "gorevler" | "asistan";
   agent?: AgentId;

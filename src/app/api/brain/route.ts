@@ -1,7 +1,9 @@
 import { after } from "next/server";
 import { bad, handle } from "@/lib/api";
 import { LEARN_EVERY, learn } from "@/lib/learning";
-import { agentProfile, approve, capture, due, interview, state, think, updateItem, work, type InterviewTurn } from "@/lib/brain";
+import { agentProfile, approve, capture, due, interview, nextQueued, state, think, updateItem, work, type InterviewTurn } from "@/lib/brain";
+import { DraftError } from "@/lib/gmail-draft";
+import { setTrust } from "@/lib/trust";
 import { agentById, type AgentId, type BrainItem, type ItemStatus } from "@/lib/brain-types";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +27,7 @@ export async function GET(req: Request) {
  * { action: "capture", text }    — beyne not yaz; görev ajanı hemen işe çevirir
  */
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => null)) as { action?: string; text?: string; id?: string; feedback?: string; agent?: string; team?: boolean; turns?: InterviewTurn[] } | null;
+  const b = (await req.json().catch(() => null)) as { action?: string; text?: string; id?: string; feedback?: string; agent?: string; team?: boolean; turns?: InterviewTurn[]; mail?: boolean; queued?: boolean; level?: number } | null;
   if (b?.action === "capture") {
     const text = b.text?.trim();
     if (!text) return bad("Boş not");
@@ -44,7 +46,7 @@ export async function POST(req: Request) {
     if (!b.id) return bad("İş seçilmedi");
     const id = b.id;
     return handle(async () => {
-      const item = await work(id, { feedback: b.feedback?.trim() || undefined, team: !!b.team });
+      const item = await work(id, { feedback: b.feedback?.trim() || undefined, team: !!b.team, queued: !!b.queued });
       if (!item) return bad("İş bulunamadı", 404);
       return { item };
     });
@@ -58,11 +60,32 @@ export async function POST(req: Request) {
   if (b?.action === "approve") {
     if (!b.id) return bad("İş seçilmedi");
     const id = b.id;
-    return handle(async () => ({ item: await approve(id) }));
+    return handle(async () => {
+      try {
+        return { item: await approve(id, { mail: !!b.mail }) };
+      } catch (e) {
+        if (e instanceof DraftError) return Response.json({ error: e.message, code: e.code }, { status: e.code === "scope" ? 403 : 422 });
+        throw e;
+      }
+    });
+  }
+  // ajanın güven seviyesi (0 Öner · 1 Kendisi onaylasın · 2 Teslimatı da hazırlasın)
+  if (b?.action === "trust") {
+    if (!b.agent || !agentById(b.agent)) return bad("Ajan seçilmedi");
+    if (![0, 1, 2].includes(b.level as number)) return bad("Geçersiz seviye");
+    return handle(async () => {
+      await setTrust(b.agent as AgentId, b.level as 0 | 1 | 2);
+      return { state: await state() };
+    });
   }
   if (b?.action === "auto") {
     return handle(async () => {
-      if (!(await due(30))) return { started: false };
+      if (!(await due(30))) {
+        // düşünme zamanı değilse, ajanın kendisi yapacağı sıradaki işi arka planda yap
+        const q = await nextQueued();
+        if (q) after(() => work(q, { queued: true }).catch(() => null));
+        return { started: false, working: q };
+      }
       after(() => think({ trigger: "auto" }).catch(() => null));
       return { started: true };
     });
@@ -86,8 +109,8 @@ export async function PATCH(req: Request) {
     const r = await updateItem(b.id!, b.patch!, { reason: b.reason?.slice(0, 400) });
     if (!r) return bad("İş bulunamadı", 404);
     // sebep verildiyse hemen öğren (yanıtta ne öğrendiğini göster); yoksa birikince arka planda
-    if (r.explicit) return { item: r.item, learned: (await learn({ force: true, timeout: 25000 }).catch(() => null)) ?? [] };
+    if (r.explicit) return { item: r.item, trustNote: r.trustNote, learned: (await learn({ force: true, timeout: 25000 }).catch(() => null)) ?? [] };
     if (r.pending >= LEARN_EVERY) after(() => learn().catch(() => null));
-    return { item: r.item };
+    return { item: r.item, trustNote: r.trustNote };
   });
 }

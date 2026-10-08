@@ -7,7 +7,7 @@ import { usePeriod } from "@/components/PeriodProvider";
 import { useTodos } from "@/components/todos/TodoProvider";
 import { Skeleton } from "@/components/fx";
 import { Icon, Sheet } from "@/components/ui";
-import { AGENTS, KIND_LABEL, REJECT_REASONS, STATUS_META, agentById, type Lesson, type LearningState, type AgentId, type BrainItem, type BrainRun, type BrainState, type ItemStatus } from "@/lib/brain-types";
+import { AGENTS, KIND_LABEL, REJECT_REASONS, STATUS_META, TRUST_META, agentById, type AgentTrustView, type Lesson, type LearningState, type TrustLevel, type AgentId, type BrainItem, type BrainRun, type BrainState, type ItemStatus } from "@/lib/brain-types";
 import { renderMd } from "@/lib/markdown";
 import { lessonToast } from "@/lib/learn-client";
 import { useBrainState } from "./useBrain";
@@ -43,7 +43,7 @@ export function Brief({ text }: { text: string }) {
 /** Beyin sayfası: merkez + yan ajanlar, beyne yaz, bugün odak, iş panosu. */
 export default function BrainView() {
   const { toast } = usePeriod();
-  const { st, err, thinking, think, patch, runWork, approveWork, setSt, open, setOpen, load } = useBrainState();
+  const { st, err, thinking, think, patch, runWork, approveWork, setTrust, setSt, open, setOpen, load } = useBrainState();
   const [agent, setAgent] = useState<AgentId | null>(null);
   const [mobileCol, setMobileCol] = useState<Col>("inbox");
   const [seed, setSeed] = useState<{ text: string; agent: AgentId; n: number } | null>(null);
@@ -71,7 +71,7 @@ export default function BrainView() {
   return (
     <div className="space-y-5">
       <Hero st={st} busy={busy} onThink={think} agent={agent} onAgent={setAgent} />
-      <AnimatePresence>{agent && <AgentPanel key={agent} agent={agent} onTry={(t) => setSeed((x) => ({ text: t, agent, n: (x?.n ?? 0) + 1 }))} onClose={() => setAgent(null)} />}</AnimatePresence>
+      <AnimatePresence>{agent && <AgentPanel key={agent} agent={agent} trust={st.trust?.[agent]} onTrust={(l) => setTrust(agent, l)} onTry={(t) => setSeed((x) => ({ text: t, agent, n: (x?.n ?? 0) + 1 }))} onClose={() => setAgent(null)} />}</AnimatePresence>
       <Capture
         seed={seed}
         onDone={(s, newId, doNow, team) => {
@@ -84,6 +84,7 @@ export default function BrainView() {
         }}
       />
       {st.focus && <Focus st={st} onOpen={setOpen} />}
+      <TrustSuggest trust={st.trust} onTrust={setTrust} />
       <Learning learning={st.learning} onLearned={load} />
 
       {/* pano */}
@@ -419,6 +420,8 @@ function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () =>
           )}
           {x.files.length > 0 && <span>📎 {x.files.length}</span>}
           {x.todoId && <span>✅ görevde</span>}
+          {x.auto && <span className="text-[#8b5cf6]">🤖 kendisi onayladı</span>}
+          {x.work?.status === "queued" && <span className="text-blue">⏳ sırada</span>}
           {x.work?.status === "running" && <span className="animate-pulse text-blue">⏳ ajan çalışıyor</span>}
           {x.work?.status === "ready" && <span className="text-ok">📝 teslimat hazır</span>}
           {x.work?.status === "waiting_ok" && <span className="text-warn">✋ onay bekliyor</span>}
@@ -445,7 +448,7 @@ function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () =>
 }
 
 // ------------------------------------------------------------------ ayrıntı
-export function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: BrainItem | null; onClose: () => void; onPatch: (id: string, p: Partial<BrainItem>, reason?: string) => void; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string) => void }) {
+export function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: BrainItem | null; onClose: () => void; onPatch: (id: string, p: Partial<BrainItem>, reason?: string) => void; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string, mail?: boolean) => Promise<{ error: string; code?: string } | null> }) {
   const { add } = useTodos();
   const { toast } = usePeriod();
   const { ask } = useAssistant();
@@ -493,6 +496,13 @@ export function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: Brain
             <div className="text-[15px] leading-relaxed">{x.summary}</div>
             {x.why && <div className="mt-2 text-sm text-ink-2">💡 {x.why}</div>}
           </div>
+
+          {x.auto && x.status !== "dismissed" && (
+            <div className="rounded-2xl bg-[#8b5cf6]/10 px-4 py-2.5 text-xs font-semibold text-ink-2">
+              🤖 {a.name} bunu güven seviyesiyle (“{TRUST_META[x.auto.level].label}”) <b>kendisi onayladı</b>
+              {x.auto.level === 2 ? " ve işi kendisi yapıyor" : ""}. Yanlışsa “Gerek yok” de; 14 günde 2 yanlışta seviyesi bir düşer.
+            </div>
+          )}
 
           <WorkSection x={x} onWork={onWork} onApprove={onApprove} />
 
@@ -714,6 +724,92 @@ export function Learning({ learning, onLearned, compact }: { learning?: Learning
   );
 }
 
+// ------------------------------------------------------------------ kazanılan güven
+const pct = (a: number, b: number) => (a + b ? Math.round((a / (a + b)) * 100) : 0);
+
+/** Ajanın güven seviyesi: Öner · Kendisi onaylasın · Teslimatı da hazırlasın + onay istatistiği. */
+export function TrustControl({ trust, onTrust }: { trust: AgentTrustView; onTrust: (level: TrustLevel) => void }) {
+  const s = trust.stats;
+  const decided = s.accepted + s.rejected;
+  return (
+    <div className="border-b border-line px-4 py-3">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-extrabold uppercase tracking-wider text-ink-3">Güven seviyesi</span>
+        <span className="text-[11px] font-semibold text-ink-3">
+          {decided ? `${decided} karar · %${pct(s.accepted, s.rejected)} onay` : "henüz karar yok"}
+          {s.delivered + s.fixed ? ` · teslimat ${s.delivered}✓ ${s.fixed}✎` : ""}
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-1 rounded-2xl bg-track p-1">
+        {TRUST_META.map((m, i) => (
+          <button
+            key={m.label}
+            onClick={() => i !== trust.level && onTrust(i as TrustLevel)}
+            title={m.hint}
+            className={`rounded-xl px-1.5 py-1.5 text-[11px] font-extrabold leading-tight ${trust.level === i ? "bg-card text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}
+          >
+            {["🙋", "✅", "🤖"][i]} {m.label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-1.5 text-[11px] text-ink-3">
+        {TRUST_META[trust.level].hint}
+        {trust.level > 0 && trust.askKinds.length > 0 && <> · yine de sorar: {trust.askKinds.map((k) => KIND_LABEL[k]).join(", ")}</>}. Dışarıya giden hiçbir şey otomatik gitmez.
+      </div>
+      {trust.suggest != null && (
+        <button onClick={() => onTrust(trust.suggest!)} className="mt-2 w-full rounded-xl bg-[#8b5cf6]/12 px-3 py-2 text-left text-xs font-bold text-[#8b5cf6] hover:bg-[#8b5cf6]/20">
+          ⬆ Güveni hak etti — “{TRUST_META[trust.suggest].label}” seviyesine geçir
+        </button>
+      )}
+      {trust.note && <div className="mt-2 rounded-xl bg-tint-warn px-3 py-2 text-[11px] font-semibold">⬇ {trust.note}</div>}
+    </div>
+  );
+}
+
+/** Güveni hak eden ajanlar için yükseltme önerisi ("Sonra" denince o seviye için bir daha sorulmaz). */
+export function TrustSuggest({ trust, onTrust, compact }: { trust?: Record<AgentId, AgentTrustView>; onTrust: (agent: AgentId, level: TrustLevel) => void; compact?: boolean }) {
+  const [hidden, setHidden] = useState<string[]>([]);
+  useEffect(() => {
+    try {
+      setHidden(JSON.parse(localStorage.getItem("lq:trust-later") || "[]"));
+    } catch {}
+  }, []);
+  const later = (k: string) => {
+    const next = [...hidden, k];
+    setHidden(next);
+    try {
+      localStorage.setItem("lq:trust-later", JSON.stringify(next));
+    } catch {}
+  };
+  const list = AGENTS.map((a) => ({ a, t: trust?.[a.id] })).filter(({ a, t }) => t?.suggest != null && !hidden.includes(`${a.id}:${t.suggest}`));
+  if (!list.length) return null;
+  return (
+    <div className={`space-y-2 ${compact ? "" : ""}`}>
+      {list.map(({ a, t }) => (
+        <motion.div key={a.id} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className={`flex flex-wrap items-center gap-2 rounded-2xl border border-[#8b5cf6]/30 bg-[#8b5cf6]/8 ${compact ? "p-2.5" : "p-3"}`}>
+          <span className="text-xl">{a.emoji}</span>
+          <div className="min-w-0 flex-1 basis-40 text-xs">
+            <div className="font-extrabold">
+              {a.name} güveni hak etti → “{TRUST_META[t!.suggest!].label}”
+            </div>
+            <div className="text-ink-3">
+              {t!.suggest === 1
+                ? `${t!.stats.accepted + t!.stats.rejected} kararın %${pct(t!.stats.accepted, t!.stats.rejected)}'ini onayladın. Yeni işleri sormadan Yapılacak'a alsın mı?`
+                : `${t!.stats.delivered} teslimatını onayladın, ${t!.stats.fixed} kez düzelttin. Onayladığı işi kendisi yapsın mı?`}
+            </div>
+          </div>
+          <button onClick={() => onTrust(a.id, t!.suggest!)} className="rounded-full bg-[#8b5cf6] px-3 py-1.5 text-[11px] font-extrabold text-white">
+            Yükselt
+          </button>
+          <button onClick={() => later(`${a.id}:${t!.suggest}`)} className="rounded-full px-2 py-1.5 text-[11px] font-bold text-ink-3 hover:text-ink">
+            Sonra
+          </button>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ düşünme kayıtları
 function Runs({ runs }: { runs: BrainRun[] }) {
   const [open, setOpen] = useState(false);
@@ -760,11 +856,19 @@ function Runs({ runs }: { runs: BrainRun[] }) {
 }
 
 // ------------------------------------------------------------------ teslimat
-function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string) => void }) {
+function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string, mail?: boolean) => Promise<{ error: string; code?: string } | null> }) {
   const { toast } = usePeriod();
   const [fb, setFb] = useState("");
+  const [sending, setSending] = useState(false);
+  const [mailErr, setMailErr] = useState<{ error: string; code?: string } | null>(null);
   const a = agentById(x.agent)!;
   const w = x.work;
+  const toGmail = async () => {
+    setSending(true);
+    setMailErr(null);
+    setMailErr(await onApprove(x.id, true));
+    setSending(false);
+  };
   const html = useMemo(() => (w?.output ? renderMd(w.output) : ""), [w?.output]);
   const mailLink = x.sources.find((s) => s.ref?.source === "gmail" && s.link)?.link;
   if (!w) {
@@ -785,6 +889,17 @@ function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: stri
             <span className="block whitespace-nowrap font-extrabold">Ekip olarak yap</span>
             <span className="block text-xs text-ink-3">2–4 ajan aynı anda</span>
           </span>
+        </button>
+      </div>
+    );
+  }
+  if (w.status === "queued") {
+    return (
+      <div className="rounded-2xl p-4" style={{ background: `${a.color}14` }}>
+        <div className="font-extrabold">⏳ Sırada — {a.name} bu işi kendisi yapacak</div>
+        <div className="mt-1 text-xs text-ink-3">Güven seviyesi “{TRUST_META[2].label}”. Sıradaki işler sayfa açıkken (ya da arka planda) tek tek yapılır; gidecek bir şey olursa onayını bekler.</div>
+        <button onClick={() => onWork(x.id)} className="mt-2 rounded-full bg-track px-3 py-1.5 text-xs font-extrabold">
+          ▶ Şimdi yap
         </button>
       </div>
     );
@@ -840,7 +955,29 @@ function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: stri
         <div className="border-t border-line bg-tint-warn px-4 py-3 text-sm">
           <div className="font-extrabold">✋ Onaylanınca gidecek</div>
           <div className="mt-0.5">{w.outbound}</div>
-          <div className="mt-1 text-xs text-ink-3">Gönderim şimdilik sende: taslağı kopyalayıp gönder, sonra onayla (iş biter).</div>
+          <div className="mt-1 text-xs text-ink-3">“Onayla → Gmail taslağı” e-postayı Gmail taslaklarına yazar (kaynak bir e-postaysa aynı yazışmaya yanıt olarak); göndermek sende: Gmail'de açıp “Gönder”.</div>
+          {mailErr && (
+            <div className="mt-2 rounded-xl bg-card px-3 py-2 text-xs font-semibold text-fail">
+              ⚠ {mailErr.error}{" "}
+              {mailErr.code === "scope" && (
+                <a href="/api/google/auth" className="font-extrabold text-blue underline">
+                  Google'ı yeniden bağla
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {w.draft && (
+        <div className="border-t border-line bg-ok/10 px-4 py-3 text-sm">
+          <div className="font-extrabold">✉️ Gmail'de taslak hazır{w.draft.reply ? " (yazışmaya yanıt)" : ""}</div>
+          <div className="mt-0.5 text-xs text-ink-2">
+            Kime: {w.draft.to.join(", ")}
+            {w.draft.cc.length ? ` · Bilgi: ${w.draft.cc.join(", ")}` : ""} · Konu: {w.draft.subject}
+          </div>
+          <a href={w.draft.link} target="_blank" rel="noreferrer" className="mt-2 inline-block rounded-full bg-ok px-3 py-1.5 text-xs font-extrabold text-white">
+            Gmail'de aç ve gönder ↗
+          </a>
         </div>
       )}
       {lastRule && <div className="border-t border-line bg-tint-info px-4 py-2 text-xs font-semibold">📏 Kalıcı kural öğrenildi: {lastRule}</div>}
@@ -862,9 +999,14 @@ function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: stri
           </a>
         )}
         {w.status === "waiting_ok" && (
-          <button onClick={() => onApprove(x.id)} className="rounded-full bg-ok px-3 py-1.5 text-xs font-extrabold text-white">
-            ✓ Gönderdim, onayla
-          </button>
+          <>
+            <button onClick={toGmail} disabled={sending} className="rounded-full bg-ok px-3 py-1.5 text-xs font-extrabold text-white disabled:opacity-60">
+              {sending ? "Taslak yazılıyor…" : "✉️ Onayla → Gmail taslağı"}
+            </button>
+            <button onClick={() => onApprove(x.id)} className="rounded-full bg-track px-3 py-1.5 text-xs font-extrabold">
+              ✓ Gönderdim, onayla
+            </button>
+          </>
         )}
         <button onClick={() => onWork(x.id)} className="rounded-full bg-track px-3 py-1.5 text-xs font-extrabold">
           ↻ Yeniden yap
@@ -923,7 +1065,7 @@ function TeamPieces({ team, full }: { team: NonNullable<NonNullable<BrainItem["w
 }
 
 // ------------------------------------------------------------------ ajan kartı + kurulum görüşmesi
-export function AgentPanel({ agent, onTry, onClose }: { agent: AgentId; onTry: (task: string) => void; onClose: () => void }) {
+export function AgentPanel({ agent, onTry, onClose, trust, onTrust }: { agent: AgentId; onTry: (task: string) => void; onClose: () => void; trust?: AgentTrustView; onTrust?: (level: TrustLevel) => void }) {
   const a = agentById(agent)!;
   const [profile, setProfile] = useState<{ guide: string; rules: string } | null>(null);
   const [talk, setTalk] = useState<{ turns: { q: string; a: string }[]; q: string | null; step: number; busy: boolean; result?: { brief: string; skill: { name: string; when: string; steps: string[]; format: string }; tryTask: string } } | null>(null);
@@ -982,6 +1124,7 @@ export function AgentPanel({ agent, onTry, onClose }: { agent: AgentId; onTry: (
           <Icon name="close" size={16} />
         </button>
       </div>
+      {trust && onTrust && <TrustControl trust={trust} onTrust={onTrust} />}
 
       {talk ? (
         <div className="space-y-3 p-4">

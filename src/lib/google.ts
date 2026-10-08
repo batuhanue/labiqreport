@@ -1,10 +1,10 @@
 import "server-only";
 import { store } from "./db";
 import { listFiles } from "./drive";
-import { DRIVE_SCOPE, type GAccount, type GChatMsg, type GChatSpace, type GEvent, type GFile, type GMail, type GMeeting, type GoogleSnapshot, type GoogleStatus } from "./google-types";
+import { COMPOSE_SCOPE, DRIVE_SCOPE, type GAccount, type GChatMsg, type GChatSpace, type GEvent, type GFile, type GMail, type GMeeting, type GoogleSnapshot, type GoogleStatus } from "./google-types";
 
 /**
- * Google Workspace entegrasyonu (salt okunur): Takvim, Gmail, Chat, Meet, Drive.
+ * Google Workspace entegrasyonu: Takvim, Gmail, Chat, Meet, Drive okunur; Gmail'e yalnızca taslak yazılır (gönderim Batuhan'da).
  * OAuth 2.0 yetkilendirme kodu akışı; yenileme belirteci şifrelenip KV'de ("google-auth") tutulur,
  * son senkron görüntüsü KV'de ("google-data") saklanır.
  */
@@ -21,8 +21,9 @@ export const SCOPES = [
   "https://www.googleapis.com/auth/meetings.space.readonly",
   "https://www.googleapis.com/auth/directory.readonly",
   DRIVE_SCOPE,
+  COMPOSE_SCOPE,
 ];
-export { DRIVE_SCOPE };
+export { COMPOSE_SCOPE, DRIVE_SCOPE };
 
 const CLIENT_ID = () => process.env.GOOGLE_CLIENT_ID?.trim() ?? "";
 const CLIENT_SECRET = () => process.env.GOOGLE_CLIENT_SECRET?.trim() ?? "";

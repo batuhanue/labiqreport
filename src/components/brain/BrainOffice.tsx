@@ -10,7 +10,7 @@ import { AGENTS, agentById, STATUS_META, type AgentId, type BrainItem } from "@/
 import { AREAS } from "@/lib/checklist";
 import { areaProgress, deadlineInfo } from "@/lib/period";
 import { OFFICE_DARK, OFFICE_LIGHT, type OfficePal } from "../office/Furniture";
-import { AgentPanel, Brief, Capture, ItemSheet, Learning } from "./BrainView";
+import { AgentPanel, Brief, Capture, ItemSheet, Learning, TrustSuggest } from "./BrainView";
 import { BrainScene, type CameraApi, type Screen } from "./BrainScene";
 import { DEPTS, deptById } from "./layout";
 import { useBrainState } from "./useBrain";
@@ -378,12 +378,13 @@ export default function BrainOffice() {
               />
               {dept ? (
                 <>
-                  <AgentPanel key={dept.id} agent={dept.id} onTry={(t) => setSeed((x) => ({ text: t, agent: dept.id, n: (x?.n ?? 0) + 1 }))} onClose={() => onSelect(null)} />
+                  <AgentPanel key={dept.id} agent={dept.id} trust={st?.trust?.[dept.id]} onTrust={(l) => brain.setTrust(dept.id, l)} onTry={(t) => setSeed((x) => ({ text: t, agent: dept.id, n: (x?.n ?? 0) + 1 }))} onClose={() => onSelect(null)} />
                   <TaskList title={`${dept.name} işleri`} items={(st?.items ?? []).filter((x) => x.agent === dept.id || x.work?.team?.pieces.some((p) => p.agent === dept.id))} onPick={setOpen} />
                 </>
               ) : (
                 <>
                   <BrainCard brain={brain} />
+                  <TrustSuggest compact trust={st?.trust} onTrust={brain.setTrust} />
                   <Learning compact learning={st?.learning} onLearned={brain.load} />
                   <TaskList title="Görev durumu" items={st?.items ?? []} onPick={setOpen} filters />
                 </>
@@ -486,7 +487,7 @@ function TaskList({ title, items, onPick, filters }: { title: string; items: Bra
                     <div className="line-clamp-2 text-[13px] font-bold leading-snug">{x.title}</div>
                     <div className="mt-0.5 truncate text-[10px] font-extrabold uppercase tracking-wider text-ink-3">
                       {a.emoji} {a.name}
-                      {x.work?.team ? " · ekip" : ""} · {running ? "çalışıyor" : x.work?.status === "waiting_ok" ? "onay bekliyor" : STATUS_META[x.status === "dismissed" ? "done" : x.status].label}
+                      {x.work?.team ? " · ekip" : ""}{x.auto ? " · 🤖 kendisi onayladı" : ""} · {running ? "çalışıyor" : x.work?.status === "queued" ? "sırada" : x.work?.status === "waiting_ok" ? "onay bekliyor" : STATUS_META[x.status === "dismissed" ? "done" : x.status].label}
                     </div>
                   </div>
                   <span className="shrink-0 text-[10px] text-ink-3">{ago(x.updatedAt)}</span>

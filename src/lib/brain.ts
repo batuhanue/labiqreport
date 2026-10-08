@@ -11,7 +11,9 @@ import { getSnapshot } from "./google";
 import { areaProgress, deadlineInfo, normalizePeriod, periodLabel } from "./period";
 import { emptyStore, type TodoStore } from "./todo";
 import { brainSystem } from "./brain-prompt";
-import { learn, learningState, recentChoices, recordChoices } from "./learning";
+import { learn, learningState, readChoices, recentChoices, recordChoices } from "./learning";
+import { createDraft } from "./gmail-draft";
+import { applyTrust, reviewTrust, trustView } from "./trust";
 import { AGENTS, agentById, KIND_LABEL, type AgentId, type Choice, type AgentRun, type BrainFocus, type BrainItem, type BrainRun, type BrainState, type ItemSource, type ItemWork, type Signal, type TeamPiece, type TeamRun } from "./brain-types";
 
 /*
@@ -452,6 +454,12 @@ export async function think(opts: { trigger: BrainRun["trigger"]; budgetMs?: num
     }
     meta.captures = meta.captures.filter((c) => !meta.seen[c.id]);
     run.createdIds = createdIds;
+    // kazanılan güven: seviyesi yeten ajan kendi önerisini onaylar (2'de işi de sıraya koyar)
+    const trust = createdIds.length ? await trustView().catch(() => null) : null;
+    if (trust) {
+      const auto = items.filter((x) => createdIds.includes(x.id) && applyTrust(x, trust) > 0).map((x) => x.id);
+      if (auto.length) run.autoIds = auto;
+    }
     run.files = await attachFiles(touched);
     run.agents.push({ agent: "dosya", signals: touched.length, created: 0, updated: run.files, ms: 0 });
 
@@ -503,7 +511,8 @@ export async function capture(text: string) {
 }
 
 export async function state(): Promise<BrainState> {
-  const [items, meta, todos, learning] = await Promise.all([readItems(), readMeta(), store().getKV<TodoStore>("todos"), learningState().catch(() => undefined)]);
+  const [items, meta, todos, choices] = await Promise.all([readItems(), readMeta(), store().getKV<TodoStore>("todos"), readChoices().catch(() => [])]);
+  const [learning, trust] = await Promise.all([learningState().catch(() => undefined), trustView(choices).catch(() => undefined)]);
   // görev listesinde tamamlanan işler beyinde de biter
   const done = new Set((todos?.todos ?? []).filter((t) => t.done).map((t) => t.id));
   let changed = false;
@@ -525,7 +534,14 @@ export async function state(): Promise<BrainState> {
     running: !!meta.lock && meta.lock > Date.now(),
     pending,
     learning,
+    trust,
   };
+}
+
+/** Ajanın kendisi yapacağı (güven 2) sıradaki en eski iş. */
+export async function nextQueued() {
+  const items = await readItems();
+  return items.filter((x) => x.work?.status === "queued" && isOpen(x)).sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]?.id ?? null;
 }
 
 const PRIO = ["", "acil", "yüksek", "orta", "normal"];
@@ -539,7 +555,7 @@ export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "sta
   if (!it) return null;
   // Batuhan'ın seçimleri (öğrenme için)
   const choices: Omit<Choice, "id" | "at">[] = [];
-  const base = { where: "beyin" as const, agent: it.agent, title: it.title, detail: itemDetail(it) };
+  const base = { where: "beyin" as const, agent: it.agent, title: it.title, detail: itemDetail(it), itemKind: it.kind, auto: !!it.auto || undefined };
   const reason = opts.reason?.trim() || undefined;
   if (patch.todoId && !it.todoId) choices.push({ ...base, kind: "to_todo" });
   else if (patch.status && patch.status !== it.status) {
@@ -564,7 +580,9 @@ export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "sta
   it.updatedAt = new Date().toISOString();
   await store().setKV(ITEMS_KEY, items);
   const pending = choices.length ? await recordChoices(choices).catch(() => 0) : 0;
-  return { item: it, pending, explicit: choices.some((c) => c.reason) };
+  // ajanın kendi onayladığı iş reddedildiyse güveni gözden geçir (2 yanlışta bir seviye düşer)
+  const trustNote = it.auto && choices.some((c) => c.kind === "reject") ? await reviewTrust(it.agent).catch(() => null) : null;
+  return { item: it, pending, explicit: choices.some((c) => c.reason), trustNote };
 }
 
 /** Otomatik tetikleme için: son düşünmeden bu yana yeterli süre geçti mi. */
@@ -781,13 +799,15 @@ async function teamWork(it: BrainItem, system: Anthropic.TextBlockParam[], ctx: 
   return final;
 }
 
-export async function work(id: string, opts: { feedback?: string; budgetMs?: number; team?: boolean } = {}): Promise<BrainItem | null> {
+export async function work(id: string, opts: { feedback?: string; budgetMs?: number; team?: boolean; queued?: boolean } = {}): Promise<BrainItem | null> {
   if (!claudeConfigured()) throw new Error("ANTHROPIC_API_KEY tanımlı değil");
   const t0 = Date.now();
   const deadline = t0 + (opts.budgetMs ?? 56000);
   let items = await readItems();
   const it = items.find((x) => x.id === id);
   if (!it) return null;
+  // sıradaki iş: başka biri (sekme ya da arka plan) başlattıysa ikinci kez çalıştırma
+  if (opts.queued && it.work?.status !== "queued") return it;
   const prev = it.work;
   it.work = { status: "running", output: prev?.output ?? "", used: [], revisions: prev?.revisions ?? [], at: new Date().toISOString() };
   if (it.status === "inbox" || it.status === "todo") it.status = "doing";
@@ -828,7 +848,8 @@ export async function work(id: string, opts: { feedback?: string; budgetMs?: num
       rule = await classify(it.agent, it.title, opts.feedback, usage).catch(() => null);
       w.revisions.push({ at: new Date().toISOString(), feedback: opts.feedback, rule: rule ?? undefined });
       if (rule) await addRule(it.agent, rule);
-      await recordChoices([{ where: "beyin", kind: "fix", agent: it.agent, title: it.title, detail: itemDetail(it), reason: opts.feedback }]).catch(() => 0);
+      await recordChoices([{ where: "beyin", kind: "fix", agent: it.agent, title: it.title, detail: itemDetail(it), reason: opts.feedback, itemKind: it.kind, auto: !!it.auto || undefined }]).catch(() => 0);
+      if (it.auto) await reviewTrust(it.agent).catch(() => null);
     }
   } catch (e) {
     w.status = "error";
@@ -995,15 +1016,26 @@ export async function agentProfile(agent: AgentId) {
   return { guide: section(GUIDE_FILE), rules: section(RULES_FILE) };
 }
 
-/** Onay: taslak onaylandı (gönderim şimdilik Batuhan'da — Gmail'de açıp gönderir). */
-export async function approve(id: string) {
-  const items = await readItems();
-  const it = items.find((x) => x.id === id);
+/**
+ * Onay. mail: gidecek e-postayı Gmail taslaklarına yazar (yanıtsa aynı yazışmaya); gönderimi Batuhan yapar.
+ * Taslak oluşturulamazsa DraftError fırlar ve iş onaylanmaz.
+ */
+export async function approve(id: string, opts: { mail?: boolean } = {}) {
+  let items = await readItems();
+  let it = items.find((x) => x.id === id);
   if (!it?.work) return null;
+  if (opts.mail && it.work.outbound) {
+    const draft = await createDraft(it);
+    // taslak yazılırken liste değişmiş olabilir
+    items = await readItems();
+    it = items.find((x) => x.id === id);
+    if (!it?.work) return null;
+    it.work.draft = draft;
+  }
   it.work.status = "approved";
   it.status = "done";
   it.updatedAt = new Date().toISOString();
   await store().setKV(ITEMS_KEY, items);
-  await recordChoices([{ where: "beyin", kind: "approve", agent: it.agent, title: it.title, detail: `${itemDetail(it)}${it.work.outbound ? ` · gidecek: ${it.work.outbound}` : ""}` }]).catch(() => 0);
+  await recordChoices([{ where: "beyin", kind: "approve", agent: it.agent, itemKind: it.kind, auto: !!it.auto || undefined, title: it.title, detail: `${itemDetail(it)}${it.work.outbound ? ` · gidecek: ${it.work.outbound}` : ""}${it.work.draft ? ` · Gmail taslağı: ${it.work.draft.to.join(", ")}` : ""}` }]).catch(() => 0);
   return it;
 }

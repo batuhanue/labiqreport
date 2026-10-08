@@ -15,7 +15,7 @@ import { iso, newTodo } from "@/lib/todo";
 
 /** Türkçe duyarsız karşılaştırma */
 const norm = (s: string) => s.toLocaleLowerCase("tr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i");
-import { DRIVE_SCOPE, type ArchiveHit, type ArchiveProgress, type ArchiveSource, type GChatSpace, type GEvent, type GFile, type GMail, type GMeeting, type GoogleSnapshot } from "@/lib/google-types";
+import { COMPOSE_SCOPE, DRIVE_SCOPE, type ArchiveHit, type ArchiveProgress, type ArchiveSource, type GChatSpace, type GEvent, type GFile, type GMail, type GMeeting, type GoogleSnapshot } from "@/lib/google-types";
 
 type Tab = "calendar" | "gmail" | "chat" | "meet" | "drive" | "archive";
 
@@ -171,6 +171,17 @@ export default function GooglePage() {
               <div className="min-w-0 flex-1 font-semibold">Google yetkisi sona ermiş. Senkronun devam etmesi için hesabı yeniden bağla.</div>
               <a href={`/api/google/auth?hint=${encodeURIComponent(status.account?.email ?? "")}`} className="clay-dark rounded-full px-4 py-2 font-bold">
                 Yeniden bağla
+              </a>
+            </div>
+          )}
+          {!status.needsReauth && !status.scopes?.includes(COMPOSE_SCOPE) && (
+            <div className="clay-sm flex flex-wrap items-center gap-3 bg-tint-info px-4 py-3 text-sm">
+              <span className="text-xl">✉️</span>
+              <div className="min-w-0 flex-1 font-semibold">
+                Beyinde onayladığın e-posta taslaklarını Gmail'e yazabilmem için hesabı bir kez yeniden bağla (yalnızca taslak oluşturur; göndermek sende).
+              </div>
+              <a href={`/api/google/auth?hint=${encodeURIComponent(status.account?.email ?? "")}`} className="clay-dark rounded-full px-4 py-2 font-bold">
+                İzin ver
               </a>
             </div>
           )}

@@ -28,7 +28,7 @@ const one = (s: string, n: number) => {
   return t.length > n ? `${t.slice(0, n)}…` : t;
 };
 
-const readChoices = async () => (await store().getKV<Choice[]>(CHOICES_KEY)) ?? [];
+export const readChoices = async () => (await store().getKV<Choice[]>(CHOICES_KEY)) ?? [];
 
 /** Seçimleri kaydeder; öğrenilmemiş seçim sayısını döndürür. */
 export async function recordChoices(input: Omit<Choice, "id" | "at">[]) {
@@ -38,6 +38,8 @@ export async function recordChoices(input: Omit<Choice, "id" | "at">[]) {
     if (!c.title?.trim() || !CHOICE_LABEL[c.kind]) continue;
     const x: Choice = { id: uid(), at, kind: c.kind, where: c.where, title: one(c.title, 200) };
     if (c.agent && agentById(c.agent)) x.agent = c.agent;
+    if (c.itemKind) x.itemKind = c.itemKind;
+    if (c.auto) x.auto = true;
     if (c.detail?.trim()) x.detail = one(c.detail, 400);
     if (c.reason?.trim()) x.reason = one(c.reason, 400);
     // aynı şeyin hemen tekrarı (ör. çift tıklama) tek seçim sayılır
@@ -56,7 +58,7 @@ export async function recordChoices(input: Omit<Choice, "id" | "at">[]) {
 }
 
 const line = (c: Choice) =>
-  `- ${c.at.slice(0, 10)} · ${c.where}${c.agent ? `/${agentById(c.agent)?.name ?? c.agent}` : ""} · ${CHOICE_LABEL[c.kind]}: "${c.title}"${c.detail ? ` (${c.detail})` : ""}${c.reason ? ` — SEBEP: "${c.reason}"` : ""}`;
+  `- ${c.at.slice(0, 10)} · ${c.where}${c.agent ? `/${agentById(c.agent)?.name ?? c.agent}` : ""} · ${CHOICE_LABEL[c.kind]}${c.auto ? " (ajanın kendi onayladığı iş)" : ""}: "${c.title}"${c.detail ? ` (${c.detail})` : ""}${c.reason ? ` — SEBEP: "${c.reason}"` : ""}`;
 
 /** Ajanlara ve asistana verilen son seçimler (öğrenme beklemeden etkili olsun diye). */
 export async function recentChoices(opts: { agent?: AgentId; limit?: number } = {}) {

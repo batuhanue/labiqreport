@@ -1,6 +1,8 @@
 /** Google Workspace senkron verisi — sunucu ve istemci ortak tipleri. */
 
 export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+/** yalnızca taslak oluşturmak için (onaylanan teslimat Gmail taslaklarına yazılır; gönderimi Batuhan yapar) */
+export const COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose";
 
 export interface GAccount {
   email: string;
