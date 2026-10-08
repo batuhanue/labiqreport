@@ -57,6 +57,14 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   Google sayfası → Arşiv sekmesinden ilerleme görülür ve doğrudan aranabilir. Bağlantı sunucuda saklandığından tüm
   cihazlarda tek seferlik giriş yeterlidir.
 
+- **Kampüs görünümü (tablet + masaüstü):** Denetim sayfası 3B, "cozy" bir kampüs olarak açılır (React Three Fiber).
+  10 rapor alanı = 10 depo binası, her kontrol maddesi = binanın önündeki yükleme rampası. Rampanın önünde iki palet
+  yeri vardır (sol Bursa, sağ Başakşehir): ✓ koli yığını, ✗ kırmızı sandık + uyarı iğnesi, N/A brandalı palet, boş = sarı
+  çizgili boş yer. İki hastane de kontrol edilince kepenk iner. Bekleyen işlerin önünde forkliftler çalışır, yollarda
+  kamyonlar dolaşır. Binaya tıklayınca kamera oraya uçar; sağ cam panelden maddeler işaretlenir, "Detay" ile not/aksiyon
+  eklenir. Üstte göstergeler, altta kapanış akışı ve iş kuyruğu, ortadaki Diacore Merkez binası genel özettir.
+  "☰ Liste" ile klasik görünüme dönülür (tercih cihazda hatırlanır). Mobilde klasik görünüm kalır; 3B kod indirilmez.
+
 ## Vercel'e kurulum
 1. Repo'yu Vercel'e import et (Framework: Next.js).
 2. **Storage → Create Database → Neon (Postgres)** ekle ve projeye bağla (`DATABASE_URL` otomatik gelir).

@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActionEditor, type ActionDraft } from "@/components/ActionEditor";
 import { Celebration } from "@/components/Celebration";
@@ -17,6 +18,64 @@ import { areaProgress, deadlineInfo, defaultPeriod, MONTHS_SHORT, overallProgres
 import type { PeriodData } from "@/lib/types";
 
 type Filter = "all" | "priority" | "pending" | "fail";
+
+/** 3B kampüs yalnızca gerektiğinde (tablet/masaüstü) indirilir. */
+const WorldView = dynamic(() => import("@/components/world/WorldView"), {
+  ssr: false,
+  loading: () => (
+    <div className="clay grid h-[calc(100dvh-15rem)] min-h-[560px] place-items-center rounded-[30px] lg:h-[calc(100dvh-8.5rem)] lg:min-h-[620px]">
+      <div className="flex flex-col items-center gap-3 text-sm font-bold text-ink-3">
+        <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="inline-block h-8 w-8 rounded-full border-[3px] border-blue border-t-transparent" />
+        Kampüs kuruluyor…
+      </div>
+    </div>
+  ),
+});
+
+const VIEW_KEY = "lq:audit-view";
+/** Görünüm tercihi (Dünya / Liste) ve ekranın tablet+ olup olmadığı. */
+function useAuditView(): ["world" | "list", (m: "world" | "list") => void, boolean] {
+  const [mode, setModeState] = useState<"world" | "list">("world");
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(VIEW_KEY) === "list") setModeState("list");
+    } catch {}
+    const mq = window.matchMedia("(min-width: 768px)");
+    const on = () => setWide(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  const setMode = (m: "world" | "list") => {
+    setModeState(m);
+    try {
+      localStorage.setItem(VIEW_KEY, m);
+    } catch {}
+  };
+  return [mode, setMode, wide];
+}
+
+function ViewToggle({ mode, onChange }: { mode: "world" | "list"; onChange: (m: "world" | "list") => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="clay-pressed flex rounded-full p-1">
+        {(
+          [
+            ["world", "🏙️ Kampüs"],
+            ["list", "☰ Liste"],
+          ] as const
+        ).map(([v, l]) => (
+          <button key={v} onClick={() => onChange(v)} className={`relative rounded-full px-4 py-2 text-sm font-bold ${mode === v ? "text-white" : "text-ink-2"}`}>
+            {mode === v && <motion.span layoutId="audit-view" className="absolute inset-0 rounded-full bg-blue" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}
+            <span className="relative">{l}</span>
+          </button>
+        ))}
+      </div>
+      {mode === "world" && <span className="hidden text-xs font-semibold text-ink-3 md:inline">Sürükle: döndür · Sağ tık/iki parmak: kaydır · Tekerlek/çimdik: yakınlaştır · Binaya tıkla</span>}
+    </div>
+  );
+}
 
 export default function DenetimPage() {
   const { data } = usePeriod();
@@ -135,6 +194,7 @@ function Audit({ data }: { data: PeriodData }) {
   const [celebrate, setCelebrate] = useState<Area | null>(null);
   const [fullDone, setFullDone] = useState(false);
   const prog = overallProgress(data);
+  const [mode, setMode, wide] = useAuditView();
 
   // URL ?alan= ile geri tuşu desteği
   useEffect(() => {
@@ -185,6 +245,8 @@ function Audit({ data }: { data: PeriodData }) {
   }, [data]);
 
   const area = areaCode ? areaByCode(areaCode) ?? null : null;
+  // 3B dünya: yalnızca tablet/masaüstü; bir alan listede açıksa liste görünümünde kalır
+  const world = wide && mode === "world" && !area;
 
   const nextIncomplete = (after?: string) => {
     const idx = after ? AREAS.findIndex((a) => a.code === after) : -1;
@@ -194,6 +256,11 @@ function Audit({ data }: { data: PeriodData }) {
 
   return (
     <div className="space-y-5">
+      {wide && <ViewToggle mode={mode} onChange={setMode} />}
+      {world ? (
+        <WorldView data={data} onAddAction={(d) => setActionDraft(d)} />
+      ) : (
+      <>
       <div className={`space-y-5 ${area ? "hidden lg:block" : ""}`}>
       <MonthStrip current={data.period} />
 
@@ -320,7 +387,11 @@ function Audit({ data }: { data: PeriodData }) {
         </div>
       </div>
 
+      </>
+      )}
+
       {/* Excel FAB */}
+      {!world && (
       <motion.button
         initial={{ scale: 0, rotate: -30, opacity: 0 }}
         animate={{ scale: 1, rotate: 0, opacity: 1 }}
@@ -334,6 +405,7 @@ function Audit({ data }: { data: PeriodData }) {
         <Icon name="download" size={24} />
         <span className="hidden sm:inline">Excel çıktısı</span>
       </motion.button>
+      )}
 
       <ActionEditor open={!!actionDraft} draft={actionDraft ?? undefined} onClose={() => setActionDraft(null)} />
       <Celebration
