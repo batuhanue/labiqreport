@@ -54,6 +54,12 @@ export function Celebration({
       timers.forEach(clearTimeout);
     };
   }, [area, full]);
+  useEffect(() => {
+    if (!area) return;
+    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [area, onClose]);
   if (!mounted) return null;
 
   const doneAreas = AREAS.filter((a) => areaProgress(data, a).both === a.items.length).length;
@@ -140,7 +146,11 @@ export function Celebration({
                     <motion.span
                       initial={{ scale: 0, rotate: -45 }}
                       animate={{ scale: area?.code === a.code ? [0, 1.35, 1] : 1, rotate: 0 }}
-                      transition={{ delay: 0.35 + i * 0.05, type: "spring", stiffness: 420, damping: 14 }}
+                      transition={
+                        area?.code === a.code
+                          ? { delay: 0.35 + i * 0.05, duration: 0.55, times: [0, 0.6, 1], ease: "easeOut" }
+                          : { delay: 0.35 + i * 0.05, type: "spring", stiffness: 420, damping: 14 }
+                      }
                       className="grid h-6 w-6 place-items-center rounded-full"
                       style={{
                         background: done ? "#34C26B" : "transparent",

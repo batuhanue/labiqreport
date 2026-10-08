@@ -35,13 +35,31 @@ const glass = "border border-white/60 bg-white/75 shadow-[0_10px_40px_-12px_rgba
  * Denetim paneli: 3B kampüs. Her rapor alanı bir bina, her madde bir rampa; işaretler paletlerle görünür.
  * Üzerindeki cam paneller (videodaki gibi): üstte göstergeler, sağda seçili bina, altta akış ve iş kuyruğu.
  */
-export default function WorldView({ data, onAddAction }: { data: PeriodData; onAddAction: (d: ActionDraft) => void }) {
+export default function WorldView({
+  data,
+  onAddAction,
+  focusRequest,
+  celebration,
+  onCelebrationClose,
+  onCelebrationNext,
+}: {
+  data: PeriodData;
+  onAddAction: (d: ActionDraft) => void;
+  /** dışarıdan "şu binaya uç" isteği (n her istekte artar) */
+  focusRequest?: { code: string | null; n: number };
+  /** az önce tamamlanan alan: kamera oraya uçar, binada havai fişek, üstte kutlama şeridi */
+  celebration?: { area: Area; full: boolean } | null;
+  onCelebrationClose?: () => void;
+  onCelebrationNext?: () => void;
+}) {
   const pal = usePalette();
   const [focus, setFocus] = useState<string | null>(null);
+  const [fireworks, setFireworks] = useState<{ codes: string[]; n: number } | null>(null);
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const api = useRef<CameraApi | null>(null);
+  const labels = useRef<Record<string, HTMLDivElement | null>>({});
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelPx, setPanelPx] = useState(0);
   useEffect(() => {
@@ -76,6 +94,23 @@ export default function WorldView({ data, onAddAction }: { data: PeriodData; onA
     setSelectedItem(itemId);
   }, []);
 
+  useEffect(() => {
+    if (focusRequest && focusRequest.n > 0) onSelect(focusRequest.code);
+  }, [focusRequest, onSelect]);
+  const celebratingCode = celebration?.area.code ?? null;
+  const celebratingFull = !!celebration?.full;
+  useEffect(() => {
+    if (!celebratingCode) return;
+    // dönem bittiyse bütün kampüs kutlar, değilse kamera binaya uçar
+    if (celebratingFull) {
+      setFocus(null);
+      setFireworks((f) => ({ codes: [...AREAS.map((a) => a.code), "HQ"], n: (f?.n ?? 0) + 1 }));
+    } else {
+      setFocus(celebratingCode);
+      setFireworks((f) => ({ codes: [celebratingCode], n: (f?.n ?? 0) + 1 }));
+    }
+  }, [celebratingCode, celebratingFull]);
+
   // Esc: seçimi kaldır
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
@@ -91,7 +126,10 @@ export default function WorldView({ data, onAddAction }: { data: PeriodData; onA
 
   return (
     <div className={`relative h-[calc(100dvh-15rem)] min-h-[560px] overflow-hidden rounded-[30px] lg:h-[calc(100dvh-8.5rem)] lg:min-h-[620px] ${pal.dark ? "bg-[#151a25]" : "bg-[#eaf0f8]"}`}>
-      <Scene pal={pal} items={data.items} stats={stats} focus={focus} selectedItem={selectedItem} onSelect={onSelect} onSelectItem={onSelectItem} api={api} panelPx={panelPx} />
+      <Scene pal={pal} items={data.items} stats={stats} focus={focus} selectedItem={selectedItem} onSelect={onSelect} onSelectItem={onSelectItem} api={api} panelPx={panelPx} fireworks={fireworks} labels={labels} />
+
+      {/* bina rozetleri: konumları sahnede her karede güncellenir */}
+      <BuildingLabels labels={labels} stats={stats} focus={focus} dark={pal.dark} onSelect={onSelect} />
 
       {/* üst göstergeler */}
       <TopStats data={data} stats={stats} onPick={(c) => onSelect(c)} panelOpen={panelOpen} />
@@ -138,6 +176,13 @@ export default function WorldView({ data, onAddAction }: { data: PeriodData; onA
       {/* alt: kapanış akışı */}
       <FlowCard data={data} stats={stats} onPick={(c) => onSelect(c)} />
 
+      {/* kutlama şeridi (sahneyi örtmez) */}
+      <AnimatePresence>
+        {celebration && (
+          <CampusCelebration key={celebration.area.code} data={data} area={celebration.area} full={celebration.full} onClose={() => onCelebrationClose?.()} onNext={() => onCelebrationNext?.()} />
+        )}
+      </AnimatePresence>
+
       {/* lejant */}
       <Legend />
 
@@ -157,6 +202,142 @@ export default function WorldView({ data, onAddAction }: { data: PeriodData; onA
           />
         )}
       </Sheet>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ kampüs kutlaması */
+function CampusCelebration({ data, area, full, onClose, onNext }: { data: PeriodData; area: Area; full: boolean; onClose: () => void; onNext: () => void }) {
+  const done = AREAS.filter((a) => areaProgress(data, a).both === a.items.length);
+  useEffect(() => {
+    let off = false;
+    import("canvas-confetti").then(({ default: confetti }) => {
+      if (off) return;
+      const colors = [area.color, "#34C26B", "#5B7CFF", "#FFC93C", "#FF7A59", "#ffffff"];
+      confetti({ particleCount: full ? 180 : 110, spread: 90, origin: { y: 0.25 }, colors, scalar: 1.1 });
+      if (full)
+        [400, 900, 1400].forEach((d) =>
+          setTimeout(() => {
+            confetti({ particleCount: 80, angle: 60, spread: 70, origin: { x: 0, y: 0.75 }, colors });
+            confetti({ particleCount: 80, angle: 120, spread: 70, origin: { x: 1, y: 0.75 }, colors });
+          }, d),
+        );
+    });
+    const t = setTimeout(onClose, full ? 14000 : 9000);
+    return () => {
+      off = true;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -40, scale: 0.9, x: "-50%" }}
+      animate={{ opacity: 1, y: 0, scale: 1, x: "-50%" }}
+      exit={{ opacity: 0, y: -30, scale: 0.95, x: "-50%" }}
+      transition={{ type: "spring", stiffness: 300, damping: 24 }}
+      className={`absolute left-[calc((100%-min(372px,40%))/2)] top-24 z-30 flex w-[min(520px,calc(100%-min(372px,40%)-2rem))] items-center gap-4 rounded-[26px] p-4 ${glass}`}
+    >
+      <motion.span
+        initial={{ scale: 0, rotate: -40 }}
+        animate={{ scale: 1, rotate: 0 }}
+        transition={{ type: "spring", stiffness: 380, damping: 12, delay: 0.15 }}
+        className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl text-2xl text-white shadow-lg"
+        style={{ background: `linear-gradient(135deg, ${OK}, #22a356)` }}
+      >
+        {full ? "🏆" : "✓"}
+      </motion.span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] font-extrabold uppercase tracking-wider text-[#22a356]">{full ? "Kapanış tamamlandı" : "Bina tamamlandı"}</div>
+        <div className="truncate text-lg font-extrabold leading-tight">{full ? "Bütün kampüs hazır! 🎉" : `${area.code} · ${area.title}`}</div>
+        <div className="mt-1.5 flex items-center gap-1">
+          {AREAS.map((a, i) => {
+            const ok = done.some((d) => d.code === a.code);
+            return (
+              <motion.span
+                key={a.code}
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ delay: 0.25 + i * 0.04, type: "spring", stiffness: 420, damping: 16 }}
+                className={`h-2.5 w-2.5 rounded-full ${a.code === area.code && !full ? "ring-2 ring-[#22a356]/40" : ""}`}
+                style={{ background: ok ? OK : "rgba(127,127,127,.25)" }}
+                title={a.code}
+              />
+            );
+          })}
+          <span className="ml-1.5 text-[11px] font-bold text-ink-3">
+            {done.length}/{AREAS.length} bina
+          </span>
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-col gap-1.5">
+        {!full && (
+          <button onClick={onNext} className="rounded-full bg-[#2f5bd8] px-3.5 py-2 text-xs font-extrabold text-white">
+            Sıradaki bina →
+          </button>
+        )}
+        <button onClick={onClose} className="rounded-full bg-black/5 px-3.5 py-1.5 text-xs font-bold text-ink-2 dark:bg-white/10">
+          Kapat
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ------------------------------------------------------------------ bina rozetleri */
+function BuildingLabels({
+  labels,
+  stats,
+  focus,
+  dark,
+  onSelect,
+}: {
+  labels: React.RefObject<Record<string, HTMLDivElement | null>>;
+  stats: Record<string, BuildingStats>;
+  focus: string | null;
+  dark: boolean;
+  onSelect: (code: string) => void;
+}) {
+  const pill = `pointer-events-auto flex cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded-full border py-1 pl-1 pr-3 text-[12px] font-extrabold shadow-lg backdrop-blur-md transition-transform hover:scale-105 ${
+    dark ? "border-white/10 bg-[#1b1e27]/85 text-white" : "border-white/70 bg-white/85 text-[#1f2330]"
+  }`;
+  const place = (code: string) => (el: HTMLDivElement | null) => {
+    labels.current[code] = el;
+  };
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+      {AREAS.map((a) => {
+        const s = stats[a.code];
+        const done = s.bursa + s.basaksehir;
+        const complete = done === s.n * 2;
+        return (
+          <div key={a.code} ref={place(a.code)} className="absolute left-0 top-0 opacity-0 transition-opacity duration-200">
+            <button onClick={() => onSelect(a.code)} className={`${pill} ${focus === a.code ? "scale-110 ring-2 ring-[#2f5bd8]/60" : ""}`}>
+              <span className="grid h-7 w-7 place-items-center rounded-full text-[13px] text-white" style={{ background: complete ? OK : a.color }}>
+                {complete ? "✓" : a.emoji}
+              </span>
+              <span>{a.code}</span>
+              <span className="opacity-60">%{Math.round((done / (s.n * 2)) * 100)}</span>
+              {s.fails > 0 && (
+                <span className="rounded-full px-1.5 text-[10px] text-white" style={{ background: FAIL }}>
+                  {s.fails}✗
+                </span>
+              )}
+              {s.overdue && !complete && (
+                <span className="text-[11px]" title="Termin geçti">
+                  ⏰
+                </span>
+              )}
+            </button>
+          </div>
+        );
+      })}
+      <div ref={place("HQ")} className="absolute left-0 top-0 opacity-0 transition-opacity duration-200">
+        <button onClick={() => onSelect("HQ")} className={`${pill} ${focus === "HQ" ? "scale-110 ring-2 ring-[#2f5bd8]/60" : ""}`}>
+          <span className="grid h-7 w-7 place-items-center rounded-full bg-[#2f5bd8] text-[13px] text-white">D</span>
+          Diacore Merkez
+        </button>
+      </div>
     </div>
   );
 }

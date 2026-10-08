@@ -1,11 +1,14 @@
 "use client";
 
-import { Html, RoundedBox } from "@react-three/drei";
+import { RoundedBox } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { BOUNDS, HQ, RING, YARD } from "./layout";
 import type { Palette } from "./palette";
+import { Fireworks } from "./Building";
+
+const HQ_FW = ["#2f5bd8", "#34c26b", "#ffc93c", "#ffffff", "#ff7a59"];
 
 /* ------------------------------------------------------------------ yardımcı: örneklenmiş (instanced) kutu/kür kümeleri */
 function Instances({
@@ -207,7 +210,7 @@ export function Lamps({ pal }: { pal: Palette }) {
 }
 
 /** Diacore merkez binası: tıklanınca genel özet. */
-export function Headquarters({ pal, selected, onSelect }: { pal: Palette; selected: boolean; onSelect: () => void }) {
+export function Headquarters({ pal, selected, onSelect, celebrate = 0 }: { pal: Palette; selected: boolean; onSelect: () => void; celebrate?: number }) {
   const [hover, setHover] = useState(false);
   const g = useRef<THREE.Group>(null);
   const beacon = useRef<THREE.Mesh>(null);
@@ -257,27 +260,13 @@ export function Headquarters({ pal, selected, onSelect }: { pal: Palette; select
           <cylinderGeometry args={[0.9, 0.9, 0.18, 32]} />
           <meshStandardMaterial color={pal.trim} emissive={pal.trim} emissiveIntensity={0.6} />
         </mesh>
+        {celebrate > 0 && <Fireworks key={celebrate} y={9.5} colors={HQ_FW} />}
         {/* giriş saçağı */}
         <mesh position={[-4.9, 1.2, 0]} castShadow>
           <boxGeometry args={[1.2, 0.15, 3.4]} />
           <meshStandardMaterial color={pal.trim} />
         </mesh>
       </group>
-      <Html position={[0, 11, 0]} center zIndexRange={[8, 0]} style={{ pointerEvents: "none" }}>
-        <div
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelect();
-          }}
-          className={`pointer-events-auto flex cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded-full border py-1 pl-1 pr-3 text-[12px] font-extrabold shadow-lg backdrop-blur-md ${
-            pal.dark ? "border-white/10 bg-[#1b1e27]/85 text-white" : "border-white/70 bg-white/85 text-[#1f2330]"
-          } ${selected ? "scale-110" : ""}`}
-        >
-          <span className="grid h-7 w-7 place-items-center rounded-full bg-[#2f5bd8] text-[13px] text-white">D</span>
-          Diacore Merkez
-        </div>
-      </Html>
     </group>
   );
 }

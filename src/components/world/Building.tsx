@@ -1,8 +1,8 @@
 "use client";
 
-import { Html, RoundedBox } from "@react-three/drei";
+import { RoundedBox } from "@react-three/drei";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Hospital } from "@/lib/checklist";
 import type { ItemState, Mark } from "@/lib/types";
@@ -29,12 +29,14 @@ interface Props {
   selected: boolean;
   selectedItem: string | null;
   dimmed: boolean;
+  /** >0 ise (her kutlamada artar) çatıdan havai fişek patlar */
+  celebrate: number;
   onSelect: (code: string) => void;
   onSelectItem: (code: string, itemId: string) => void;
 }
 
 /** Rapor alanı = depo binası. Ön cephede her madde için bir rampa + iki palet yeri. */
-export const Building = memo(function Building({ lot, items, stats, pal, selected, selectedItem, dimmed, onSelect, onSelectItem }: Props) {
+export const Building = memo(function Building({ lot, items, stats, pal, selected, selectedItem, dimmed, celebrate, onSelect, onSelectItem }: Props) {
   const { area, w, h, d } = lot;
   const [hover, setHover] = useState(false);
   const body = useRef<THREE.Group>(null);
@@ -43,6 +45,7 @@ export const Building = memo(function Building({ lot, items, stats, pal, selecte
   const done = stats.bursa + stats.basaksehir;
   const pct = Math.round((done / (stats.n * 2)) * 100);
   const complete = done === stats.n * 2;
+  const fwColors = useMemo(() => [area.color, OK, "#ffc93c", "#ffffff", "#5b7cff", "#ff7a59"], [area.color]);
 
   // seçili/üzerine gelinen bina hafifçe yükselir; seçim halesi nabız gibi atar
   useFrame((st, dt) => {
@@ -129,6 +132,10 @@ export const Building = memo(function Building({ lot, items, stats, pal, selecte
         ))}
       </group>
 
+      {/* tamamlanan bina: çatıda yeşil bayrak; az önce tamamlandıysa havai fişek */}
+      {complete && <RoofFlag h={h} w={w} d={d} color={area.color} />}
+      {celebrate > 0 && <Fireworks key={celebrate} y={h + 1.5} colors={fwColors} />}
+
       {/* rampalar */}
       {area.items.map((it, i) => (
         <Dock
@@ -143,28 +150,6 @@ export const Building = memo(function Building({ lot, items, stats, pal, selecte
         />
       ))}
 
-      {/* bina rozeti */}
-      <Html position={[0, h + 2.4, 0]} center zIndexRange={[8, 0]} style={{ pointerEvents: "none" }}>
-        <div
-          className={`pointer-events-auto flex cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded-full border py-1 pl-1 pr-3 text-[12px] font-extrabold shadow-lg backdrop-blur-md transition-transform ${
-            selected ? "scale-110" : hover ? "scale-105" : ""
-          } ${pal.dark ? "border-white/10 bg-[#1b1e27]/85 text-white" : "border-white/70 bg-white/85 text-[#1f2330]"}`}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            // sahneye ulaşırsa "boşluğa tıklandı" sayılıp seçim kalkar
-            e.stopPropagation();
-            onSelect(area.code);
-          }}
-        >
-          <span className="grid h-7 w-7 place-items-center rounded-full text-[13px]" style={{ background: complete ? OK : area.color }}>
-            {complete ? "✓" : area.emoji}
-          </span>
-          <span>{area.code}</span>
-          <span className="opacity-60">%{pct}</span>
-          {stats.fails > 0 && <span className="rounded-full px-1.5 text-[10px] text-white" style={{ background: FAIL }}>{stats.fails}✗</span>}
-          {stats.overdue && !complete && <span className="text-[11px]" title="Termin geçti">⏰</span>}
-        </div>
-      </Html>
     </group>
   );
 });
@@ -352,5 +337,103 @@ function Cargo({ mark, pal }: { mark: Mark; pal: Palette }) {
         </mesh>
       )}
     </group>
+  );
+}
+
+/* ------------------------------------------------------------------ tamamlandı bayrağı */
+function RoofFlag({ h, w, d, color }: { h: number; w: number; d: number; color: string }) {
+  const g = useRef<THREE.Group>(null);
+  const flag = useRef<THREE.Mesh>(null);
+  useFrame((st, dt) => {
+    if (g.current) g.current.scale.y = damp(g.current.scale.y, 1, 3, dt);
+    if (flag.current) flag.current.rotation.y = Math.sin(st.clock.elapsedTime * 3) * 0.18;
+  });
+  return (
+    <group ref={g} position={[w / 2 - 1, h + 0.15, d / 2 - 1]} scale={[1, 0.001, 1]}>
+      <mesh position={[0, 1.4, 0]} castShadow>
+        <cylinderGeometry args={[0.05, 0.05, 2.8, 8]} />
+        <meshStandardMaterial color="#e3e8f0" metalness={0.4} roughness={0.4} />
+      </mesh>
+      <mesh position={[0, 2.85, 0]}>
+        <sphereGeometry args={[0.09, 12, 10]} />
+        <meshStandardMaterial color="#ffc93c" metalness={0.5} roughness={0.3} />
+      </mesh>
+      <mesh ref={flag} position={[0.55, 2.35, 0]} castShadow>
+        <boxGeometry args={[1.1, 0.7, 0.03]} />
+        <meshStandardMaterial color={OK} roughness={0.6} />
+      </mesh>
+      <mesh position={[0.55, 2.35, 0.02]}>
+        <boxGeometry args={[0.36, 0.08, 0.01]} />
+        <meshBasicMaterial color="#fff" />
+      </mesh>
+      {/* çatı kenarında renkli halka (tamamlandı ışığı) */}
+      <mesh position={[-(w / 2 - 1), -0.02, -(d / 2 - 1)]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[Math.min(w, d) * 0.28, Math.min(w, d) * 0.31, 48]} />
+        <meshBasicMaterial color={color} transparent opacity={0.5} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
+/* ------------------------------------------------------------------ havai fişek */
+const SPARK = new THREE.BoxGeometry(0.16, 0.16, 0.16);
+export function Fireworks({ y, colors }: { y: number; colors: string[] }) {
+  const N = 260;
+  const mesh = useRef<THREE.InstancedMesh>(null);
+  const [alive, setAlive] = useState(true);
+  // her parçacık: patlama anı, başlangıç noktası, hız, renk
+  const parts = useMemo(() => {
+    // ~6 sn boyunca art arda patlamalar
+    const bursts = [0, 0.5, 1.1, 1.7, 2.4, 3.0, 3.7, 4.4].map((t, i) => ({ t, x: Math.sin(i * 2.3) * 2.4, z: Math.cos(i * 1.7) * 1.2, yy: y + 2 + (i % 3) * 1.1 }));
+    return Array.from({ length: N }, (_, i) => {
+      const b = bursts[i % bursts.length];
+      const th = Math.random() * Math.PI * 2;
+      const ph = Math.acos(2 * Math.random() - 1);
+      const sp = 4 + Math.random() * 3;
+      return {
+        t0: b.t,
+        p: new THREE.Vector3(b.x, b.yy, b.z),
+        v: new THREE.Vector3(Math.sin(ph) * Math.cos(th) * sp, Math.abs(Math.cos(ph)) * sp * 0.9 + 1.5, Math.sin(ph) * Math.sin(th) * sp),
+        c: new THREE.Color(colors[i % colors.length]),
+        spin: Math.random() * 6,
+      };
+    });
+  }, [y, colors]);
+  const start = useRef(-1);
+  const o = useMemo(() => new THREE.Object3D(), []);
+
+  useEffect(() => {
+    const m = mesh.current;
+    if (m) parts.forEach((p, i) => m.setColorAt(i, p.c));
+    if (m?.instanceColor) m.instanceColor.needsUpdate = true;
+    const t = setTimeout(() => setAlive(false), 7500);
+    return () => clearTimeout(t);
+  }, [parts]);
+
+  useFrame((st) => {
+    const m = mesh.current;
+    if (!m) return;
+    if (start.current < 0) start.current = st.clock.elapsedTime;
+    const T = st.clock.elapsedTime - start.current;
+    parts.forEach((p, i) => {
+      const t = T - p.t0;
+      if (t < 0 || t > 2.4) {
+        o.scale.setScalar(0.0001);
+      } else {
+        o.position.set(p.p.x + p.v.x * t, p.p.y + p.v.y * t - 4.9 * t * t, p.p.z + p.v.z * t);
+        o.rotation.set(p.spin * t, p.spin * t * 0.7, 0);
+        o.scale.setScalar(Math.max(0.0001, 1 - t / 2.4));
+      }
+      o.updateMatrix();
+      m.setMatrixAt(i, o.matrix);
+    });
+    m.instanceMatrix.needsUpdate = true;
+  });
+
+  if (!alive) return null;
+  return (
+    <instancedMesh ref={mesh} args={[SPARK, undefined, N]} frustumCulled={false}>
+      <meshBasicMaterial toneMapped={false} />
+    </instancedMesh>
   );
 }

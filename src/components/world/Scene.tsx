@@ -79,7 +79,7 @@ function CameraRig({ focus, api, panelPx }: { focus: string | null; api: React.R
   useFrame((_, dt) => {
     const f = fly.current;
     if (!f || !controls) return;
-    const k = 1 - Math.exp(-3.2 * Math.min(dt, 0.05));
+    const k = 1 - Math.exp(-3.2 * Math.min(dt, 0.12));
     controls.target.lerp(f.target, k);
     camera.position.lerp(f.pos, k);
     controls.update();
@@ -100,6 +100,28 @@ function ViewOffset({ px }: { px: number }) {
     else camera.clearViewOffset();
     camera.updateProjectionMatrix();
   }, [camera, size, px]);
+  return null;
+}
+
+/** Bina rozetleri (DOM) için: her karede 3B bağlantı noktalarını ekran koordinatına çevirip konumlarını günceller. */
+export type LabelRefs = React.RefObject<Record<string, HTMLDivElement | null>>;
+function LabelProjector({ labels }: { labels: LabelRefs }) {
+  const anchors = useMemo(
+    () => [...LOTS.map((l) => [l.area.code, new THREE.Vector3(l.x, l.h + 2.6, l.z)] as const), ["HQ", new THREE.Vector3(HQ.x, 11, HQ.z)] as const],
+    [],
+  );
+  const v = useMemo(() => new THREE.Vector3(), []);
+  useFrame(({ camera, size }) => {
+    for (const [code, p] of anchors) {
+      const el = labels.current?.[code];
+      if (!el) continue;
+      v.copy(p).project(camera);
+      const visible = v.z < 1 && Math.abs(v.x) < 1.15 && Math.abs(v.y) < 1.15;
+      el.style.transform = `translate3d(${((v.x + 1) / 2) * size.width}px, ${((1 - v.y) / 2) * size.height}px, 0) translate(-50%, -50%)`;
+      el.style.opacity = visible ? "1" : "0";
+      el.style.zIndex = String(Math.round((1 - v.z) * 1000));
+    }
+  });
   return null;
 }
 
@@ -146,9 +168,12 @@ export interface SceneProps {
   api: React.RefObject<CameraApi | null>;
   /** sağ panelin genişliği (px) — görüntü merkezi bunun yarısı kadar sola kayar */
   panelPx: number;
+  /** tamamlanan binada havai fişek (n her kutlamada artar) */
+  fireworks: { codes: string[]; n: number } | null;
+  labels: LabelRefs;
 }
 
-export function Scene({ pal, items, stats, focus, selectedItem, onSelect, onSelectItem, api, panelPx }: SceneProps) {
+export function Scene({ pal, items, stats, focus, selectedItem, onSelect, onSelectItem, api, panelPx, fireworks, labels }: SceneProps) {
   // forkliftlerin dolaşacağı bekleyen palet yerleri
   const pending = useMemo(() => {
     const out: Record<string, number[]> = {};
@@ -178,7 +203,7 @@ export function Scene({ pal, items, stats, focus, selectedItem, onSelect, onSele
       <Trees pal={pal} />
       <Lamps pal={pal} />
       <Yard pal={pal} />
-      <Headquarters pal={pal} selected={focus === "HQ"} onSelect={() => onSelect("HQ")} />
+      <Headquarters pal={pal} selected={focus === "HQ"} onSelect={() => onSelect("HQ")} celebrate={fireworks?.codes.includes("HQ") ? fireworks.n : 0} />
 
       {LOTS.map((lot) => (
         <Building
@@ -190,6 +215,7 @@ export function Scene({ pal, items, stats, focus, selectedItem, onSelect, onSele
           selected={focus === lot.area.code}
           selectedItem={selectedItem}
           dimmed={false}
+          celebrate={fireworks?.codes.includes(lot.area.code) ? fireworks.n : 0}
           onSelect={onSelect}
           onSelectItem={onSelectItem}
         />
@@ -213,6 +239,7 @@ export function Scene({ pal, items, stats, focus, selectedItem, onSelect, onSele
       />
       <CameraRig focus={focus} api={api} panelPx={panelPx} />
       <ViewOffset px={panelPx} />
+      <LabelProjector labels={labels} />
       <AdaptiveDpr pixelated={false} />
     </Canvas>
   );

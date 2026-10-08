@@ -245,8 +245,18 @@ function Audit({ data }: { data: PeriodData }) {
   }, [data]);
 
   const area = areaCode ? areaByCode(areaCode) ?? null : null;
-  // 3B dünya: yalnızca tablet/masaüstü; bir alan listede açıksa liste görünümünde kalır
-  const world = wide && mode === "world" && !area;
+  // 3B dünya: yalnızca tablet/masaüstü. Dünyada "alan açmak" = kamerayı o binaya uçurmak (liste açılmaz).
+  const world = wide && mode === "world";
+  const [worldFocus, setWorldFocus] = useState<{ code: string | null; n: number }>({ code: null, n: 0 });
+  const focusWorld = (code: string | null) => setWorldFocus((f) => ({ code, n: f.n + 1 }));
+  // dünyadayken URL'de ?alan= varsa (geri tuşu / bağlantı) o binaya uç ve URL'yi temizle
+  useEffect(() => {
+    if (world && areaCode) {
+      focusWorld(areaCode);
+      openArea(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [world, areaCode]);
 
   const nextIncomplete = (after?: string) => {
     const idx = after ? AREAS.findIndex((a) => a.code === after) : -1;
@@ -256,9 +266,29 @@ function Audit({ data }: { data: PeriodData }) {
 
   return (
     <div className="space-y-5">
-      {wide && <ViewToggle mode={mode} onChange={setMode} />}
+      {wide && (
+        <ViewToggle
+          mode={mode}
+          onChange={(m) => {
+            setMode(m);
+            if (m === "world") openArea(null);
+          }}
+        />
+      )}
       {world ? (
-        <WorldView data={data} onAddAction={(d) => setActionDraft(d)} />
+        <WorldView
+          data={data}
+          onAddAction={(d) => setActionDraft(d)}
+          focusRequest={worldFocus}
+          celebration={celebrate ? { area: celebrate, full: fullDone } : null}
+          onCelebrationClose={() => setCelebrate(null)}
+          onCelebrationNext={() => {
+            const done = celebrate?.code;
+            setCelebrate(null);
+            const n = nextIncomplete(done);
+            focusWorld(n ? n.code : null);
+          }}
+        />
       ) : (
       <>
       <div className={`space-y-5 ${area ? "hidden lg:block" : ""}`}>
@@ -408,8 +438,9 @@ function Audit({ data }: { data: PeriodData }) {
       )}
 
       <ActionEditor open={!!actionDraft} draft={actionDraft ?? undefined} onClose={() => setActionDraft(null)} />
+      {/* kampüste kutlama sahnenin içinde (WorldView); burada yalnızca liste görünümü için */}
       <Celebration
-        area={celebrate}
+        area={world ? null : celebrate}
         full={fullDone}
         data={data}
         onClose={() => setCelebrate(null)}
@@ -417,7 +448,8 @@ function Audit({ data }: { data: PeriodData }) {
           const done = celebrate?.code;
           setCelebrate(null);
           const n = nextIncomplete(done);
-          openArea(n ? n.code : null);
+          if (world) focusWorld(n ? n.code : null);
+          else openArea(n ? n.code : null);
         }}
       />
     </div>
