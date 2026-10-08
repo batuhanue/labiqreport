@@ -7,8 +7,8 @@ import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { ArchiveProgress, GoogleSnapshot } from "@/lib/google-types";
 import { Box, type OfficePal } from "./Furniture";
-import { BRAIN_R, HALF_X, HALF_Z, ROOM_D, ROOM_W, ZONES, zoneById, type ZoneId, type ZoneStat } from "./layout";
-import { Room } from "./Rooms";
+import { CORRIDOR, HALF_X, HALF_Z, ROOM_D, ROOM_W, ZONES, zoneById, type ZoneId, type ZoneStat } from "./layout";
+import { Corridor, Room } from "./Rooms";
 
 export interface CameraApi {
   zoom: (f: number) => void;
@@ -23,7 +23,7 @@ const HOME_DIR = new THREE.Vector3(0.55, 0.95, 0.85).normalize();
 function homePos(width: number, height: number, panelPx: number, fov: number) {
   const aspect = Math.max(0.6, (width - panelPx) / Math.max(1, height));
   const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(fov) / 2) * aspect);
-  const dist = THREE.MathUtils.clamp((HALF_X * 1.3) / Math.tan(hfov / 2), 55, 220);
+  const dist = THREE.MathUtils.clamp((HALF_X * 1.1) / Math.tan(hfov / 2), 45, 170);
   return CENTER.clone().add(HOME_DIR.clone().multiplyScalar(dist));
 }
 
@@ -76,7 +76,7 @@ function CameraRig({ focus, api, panelPx }: { focus: ZoneId | null; api: React.R
   return null;
 }
 
-export function ViewOffset({ px }: { px: number }) {
+function ViewOffset({ px }: { px: number }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const size = useThree((s) => s.size);
   useEffect(() => {
@@ -87,15 +87,12 @@ export function ViewOffset({ px }: { px: number }) {
   return null;
 }
 
-/** Bir pod'un (ya da Beyin'in) ekrandaki bağlantı noktası: kartlar ve kablolar buraya bağlanır. */
+/** Kartların ekran konumu (kablolar da buraya bağlanır). */
 export type Screen = React.RefObject<Record<string, { x: number; y: number; on: boolean }>>;
 
-/**
- * Pod kartları (DOM) için: her karede 3B bağlantı noktalarını ekran koordinatına çevirir.
- * Kartlar pod'un arka kenarının üstünde durur; ekran konumları kabloların çizimi için de paylaşılır.
- */
+/** Oda kartları (DOM): her karede 3B bağlantı noktasını ekran koordinatına çevirir; kart noktanın üstünde durur. */
 function LabelProjector({ labels, screen }: { labels: LabelRefs; screen: Screen }) {
-  const anchors = useMemo(() => [...ZONES.map((z) => [z.id, new THREE.Vector3(z.x, 2.8, z.z + (z.north ? -ROOM_D / 2 + 1 : -ROOM_D / 2 + 1.5))] as const), ["hub", new THREE.Vector3(BRAIN_R + 2.6, 1.2, -1.2)] as const], []);
+  const anchors = useMemo(() => [...ZONES.map((z) => [z.id, new THREE.Vector3(z.x, 3.2, z.north ? z.z - 1.5 : z.z + 3.2)] as const), ["hub", new THREE.Vector3(0, 2.4, 0)] as const], []);
   const v = useMemo(() => new THREE.Vector3(), []);
   useFrame(({ camera, size }) => {
     for (const [id, p] of anchors) {
@@ -115,7 +112,7 @@ function LabelProjector({ labels, screen }: { labels: LabelRefs; screen: Screen 
 }
 
 /** Ahşap parke dokusu (tuvalde çizilir). */
-export function useFloorTexture(pal: OfficePal) {
+function useFloorTexture(pal: OfficePal) {
   return useMemo(() => {
     const c = document.createElement("canvas");
     c.width = 256;
@@ -132,143 +129,75 @@ export function useFloorTexture(pal: OfficePal) {
     }
     const t = new THREE.CanvasTexture(c);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(ROOM_W / 6, ROOM_D / 6);
+    t.repeat.set((HALF_X * 2) / 6, (HALF_Z * 2) / 6);
     t.colorSpace = THREE.SRGBColorSpace;
     t.anisotropy = 4;
     return t;
   }, [pal]);
 }
 
-/** Yüzen platform (pod): kaide + ahşap zemin + alçak kenar; Beyin'e bakan kenarda giriş boşluğu. */
-function Pod({ x, z, north, pal, tex }: { x: number; z: number; north: boolean; pal: OfficePal; tex: THREE.Texture }) {
-  const W = ROOM_W;
-  const D = ROOM_D;
-  const rim = 0.32;
-  const t = 0.18;
-  const gap = 3.2;
-  // Beyin'e bakan kenar: kuzey pod'larda güney, güney pod'larda kuzey
-  const inner = north ? D / 2 : -D / 2;
-  const outer = -inner;
-  const seg = (W - gap) / 2;
+function Shell({ pal }: { pal: OfficePal }) {
+  const tex = useFloorTexture(pal);
+  const W = HALF_X * 2;
+  const D = HALF_Z * 2;
+  const tall = 3.2;
+  const low = 0.55;
+  const t = 0.35;
   return (
-    <group position={[x, 0, z]}>
-      <Box p={[0, -0.45, 0]} s={[W + 0.5, 0.9, D + 0.5]} c={pal.slab} />
-      <Box p={[0, -0.02, 0]} s={[W + 0.5, 0.06, D + 0.5]} c={pal.wallTop} cast={false} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.006, 0]} receiveShadow>
+    <group>
+      {/* zemin döşemesi */}
+      <Box p={[0, -0.3, 0]} s={[W + 1, 0.6, D + 1]} c={pal.slab} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]} receiveShadow>
         <planeGeometry args={[W, D]} />
         <meshStandardMaterial map={tex} roughness={0.9} />
       </mesh>
-      {/* kenarlar */}
-      <Box p={[0, rim / 2, outer]} s={[W, rim, t]} c={pal.wall} />
-      <Box p={[-W / 2, rim / 2, 0]} s={[t, rim, D]} c={pal.wall} />
-      <Box p={[W / 2, rim / 2, 0]} s={[t, rim, D]} c={pal.wall} />
-      <Box p={[-W / 2 + seg / 2, rim / 2, inner]} s={[seg, rim, t]} c={pal.wall} />
-      <Box p={[W / 2 - seg / 2, rim / 2, inner]} s={[seg, rim, t]} c={pal.wall} />
+      {/* dış duvarlar: kuzey/batı yüksek, güney/doğu alçak (maket kesiti) */}
+      <Box p={[0, tall / 2, -HALF_Z - t / 2]} s={[W + t * 2, tall, t]} c={pal.wall} />
+      <Box p={[-HALF_X - t / 2, tall / 2, 0]} s={[t, tall, D]} c={pal.wall} />
+      <Box p={[0, tall + 0.04, -HALF_Z - t / 2]} s={[W + t * 2, 0.08, t + 0.04]} c={pal.wallTop} cast={false} />
+      <Box p={[-HALF_X - t / 2, tall + 0.04, 0]} s={[t + 0.04, 0.08, D]} c={pal.wallTop} cast={false} />
+      <Box p={[0, low / 2, HALF_Z + t / 2]} s={[W + t * 2, low, t]} c={pal.wall} />
+      <Box p={[HALF_X + t / 2, low / 2, 0]} s={[t, low, D]} c={pal.wall} />
+      {/* kuzey duvarında pencereler */}
+      {[-19, -11, -3, 5, 13, 20].map((x) => (
+        <Box key={x} p={[x, 2.1, -HALF_Z + 0.01]} s={[2.6, 1.2, 0.04]} c={pal.dark ? "#ffd889" : "#bfe0ff"} e={pal.dark ? "#ffd889" : undefined} ei={0.35} cast={false} />
+      ))}
     </group>
   );
 }
 
-/** Pod'ları Beyin platformuna bağlayan yürüme yolları. */
-function Walkways({ pal }: { pal: OfficePal }) {
+const glassMat = (pal: OfficePal) => new THREE.MeshStandardMaterial({ color: pal.glass, transparent: true, opacity: pal.dark ? 0.16 : 0.22, roughness: 0.1, metalness: 0.1, depthWrite: false });
+
+/** Odaları ayıran cam bölmeler (koridora bakan tarafta kapı boşluğu). */
+function Partitions({ pal }: { pal: OfficePal }) {
+  const mat = useMemo(() => glassMat(pal), [pal]);
+  const h = 1.9;
+  const segs: { p: [number, number, number]; s: [number, number, number] }[] = [];
+  const zEdge = CORRIDOR / 2;
+  // odalar arası (x = ±10), iki sırada
+  for (const x of [-(ROOM_W / 2 + 1), ROOM_W / 2 + 1]) {
+    for (const sign of [-1, 1]) segs.push({ p: [x, h / 2, sign * (zEdge + ROOM_D / 2)], s: [0.08, h, ROOM_D] });
+  }
+  // koridor tarafı: her odada ortada 3 m kapı
+  for (const zn of ZONES) {
+    const zLine = zn.north ? -zEdge : zEdge;
+    const half = ROOM_W / 2;
+    const seg = half - 1.6;
+    segs.push({ p: [zn.x - 1.6 - seg / 2, h / 2, zLine], s: [seg, h, 0.08] });
+    segs.push({ p: [zn.x + 1.6 + seg / 2, h / 2, zLine], s: [seg, h, 0.08] });
+  }
   return (
     <group>
-      {ZONES.map((z) => {
-        // pod girişinin ortası → Beyin platformunun kenarı
-        const ex = z.x;
-        const ez = z.z + (z.north ? ROOM_D / 2 : -ROOM_D / 2);
-        const dir = new THREE.Vector2(-ex, -ez);
-        const len0 = dir.length();
-        dir.normalize();
-        const sx = -dir.x * BRAIN_R;
-        const sz = -dir.y * BRAIN_R;
-        const len = Math.hypot(ex - sx, ez - sz) + 0.4;
-        const ang = Math.atan2(ex - sx, ez - sz);
-        void len0;
-        return (
-          <group key={z.id} position={[(ex + sx) / 2, -0.08, (ez + sz) / 2]} rotation={[0, ang, 0]}>
-            <Box p={[0, 0, 0]} s={[2.4, 0.22, len]} c={pal.wallTop} />
-            <Box p={[0, -0.25, 0]} s={[2.2, 0.3, len]} c={pal.slab} cast={false} />
-          </group>
-        );
-      })}
-    </group>
-  );
-}
-
-/** Beyin: platform + üstünde yavaşça dönen not ağı (düğümler ve bağlar); düşünürken parlar. */
-export function BrainCore({ pal, busy, onSelect }: { pal: OfficePal; busy: boolean; onSelect: () => void }) {
-  const g = useRef<THREE.Group>(null);
-  const mat = useRef<THREE.MeshStandardMaterial>(null);
-  const { nodes, lines } = useMemo(() => {
-    const pts: THREE.Vector3[] = [];
-    let seed = 7;
-    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    for (let i = 0; i < 46; i++) {
-      const a = rnd() * Math.PI * 2;
-      const r = 0.6 + rnd() * 2.9;
-      pts.push(new THREE.Vector3(Math.cos(a) * r, 0.8 + rnd() * 1.6, Math.sin(a) * r));
-    }
-    const seg: number[] = [];
-    pts.forEach((p, i) => {
-      pts
-        .map((q, k) => ({ k, d: p.distanceTo(q) }))
-        .filter((x) => x.k > i)
-        .sort((a, b) => a.d - b.d)
-        .slice(0, 2)
-        .forEach((x) => seg.push(p.x, p.y, p.z, pts[x.k].x, pts[x.k].y, pts[x.k].z));
-    });
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
-    return { nodes: pts, lines: geo };
-  }, []);
-  useFrame(({ clock }, dt) => {
-    if (g.current) g.current.rotation.y += dt * (busy ? 0.5 : 0.12);
-    if (mat.current) mat.current.emissiveIntensity = busy ? 0.9 + 0.6 * Math.sin(clock.elapsedTime * 4) : 0.55;
-  });
-  const glow = "#8b5cf6";
-  return (
-    <group
-      onClick={(e) => {
-        e.stopPropagation();
-        onSelect();
-      }}
-      onPointerOver={() => (document.body.style.cursor = "pointer")}
-      onPointerOut={() => (document.body.style.cursor = "")}
-    >
-      <mesh position={[0, -0.45, 0]} castShadow receiveShadow>
-        <cylinderGeometry args={[BRAIN_R, BRAIN_R + 0.2, 0.9, 48]} />
-        <meshStandardMaterial color={pal.slab} roughness={0.9} />
-      </mesh>
-      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <circleGeometry args={[BRAIN_R - 0.15, 48]} />
-        <meshStandardMaterial color={pal.dark ? "#2a2440" : "#efe9fb"} roughness={0.95} />
-      </mesh>
-      <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[BRAIN_R - 0.55, BRAIN_R - 0.35, 64]} />
-        <meshStandardMaterial color={glow} emissive={glow} emissiveIntensity={0.5} />
-      </mesh>
-      <group ref={g}>
-        <lineSegments geometry={lines}>
-          <lineBasicMaterial color={glow} transparent opacity={pal.dark ? 0.7 : 0.45} />
-        </lineSegments>
-        {nodes.map((p, i) => (
-          <mesh key={i} position={p}>
-            <sphereGeometry args={[i % 7 === 0 ? 0.13 : 0.07, 10, 10]} />
-            <meshStandardMaterial ref={i === 0 ? mat : undefined} color={i % 5 === 0 ? "#2ec4b6" : glow} emissive={i % 5 === 0 ? "#2ec4b6" : glow} emissiveIntensity={0.6} />
+      {segs.map((g, i) => (
+        <group key={i}>
+          <mesh position={g.p} material={mat}>
+            <boxGeometry args={g.s} />
           </mesh>
-        ))}
-      </group>
+          {/* üst ray */}
+          <Box p={[g.p[0], h + 0.03, g.p[2]]} s={[Math.max(g.s[0], 0.1), 0.06, Math.max(g.s[2], 0.1)]} c={pal.frame} cast={false} />
+        </group>
+      ))}
     </group>
-  );
-}
-
-/** Pod'ların altındaki zemin (gölge yakalayıcı). */
-export function Ground({ pal }: { pal: OfficePal }) {
-  return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.9, 0]} receiveShadow>
-      <planeGeometry args={[400, 400]} />
-      <shadowMaterial transparent opacity={pal.dark ? 0.35 : 0.14} />
-    </mesh>
   );
 }
 
@@ -302,7 +231,7 @@ function Carpet({ id, x, z, color, pal, selected, hovered, onSelect, onHover }: 
       }}
     >
       <planeGeometry args={[ROOM_W - 0.4, ROOM_D - 0.4]} />
-      <meshStandardMaterial color={base} emissive={color} emissiveIntensity={(selected ? 0.22 : hovered ? 0.12 : 0) * (pal.dark ? 0.3 : 1)} roughness={0.95} transparent opacity={selected || hovered ? 0.75 : 0.45} depthWrite={false} />
+      <meshStandardMaterial color={base} emissive={color} emissiveIntensity={(selected ? 0.22 : hovered ? 0.12 : 0) * (pal.dark ? 0.3 : 1)} roughness={0.95} />
     </mesh>
   );
 }
@@ -313,10 +242,10 @@ function Sun({ pal }: { pal: OfficePal }) {
     const l = ref.current;
     if (!l) return;
     const c = l.shadow.camera as THREE.OrthographicCamera;
-    c.left = -50;
-    c.right = 50;
-    c.top = 40;
-    c.bottom = -40;
+    c.left = -45;
+    c.right = 45;
+    c.top = 35;
+    c.bottom = -35;
     c.near = 1;
     c.far = 200;
     c.updateProjectionMatrix();
@@ -348,12 +277,11 @@ export interface OfficeSceneProps {
   labels: LabelRefs;
   screen: Screen;
   onHover: (id: ZoneId | null) => void;
-  /** beyin düşünüyor ya da bir ajan çalışıyor */
+  /** beyin düşünüyor ya da bir ajan çalışıyor: agent merkezindeki ışık hızlanır */
   busy: boolean;
 }
 
 export function OfficeScene({ pal, snap, stats, archive, archiving, focus, onSelect, api, panelPx, labels, screen, onHover, busy }: OfficeSceneProps) {
-  const tex = useFloorTexture(pal);
   const [hover, setHover] = useState<ZoneId | null>(null);
   const hov = (id: ZoneId | null) => {
     setHover(id);
@@ -373,18 +301,15 @@ export function OfficeScene({ pal, snap, stats, archive, archiving, focus, onSel
       <hemisphereLight args={[pal.dark ? "#a9bbf0" : "#ffffff", pal.dark ? "#1a1f2c" : "#d9cfbf", pal.dark ? 0.5 : 0.85]} />
       <Sun pal={pal} />
 
-      <Ground pal={pal} />
-      <BrainCore pal={pal} busy={busy} onSelect={() => onSelect(null)} />
-      <Walkways pal={pal} />
-      {ZONES.map((z) => (
-        <Pod key={z.id} x={z.x} z={z.z} north={z.north} pal={pal} tex={tex} />
-      ))}
+      <Shell pal={pal} />
       {ZONES.map((z) => (
         <Carpet key={z.id} id={z.id} x={z.x} z={z.z} color={z.color} pal={pal} selected={focus === z.id} hovered={hover === z.id} onSelect={onSelect} onHover={hov} />
       ))}
+      <Partitions pal={pal} />
       {ZONES.map((z) => (
         <Room key={z.id} zone={z} pal={pal} snap={snap} stat={stats[z.id]} archive={archive} archiving={archiving} />
       ))}
+      <Corridor pal={pal} xMax={HALF_X} busy={busy} />
 
       <OrbitControls
         makeDefault
@@ -392,7 +317,7 @@ export function OfficeScene({ pal, snap, stats, archive, archiving, focus, onSel
         enableDamping
         dampingFactor={0.08}
         minDistance={10}
-        maxDistance={240}
+        maxDistance={200}
         minPolarAngle={0.25}
         maxPolarAngle={1.2}
         screenSpacePanning={false}

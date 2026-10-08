@@ -106,9 +106,9 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   sohbet bir masa, yeni mesajda parlayan konuşma balonu), Toplantı salonu (toplantı sürerken ekran kırmızı yanıp söner,
   transkript kâğıtları), Dosya arşivi (rafta türüne göre renkli klasörler), Hafıza (her kaynak için sunucu dolabı;
   LED'ler indirme durumunu gösterir). Rozetler odanın durumunu (çalışıyor / iş bekliyor / sakin / sorun) gösterir;
-  pod'a tıklayınca kamera oraya uçar ve sağ panelde o kaynağın içeriği açılır. v2 tasarım: ortada dönen not ağıyla Beyin
-  platformu, çevresinde yürüme yollarıyla bağlı pod'lar; her pod kartında açık iş sayısı ve YAP · SIRA · BİTTİ (beyin
-  ajanlarının işleri); üstte bağlı servisler şeridi ve pod'lara giden kablolar (ajan çalışırken hızlanır); sağda tüm
+  odaya tıklayınca kamera oraya uçar ve sağ panelde o kaynağın içeriği açılır. Görsel olarak cam bölmeli tek kat ofis
+  (koridorda ajan masası, beyin çalışırken yanıp söner) — Beyin sekmesindeki pod düzeninden ayrıdır; her oda kartında açık iş sayısı ve YAP · SIRA · BİTTİ (beyin
+  ajanlarının işleri); üstte bağlı servisler şeridi ve odalara giden kablolar (ajan çalışırken hızlanır); sağda tüm
   ofisin GÖREV DURUMU listesi (ilerleme yüzdeli).
 
 - **Kampüs görünümü (tablet + masaüstü):** Denetim sayfası 3B, "cozy" bir kampüs olarak açılır (React Three Fiber).

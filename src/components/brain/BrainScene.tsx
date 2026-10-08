@@ -7,7 +7,7 @@ import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { AgentId } from "@/lib/brain-types";
 import { Blink, Bob, Box, Chair, Desk, Person, Plant, RoundTable, Stack, type OfficePal } from "../office/Furniture";
-import { BrainCore, Ground, ViewOffset } from "../office/OfficeScene";
+import { BrainCore, Ground, ViewOffset } from "./BrainCore";
 import { DEPTS, HALF, POD_D, POD_W, deptById, deskPos, type Dept } from "./layout";
 
 export interface CameraApi {

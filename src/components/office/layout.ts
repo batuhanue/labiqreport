@@ -1,10 +1,9 @@
+import type { AgentId } from "@/lib/brain-types";
 import type { ArchiveProgress, GoogleSnapshot } from "@/lib/google-types";
 
-import type { AgentId } from "@/lib/brain-types";
-
 /**
- * Sanal ofis yerleşimi: ortada Beyin platformu, çevresinde her Google kaynağı için ayrı bir pod (yüzen ada);
- * pod'lar Beyin'e yürüme yollarıyla bağlı. Kuzey ve güney sırada üçer pod.
+ * Sanal ofis yerleşimi: kuzey ve güney sırada üçer oda, ortada koridor ve agent merkezi.
+ * Kamera güneydoğudan baktığı için kuzey (−z) ve batı (−x) duvarları yüksek, diğerleri alçak (maket kesiti gibi).
  */
 export type ZoneId = "calendar" | "gmail" | "chat" | "meet" | "drive" | "archive";
 
@@ -23,11 +22,9 @@ export interface Zone {
 
 export const ROOM_W = 14;
 export const ROOM_D = 10;
-/** iki sıra arası boşluk (Beyin platformu burada) */
-export const CORRIDOR = 12;
-const ROW_Z = CORRIDOR / 2 + ROOM_D / 2; // 11
-const COL_X = ROOM_W + 5; // 19
-export const BRAIN_R = 4.6;
+export const CORRIDOR = 6;
+const ROW_Z = CORRIDOR / 2 + ROOM_D / 2; // 8
+const COL_X = ROOM_W + 2; // 16
 
 export const ZONES: Zone[] = [
   { id: "calendar", title: "Planlama", role: "Takvim", emoji: "📅", color: "#5b7cff", x: -COL_X, z: -ROW_Z, north: true },
@@ -39,12 +36,12 @@ export const ZONES: Zone[] = [
 ];
 export const zoneById = (id: string | null | undefined) => ZONES.find((z) => z.id === id);
 
-/** her pod'da çalışan beyin ajanı (Hafıza pod'u beynin kendi arşividir) */
+/** her odada çalışan beyin ajanı (Hafıza odası beynin kendi arşividir) */
 export const ZONE_AGENT: Record<ZoneId, AgentId | null> = { calendar: "takvim", gmail: "posta", chat: "sohbet", meet: "toplanti", drive: "dosya", archive: null };
 
 /** dış sınırlar */
-export const HALF_X = COL_X + ROOM_W / 2 + 0.5; // 26.5
-export const HALF_Z = ROW_Z + ROOM_D / 2 + 0.5; // 16.5
+export const HALF_X = COL_X + ROOM_W / 2 + 0.5; // 23.5
+export const HALF_Z = ROW_Z + ROOM_D / 2 + 0.5; // 13.5
 
 // ------------------------------------------------------------------ her odanın kendi iş mantığı
 export type ZoneStatus = "busy" | "waiting" | "idle" | "error";
