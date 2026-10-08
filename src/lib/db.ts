@@ -20,6 +20,7 @@ interface Store {
   setState(s: AppState): Promise<void>;
   getKV<T>(key: string): Promise<T | null>;
   setKV(key: string, value: unknown): Promise<void>;
+  deleteKV(key: string): Promise<void>;
   listSubs(): Promise<StoredSub[]>;
   addSub(sub: StoredSub): Promise<void>;
   removeSub(endpoint: string): Promise<void>;
@@ -106,6 +107,11 @@ const pgStore: Store = {
     await sql`INSERT INTO app_state (key, value) VALUES (${key}, ${JSON.stringify(value)}::jsonb)
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
   },
+  async deleteKV(key) {
+    const sql = pg();
+    await ready;
+    await sql`DELETE FROM app_state WHERE key = ${key}`;
+  },
   async listSubs() {
     const sql = pg();
     await ready;
@@ -167,6 +173,9 @@ const fileStore: Store = {
     return readJson<T>(path.join(dir, `kv-${key}.json`));
   },
   setKV: (key, value) => writeJson(path.join(dir, `kv-${key}.json`), value),
+  async deleteKV(key) {
+    await fs.rm(path.join(dir, `kv-${key}.json`), { force: true });
+  },
   async listSubs() {
     return (await readJson<StoredSub[]>(path.join(dir, "subs.json"))) ?? [];
   },

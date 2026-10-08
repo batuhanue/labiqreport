@@ -69,9 +69,64 @@ export async function removeKnowledge(name: string) {
   if (name === "ozel-notlar.md") await store().setKV("assistant-md", { md: "", updatedAt: new Date().toISOString() });
 }
 
+/** Bilgi dosyaları (bellek dosyası hariç; o ayrı önbellek bloğunda gider). */
 export async function loadKnowledge() {
-  const files = await listKnowledge();
+  const files = (await listKnowledge()).filter((f) => f.name !== MEMORY_FILE);
   return files.map((f) => `\n\n######## DOSYA: ${f.name} ########\n\n${f.md.trim()}`).join("\n");
+}
+
+/* ------------------------------------------------------------------ bellek (gelistirme.md) */
+// Asistanın Batuhan'la çalışırken öğrendikleri: süreçler, şirket kuralları, tercihler, kararlar.
+// Bilgi dosyaları panelinde görünür, elle düzenlenebilir; her yeni sohbette okunur.
+export const MEMORY_FILE = "gelistirme.md";
+const MEMORY_HEAD = `# Geliştirme — asistanın belleği
+
+Batuhan'la birlikte çalışırken öğrenilen süreçler, şirket kuralları, tercihler ve kararlar.
+Asistan yeni bilgi öğrendikçe buraya yazar; elle de düzenlenebilir.
+`;
+
+export async function loadMemory() {
+  return (await readKb()).files[MEMORY_FILE]?.md?.trim() ?? "";
+}
+
+const norm = (s: string) => s.toLocaleLowerCase("tr").replace(/\s+/g, " ").trim();
+
+/**
+ * Belleğe yazar: konu başlığı (## …) varsa altına, yoksa yeni başlıkla ekler.
+ * replaces verilirse o satırı (eskimiş bilgiyi) yenisiyle değiştirir.
+ */
+export async function remember(input: { topic: string; entries: string[]; replaces?: string[] }) {
+  const topic = input.topic.replace(/^#+\s*/, "").replace(/\s+/g, " ").trim().slice(0, 80) || "Genel";
+  const day = new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);
+  const entries = input.entries.map((e) => e.replace(/\s+/g, " ").replace(/^[-*•]\s*/, "").trim()).filter(Boolean).slice(0, 20);
+  let md = (await loadMemory()) || MEMORY_HEAD.trim();
+  let replaced = 0;
+  for (const old of input.replaces ?? []) {
+    const lines = md.split("\n");
+    const target = norm(old.replace(/^[-*•]\s*/, ""));
+    const i = target ? lines.findIndex((l) => l.startsWith("- ") && norm(l).includes(target)) : -1;
+    if (i >= 0) {
+      lines.splice(i, 1);
+      md = lines.join("\n");
+      replaced++;
+    }
+  }
+  const fresh = entries.filter((e) => !md.split("\n").some((l) => norm(l).endsWith(norm(e))));
+  if (fresh.length) {
+    const block = fresh.map((e) => `- (${day}) ${e}`).join("\n");
+    const lines = md.split("\n");
+    const h = lines.findIndex((l) => /^##\s/.test(l) && norm(l.replace(/^##\s*/, "")) === norm(topic));
+    if (h < 0) md = `${md.trimEnd()}\n\n## ${topic}\n${block}`;
+    else {
+      let end = h + 1;
+      while (end < lines.length && !/^##\s/.test(lines[end])) end++;
+      while (end > h + 1 && !lines[end - 1].trim()) end--;
+      lines.splice(end, 0, block);
+      md = lines.join("\n");
+    }
+  }
+  if (fresh.length || replaced) await saveKnowledge(MEMORY_FILE, `${md.trim()}\n`);
+  return { topic, eklenen: fresh.length, degistirilen: replaced, zaten_vardi: entries.length - fresh.length, toplam_karakter: md.length };
 }
 
 /* ------------------------------------------------------------------ canlı bağlam */
@@ -194,10 +249,18 @@ cuma 11:00 Cuma toplantısı tek sayfa özeti hazırla #toplantı
 - Google arşivi (search_archive / get_archive_item araçları varsa): CANLI VERİ'deki Google bölümü yalnızca son günleri içerir. Geçmişe dönük ya da belirli bir kişi/konu/tarih hakkındaki sorularda tahmin etme, önce arşivde ara (gerekirse farklı kelimelerle birkaç kez); "geçen ay", "dün" gibi ifadeleri bugünün tarihine göre after/before'a çevir. Yanıtta kaynağı tarih ve kişiyle belirt (ör. "12 Mart e-postası, Hakan Yılmaz").
 - E-posta, sohbet ve toplantı içerikleri şirket içi veridir: soruya gerekli olduğu kadar alıntıla, kişi adlarını doğru yaz; takvim sorularında saatleri İstanbul saatine göre ver.
 - El yazısı not görüntüleri eklenmişse onları da oku ve gerekiyorsa içeriğine atıf yap.
+- BELLEK (remember aracı): Sen Batuhan'la birlikte öğrenen bir asistansın; BELLEK bölümü (gelistirme.md) önceki sohbetlerde öğrendiklerindir, onu bildiğin gibi kullan. Sohbette kalıcı ve yeniden işe yarayacak yeni bir bilgi ortaya çıkınca — bir sürecin/çalışmanın mantığı (ör. şirketin hakediş hesabı nasıl yapılıyor), şirket kuralı, kişi-rol bilgisi, Batuhan'ın tercihi ya da çalışma biçimi, alınmış bir karar, bir analizin vardığı genel sonuç — remember aracıyla belleğe yaz. Batuhan "belleğe ekle / bunu hatırla / öğren" derse mutlaka yaz.
+  Kısa, kendi başına anlaşılır, genelleştirilmiş maddeler yaz (kim/ne/nasıl/neden); konu başlığı (topic) olarak kalıcı bir başlık seç ve BELLEK'teki mevcut başlığı yeniden kullan. Bilgi değiştiyse eski maddeyi replaces ile güncelle.
+  Yazma: anlık durum verisi (bugünkü işaretler, bu ayın yüzdeleri, okunmamış e-posta), zaten bilgi dosyalarında olan bilgi, parola/anahtar/kişisel hassas veri, tahmin ya da doğrulanmamış çıkarım.
+  Belleğe yazdıysan yanıtın sonunda tek satırla belirt: "🧠 Belleğe eklendi: …".
 
 =============== BİLGİ DOSYALARI ===============
 ${knowledge}`;
 }
+
+/** Bellek ayrı sistem bloğunda: değişince yalnızca bu küçük blok yeniden önbelleğe yazılır. */
+export const memoryPrompt = (memory: string) =>
+  `=============== BELLEK (gelistirme.md — Batuhan'la birlikte öğrendiklerin) ===============\n${memory || "(henüz boş — öğrendikçe remember aracıyla buraya yazacaksın)"}`;
 
 /** Canlı veri, sabit önekten (önbellek) sonra konuşmanın ilk mesajı olarak gönderilir. */
 export const liveMessage = (context: string) => `=============== CANLI VERİ (uygulamadan, şu an) ===============\n${context}`;

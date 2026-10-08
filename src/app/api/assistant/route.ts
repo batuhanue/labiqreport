@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
-import { buildContext, liveMessage, loadKnowledge, staticPrompt } from "@/lib/assistant";
+import { buildContext, liveMessage, loadKnowledge, loadMemory, memoryPrompt, remember, staticPrompt } from "@/lib/assistant";
 import { bad } from "@/lib/api";
 import { PERIOD_RE } from "@/lib/period";
 import { getItem, search } from "@/lib/archive";
@@ -93,10 +93,12 @@ export async function POST(req: Request) {
   const archiveOn = body?.google !== false && !!(await googleStatus("", false).catch(() => null))?.connected;
 
   let system: string;
+  let memory: string;
   let context: string;
   try {
-    const [k, ctx] = await Promise.all([loadKnowledge(), buildContext(period, { google: body?.google !== false })]);
+    const [k, mem, ctx] = await Promise.all([loadKnowledge(), loadMemory(), buildContext(period, { google: body?.google !== false })]);
     system = staticPrompt(k);
+    memory = memoryPrompt(mem);
     context = ctx;
   } catch (e) {
     return bad(`Bağlam hazırlanamadı: ${e instanceof Error ? e.message : e}`, 500);
@@ -119,7 +121,12 @@ export async function POST(req: Request) {
     return { role: "user", content };
   });
   // sistem 1 saat önbellekte kalır: seyrek sorularda da (5 dk'dan uzun aralık) önbellekten okunur
-  const systemBlocks: Anthropic.TextBlockParam[] = [{ type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } }];
+  // bellek ayrı blokta: belleğe yazınca yalnızca o küçük blok yeniden önbelleğe yazılır
+  const systemBlocks: Anthropic.TextBlockParam[] = [
+    { type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text", text: memory, cache_control: { type: "ephemeral", ttl: "1h" } },
+  ];
+  const tools = archiveOn ? [MEMORY_TOOL, ...TOOLS] : [MEMORY_TOOL];
   const effort = body?.deep ? "high" : "low";
 
   const usage = { input: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, output: 0 };
@@ -134,7 +141,7 @@ export async function POST(req: Request) {
       max_tokens: 16000,
       cache_control: { type: "ephemeral" as const },
       system: systemBlocks,
-      ...(archiveOn ? { tools: TOOLS } : {}),
+      tools,
       output_config: { effort: effort as "low" | "high" },
       messages,
     };
@@ -259,6 +266,22 @@ function normalizeHistory(list: Msg[]) {
 
 // ------------------------------------------------------------------ araçlar (Google arşivi)
 const SOURCE_ENUM = ["gmail", "chat", "meet", "calendar"];
+const MEMORY_TOOL: Anthropic.Tool = {
+  name: "remember",
+  description:
+    "Kalıcı belleğe (bilgi dosyalarındaki gelistirme.md) yeni öğrenilen bilgiyi yazar; sonraki tüm sohbetlerde BELLEK bölümünde görünür. " +
+    "Süreç/çalışma mantığı, şirket kuralı, kişi-rol bilgisi, Batuhan'ın tercihi, alınan karar gibi kalıcı bilgiler için kullan; anlık durum verisi için kullanma.",
+  input_schema: {
+    type: "object",
+    properties: {
+      topic: { type: "string", description: "Konu başlığı (ör. 'Hakediş süreci', 'Tercihler', 'Kişiler'). BELLEK'te varsa aynısını kullan." },
+      entries: { type: "array", items: { type: "string" }, description: "Kısa, kendi başına anlaşılır madde(ler)." },
+      replaces: { type: "array", items: { type: "string" }, description: "Eskiyen ve kaldırılacak mevcut maddelerin metni (isteğe bağlı)." },
+    },
+    required: ["topic", "entries"],
+  },
+};
+
 const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_archive",
@@ -296,6 +319,7 @@ const trDate = (s: string) => new Date(s).toLocaleString("tr-TR", { timeZone: "E
 function statusOf(fc: { name: string; input: unknown }) {
   const a = (fc.input ?? {}) as Record<string, unknown>;
   if (fc.name === "get_archive_item") return "📄 Kayıt okunuyor…";
+  if (fc.name === "remember") return `🧠 Belleğe yazılıyor: ${String(a.topic ?? "").slice(0, 60)}`;
   const src = { gmail: "e-postalarda", chat: "Chat'te", meet: "toplantılarda", calendar: "takvimde" }[String(a.source)] ?? "arşivde";
   const range = a.after || a.before ? ` (${a.after ?? "…"} – ${a.before ?? "…"})` : "";
   return a.query ? `🔎 ${src[0].toUpperCase() + src.slice(1)} aranıyor: “${String(a.query).slice(0, 60)}”${range}` : `🔎 ${src[0].toUpperCase() + src.slice(1)} kayıtlar listeleniyor${range}`;
@@ -303,6 +327,12 @@ function statusOf(fc: { name: string; input: unknown }) {
 
 async function runTool(fc: { name: string; input: unknown }) {
   const a = (fc.input ?? {}) as Record<string, unknown>;
+  if (fc.name === "remember") {
+    const entries = (Array.isArray(a.entries) ? a.entries : [a.entries]).map(String).filter((x) => x.trim());
+    if (!entries.length) return { hata: "entries boş" };
+    const replaces = Array.isArray(a.replaces) ? a.replaces.map(String) : undefined;
+    return await remember({ topic: String(a.topic ?? "Genel"), entries, replaces });
+  }
   const source = SOURCE_ENUM.includes(String(a.source)) ? (a.source as ArchiveSource) : undefined;
   if (fc.name === "search_archive") {
     const hits = await search({ query: a.query ? String(a.query) : undefined, source, after: a.after ? String(a.after) : undefined, before: a.before ? String(a.before) : undefined, limit: Number(a.limit) || 15 });

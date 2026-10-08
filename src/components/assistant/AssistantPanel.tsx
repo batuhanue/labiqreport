@@ -35,7 +35,17 @@ interface Msg {
 }
 
 const LS_CHAT = "lq:chat";
+const LS_CHAT_ID = "lq:chat-id";
 const LS_PREFS = "lq:assistant";
+
+interface ChatMeta {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  count: number;
+}
+const MEMORIZE = "🧠 Bu sohbette öğrendiklerini belleğe ekle.";
 
 const isTyping = (t: EventTarget | null) => {
   const el = t as HTMLElement | null;
@@ -118,7 +128,11 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
   const [withGoogle, setWithGoogle] = useState(true);
   const googleOn = !!useGoogle()?.status?.connected;
   const [status, setStatus] = useState<{ configured: boolean; model: string } | null>(null);
-  const [view, setView] = useState<"chat" | "knowledge" | "usage">("chat");
+  const [view, setView] = useState<"chat" | "knowledge" | "usage" | "chats">("chat");
+  // sunucudaki sohbet: her cihazdan aynı sohbete devam edilir
+  const [chatId, setChatId] = useState("");
+  const synced = useRef<{ id: string; at: string }>({ id: "", at: "" });
+  const dirty = useRef(false);
   const [diag, setDiag] = useState<Diag | null>(null);
   const runDiag = useCallback(async () => {
     setDiag({ loading: true });
@@ -167,7 +181,9 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
   useEffect(() => {
     setMounted(true);
     try {
+      // sunucudan gelene kadar bu cihazdaki son kopya gösterilir
       setMsgs(JSON.parse(localStorage.getItem(LS_CHAT) || "[]"));
+      setChatId(localStorage.getItem(LS_CHAT_ID) || crypto.randomUUID());
       const p = JSON.parse(localStorage.getItem(LS_PREFS) || "{}");
       if (typeof p.deep === "boolean") setDeep(p.deep);
       if (typeof p.sendInk === "boolean") setSendInk(p.sendInk);
@@ -178,9 +194,71 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
     if (!mounted) return;
     try {
       localStorage.setItem(LS_CHAT, JSON.stringify(msgs.slice(-60)));
+      if (chatId) localStorage.setItem(LS_CHAT_ID, chatId);
       localStorage.setItem(LS_PREFS, JSON.stringify({ deep, sendInk, google: withGoogle }));
     } catch {}
-  }, [msgs, deep, sendInk, withGoogle, mounted]);
+  }, [msgs, chatId, deep, sendInk, withGoogle, mounted]);
+
+  /** Sohbeti sunucudan yükler. */
+  const loadChat = useCallback(async (id: string) => {
+    const r = await fetch(`/api/assistant/chats?id=${id}`, { cache: "no-store" });
+    const j = r.ok ? await r.json() : null;
+    if (!j?.chat) return false;
+    setChatId(id);
+    setMsgs(j.chat.messages);
+    synced.current = { id, at: j.chat.updatedAt };
+    return true;
+  }, []);
+
+  const newChat = useCallback(() => {
+    // yeni sohbet: yalnızca başka cihazda bundan sonra konuşulursa oraya geçilir
+    const id = crypto.randomUUID();
+    setChatId(id);
+    setMsgs([]);
+    synced.current = { id, at: new Date().toISOString() };
+    setView("chat");
+  }, []);
+
+  /** Sohbeti sunucuya kaydeder (son yazan kazanır). */
+  const saveChat = useCallback((id: string, messages: Msg[]) => {
+    fetch("/api/assistant/chats", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, messages }) })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((j) => {
+        if (j?.chat) synced.current = { id, at: j.chat.updatedAt };
+      })
+      .catch(() => (dirty.current = true));
+  }, []);
+
+  // panel açılınca: başka cihazda daha yeni bir konuşma olduysa ona geç, bu sohbet başka yerde güncellendiyse yenile
+  useEffect(() => {
+    if (!open || !mounted || !chatId || busy) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/assistant/chats", { cache: "no-store" });
+        if (!r.ok || cancelled) return;
+        const list: ChatMeta[] = (await r.json()).chats ?? [];
+        const latest = list[0];
+        const mine = list.find((c) => c.id === chatId);
+        const own = synced.current.id === chatId;
+        if (!mine && msgs.length && !own) return saveChat(chatId, msgs); // bu cihazdaki kayıtsız (eski) sohbeti taşı
+        const base = mine?.updatedAt ?? (own ? synced.current.at : "");
+        if (latest && latest.id !== chatId && latest.updatedAt > base) await loadChat(latest.id);
+        else if (mine && (!own || mine.updatedAt > synced.current.at)) await loadChat(mine.id);
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mounted]);
+
+  // her tamamlanan yanıttan sonra sohbeti sunucuya kaydet
+  useEffect(() => {
+    if (busy || !dirty.current || !chatId || !msgs.length) return;
+    dirty.current = false;
+    saveChat(chatId, msgs);
+  }, [busy, msgs, chatId, saveChat]);
 
   useEffect(() => {
     if (!open || status) return;
@@ -204,6 +282,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
       const bot: Msg = { id: crypto.randomUUID(), role: "assistant", text: "", at: new Date().toISOString() };
       const history = [...msgs, user];
       setMsgs([...history, bot]);
+      dirty.current = true;
       setInput("");
       setBusy(true);
       scrollDown();
@@ -366,8 +445,11 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
               <button onClick={() => setView(view === "chat" ? "knowledge" : "chat")} className={`grid h-10 w-10 place-items-center rounded-full ${view === "knowledge" ? "clay-pressed text-blue" : "clay-sm"}`} title="Bilgi dosyaları (.md)" aria-label="Bilgi dosyası">
                 <Icon name="note" size={18} />
               </button>
+              <button onClick={() => setView(view === "chats" ? "chat" : "chats")} className={`grid h-10 w-10 place-items-center rounded-full ${view === "chats" ? "clay-pressed text-blue" : "clay-sm"}`} title="Geçmiş sohbetler" aria-label="Sohbetler">
+                <Icon name="history" size={18} />
+              </button>
               {msgs.length > 0 && view === "chat" && (
-                <button onClick={() => !busy && setMsgs([])} className="clay-sm grid h-10 w-10 place-items-center rounded-full" title="Yeni sohbet" aria-label="Yeni sohbet">
+                <button onClick={() => !busy && newChat()} className="clay-sm grid h-10 w-10 place-items-center rounded-full" title="Yeni sohbet" aria-label="Yeni sohbet">
                   <Icon name="plus" size={18} />
                 </button>
               )}
@@ -378,6 +460,17 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
 
             {view === "knowledge" ? (
               <KnowledgeEditor />
+            ) : view === "chats" ? (
+              <ChatList
+                current={chatId}
+                onOpen={async (id) => {
+                  if (busy) return;
+                  if (id !== chatId) await loadChat(id);
+                  setView("chat");
+                }}
+                onNew={() => !busy && newChat()}
+                onDeleted={(id) => id === chatId && newChat()}
+              />
             ) : view === "usage" ? (
               <UsageView />
             ) : (
@@ -449,6 +542,16 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
                     {googleOn && (
                       <button onClick={() => setWithGoogle((v) => !v)} className={`rounded-full px-3 py-1.5 ${withGoogle ? "bg-blue text-white" : "bg-track"}`} title="Takvim, Gmail, Chat ve Meet verisi asistana gönderilir">
                         📬 Google {withGoogle ? "dahil" : "hariç"}
+                      </button>
+                    )}
+                    {msgs.some((m) => m.role === "assistant" && !m.error) && (
+                      <button
+                        onClick={() => send(MEMORIZE)}
+                        disabled={busy}
+                        className="rounded-full bg-tint-info px-3 py-1.5 text-blue disabled:opacity-40"
+                        title="Sohbette öğrenilen süreç, kural, tercih ve kararları kalıcı belleğe (gelistirme.md) yazar"
+                      >
+                        🧠 Belleğe ekle
                       </button>
                     )}
                     <span className="ml-auto hidden sm:inline">Enter gönder · Shift+Enter satır · Esc kapat</span>
@@ -845,6 +948,68 @@ function KnowledgeEditor() {
           {busy ? "Kaydediliyor…" : "Kaydet"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ geçmiş sohbetler */
+function ChatList({ current, onOpen, onNew, onDeleted }: { current: string; onOpen: (id: string) => void; onNew: () => void; onDeleted: (id: string) => void }) {
+  const [list, setList] = useState<ChatMeta[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    fetch("/api/assistant/chats", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((j) => setList(j.chats ?? []))
+      .catch((e) => setErr(e.message));
+  }, []);
+  const remove = async (c: ChatMeta) => {
+    if (!confirm(`“${c.title}” sohbeti silinsin mi?`)) return;
+    const r = await fetch(`/api/assistant/chats?id=${c.id}`, { method: "DELETE" });
+    if (!r.ok) return;
+    setList((l) => l?.filter((x) => x.id !== c.id) ?? null);
+    onDeleted(c.id);
+  };
+  const day = (s: string) => new Date(s).toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
+  const shown = (list ?? []).filter((c) => !q.trim() || c.title.toLocaleLowerCase("tr").includes(q.trim().toLocaleLowerCase("tr")));
+  const groups = shown.reduce<[string, ChatMeta[]][]>((g, c) => {
+    const d = day(c.updatedAt);
+    if (g.at(-1)?.[0] === d) g.at(-1)![1].push(c);
+    else g.push([d, [c]]);
+    return g;
+  }, []);
+
+  return (
+    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-6">
+      <div className="flex gap-2">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Sohbetlerde ara…" className="clay-pressed min-w-0 flex-1 rounded-full px-4 py-2.5 text-sm outline-none" />
+        <button onClick={onNew} className="clay-dark shrink-0 rounded-full px-4 py-2.5 text-sm font-extrabold">
+          + Yeni sohbet
+        </button>
+      </div>
+      {err && <div className="text-sm text-fail">Sohbetler okunamadı: {err}</div>}
+      {!list && !err && <div className="text-sm text-ink-3">Yükleniyor…</div>}
+      {list && !shown.length && <div className="pt-6 text-center text-sm text-ink-3">{q ? "Eşleşen sohbet yok." : "Henüz kayıtlı sohbet yok."}</div>}
+      {groups.map(([d, cs]) => (
+        <div key={d}>
+          <div className="mb-1.5 px-1 text-[11px] font-extrabold uppercase tracking-wide text-ink-3">{d}</div>
+          <div className="space-y-1.5">
+            {cs.map((c) => (
+              <div key={c.id} className={`clay-sm flex items-center gap-2 rounded-2xl pr-2 ${c.id === current ? "ring-2 ring-blue/60" : ""}`}>
+                <button onClick={() => onOpen(c.id)} className="min-w-0 flex-1 px-4 py-3 text-left">
+                  <div className="truncate text-sm font-bold">{c.title}</div>
+                  <div className="text-[11px] font-semibold text-ink-3">
+                    {new Date(c.updatedAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })} · {c.count} mesaj{c.id === current ? " · açık" : ""}
+                  </div>
+                </button>
+                <button onClick={() => remove(c)} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink-3 hover:text-fail" aria-label="Sohbeti sil" title="Sil">
+                  <Icon name="trash" size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

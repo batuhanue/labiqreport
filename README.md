@@ -38,6 +38,11 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   yüklenebilir) ile canlı veriyi birlikte okur: 10 başlığın iki hastane için güncel durumu, madde notları / anomaliler,
   aksiyonlar, dönem notları (el yazısı notlar görüntü olarak gönderilir), kişisel görevler, terminler ve geçmiş dönem özeti.
   Yanıtlar akışla gelir; önerdiği görevler tek tuşla Görevler'e eklenir. Alan sayfasında "✨ Asistana sor" düğmesi var.
+  Sohbetler veritabanında tutulur: her cihazdan aynı sohbete devam edilir (panel açılınca en son konuşulan sohbet gelir),
+  🕘 düğmesiyle geçmiş sohbetler listelenir, aranır, açılır ya da silinir.
+  **Bellek (`gelistirme.md`):** asistan sohbette öğrendiği kalıcı bilgiyi (süreç mantığı, şirket kuralı, tercih, karar) kendisi
+  `remember` aracıyla bu dosyaya konu başlıkları altında yazar; "🧠 Belleğe ekle" düğmesi sohbetten öğrenilenleri elle yazdırır.
+  Dosya Bilgi dosyaları panelinde görünür, düzenlenebilir ve her yeni sohbette okunur (ayrı önbellek bloğunda).
   Maliyet: sabit kurallar + bilgi dosyaları (~30k token) Claude istem önbelleğinde tutulur (`cache_control`); her soruda ve
   her arşiv araması turunda önbellekten (~%90 indirimli) okunur. Değişen canlı veri son kullanıcı mesajının başına eklenir,
   böylece önceki mesajlar da önbellekte kalır. Her yanıtın altında "Nk token · Mk önbellekten ⚡ · $" görünür; asistan
