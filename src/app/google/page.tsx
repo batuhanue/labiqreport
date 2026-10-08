@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAssistant } from "@/components/assistant/AssistantPanel";
 import { useGoogle } from "@/components/google/GoogleProvider";
@@ -17,6 +18,64 @@ const norm = (s: string) => s.toLocaleLowerCase("tr").normalize("NFD").replace(/
 import { DRIVE_SCOPE, type ArchiveHit, type ArchiveProgress, type ArchiveSource, type GChatSpace, type GEvent, type GFile, type GMail, type GMeeting, type GoogleSnapshot } from "@/lib/google-types";
 
 type Tab = "calendar" | "gmail" | "chat" | "meet" | "drive" | "archive";
+
+/** 3B ofis yalnızca tablet/masaüstünde ve gerektiğinde indirilir. */
+const OfficeView = dynamic(() => import("@/components/office/OfficeView"), {
+  ssr: false,
+  loading: () => (
+    <div className="clay grid h-[calc(100dvh-13rem)] min-h-[560px] place-items-center rounded-[30px] lg:h-[calc(100dvh-8.5rem)] lg:min-h-[620px]">
+      <div className="flex flex-col items-center gap-3 text-sm font-bold text-ink-3">
+        <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="inline-block h-8 w-8 rounded-full border-[3px] border-blue border-t-transparent" />
+        Ofis kuruluyor…
+      </div>
+    </div>
+  ),
+});
+
+const VIEW_KEY = "lq:google-view";
+/** Görünüm tercihi (Ofis / Liste) ve ekranın tablet+ olup olmadığı. */
+function useGoogleView(): ["office" | "list", (m: "office" | "list") => void, boolean] {
+  const [mode, setModeState] = useState<"office" | "list">("office");
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(VIEW_KEY) === "list") setModeState("list");
+    } catch {}
+    const mq = window.matchMedia("(min-width: 768px)");
+    const on = () => setWide(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  const setMode = (m: "office" | "list") => {
+    setModeState(m);
+    try {
+      localStorage.setItem(VIEW_KEY, m);
+    } catch {}
+  };
+  return [mode, setMode, wide];
+}
+
+function ViewToggle({ mode, onChange }: { mode: "office" | "list"; onChange: (m: "office" | "list") => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="clay-pressed flex rounded-full p-1">
+        {(
+          [
+            ["office", "🏢 Ofis"],
+            ["list", "☰ Liste"],
+          ] as const
+        ).map(([v, l]) => (
+          <button key={v} onClick={() => onChange(v)} className={`relative rounded-full px-4 py-2 text-sm font-bold ${mode === v ? "text-white" : "text-ink-2"}`}>
+            {mode === v && <motion.span layoutId="google-view" className="absolute inset-0 rounded-full bg-blue" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}
+            <span className="relative">{l}</span>
+          </button>
+        ))}
+      </div>
+      {mode === "office" && <span className="hidden text-xs font-semibold text-ink-3 md:inline">Sürükle: döndür · Sağ tık/iki parmak: kaydır · Tekerlek/çimdik: yakınlaştır · Odaya tıkla</span>}
+    </div>
+  );
+}
 
 // ------------------------------------------------------------------ zaman yardımcıları
 const hm = (s: string) => new Date(s).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
@@ -59,7 +118,8 @@ function Avatar({ name, size = 40 }: { name: string; size?: number }) {
 
 // ------------------------------------------------------------------ sayfa
 export default function GooglePage() {
-  const { status, syncing, error, sync, disconnect, archive } = useGoogle();
+  const { status, syncing, error, sync, disconnect, archive, archiving } = useGoogle();
+  const [mode, setMode, wide] = useGoogleView();
   const { toast } = usePeriod();
   const [tab, setTab] = useState<Tab>("calendar");
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
@@ -114,6 +174,26 @@ export default function GooglePage() {
               </a>
             </div>
           )}
+          {wide && status.snapshot && <ViewToggle mode={mode} onChange={setMode} />}
+          {wide && mode === "office" && status.snapshot ? (
+            <OfficeView
+              snap={status.snapshot}
+              archive={archive}
+              archiving={archiving}
+              syncing={syncing}
+              onSync={() => sync(true)}
+              renderZone={(id) => {
+                const snap = status.snapshot!;
+                if (id === "calendar") return <CalendarTab snap={snap} />;
+                if (id === "gmail") return <GmailTab snap={snap} />;
+                if (id === "chat") return <ChatTab snap={snap} />;
+                if (id === "meet") return <MeetTab snap={snap} />;
+                if (id === "drive") return <DriveTab snap={snap} scoped={!!status.scopes?.includes(DRIVE_SCOPE)} email={status.account?.email ?? ""} />;
+                return <ArchiveTab />;
+              }}
+            />
+          ) : (
+          <>
           <Hero snap={status.snapshot ?? null} email={status.account?.email ?? ""} picture={status.account?.picture} syncing={syncing} onSync={() => sync(true)} error={error} archive={archive} onArchive={() => setTab("archive")} />
           {status.snapshot ? (
             <>
@@ -149,6 +229,8 @@ export default function GooglePage() {
               <div className="font-extrabold">İlk senkron yapılıyor…</div>
               <div className="text-sm text-ink-2">Takvim, Gmail, Chat, Meet ve Drive verileri çekiliyor. Bu birkaç saniye sürebilir.</div>
             </div>
+          )}
+          </>
           )}
           <div className="flex flex-wrap items-center justify-between gap-3 px-1 pt-2 text-xs text-ink-3">
             <span>Salt okunur bağlantı · uygulama açıkken 5 dakikada bir, ayrıca her sabah otomatik senkron.</span>
@@ -1700,7 +1782,7 @@ function ArchiveTab() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="@container space-y-4">
       <div className="clay p-5">
         <div className="flex items-center gap-3">
           <span className="text-3xl">📚</span>
@@ -1713,7 +1795,7 @@ function ArchiveTab() {
         </div>
         {archive ? (
           <>
-            <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+            <div className="mt-4 grid grid-cols-2 gap-2.5 @lg:grid-cols-3 @4xl:grid-cols-5">
               {(Object.keys(SRC) as ArchiveSource[]).map((k) => {
                 const s = archive.stats.bySource[k];
                 const done = archive.done[k];

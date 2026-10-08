@@ -69,6 +69,14 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   E-Tablolar tablo olarak; Word/Excel/PowerPoint dosyalarının metni de çıkarılır; PDF ve görseller Drive önizlemesiyle
   açılır. Dosya içerikleri arşive de yazılır, asistan "şu tablodaki…/prosedürde ne yazıyor" sorularında Drive'da arar.
   Önceden bağlanmış hesapta Drive için bir kez **yeniden bağlanıp** Drive iznini vermek gerekir.
+  **Sanal ofis (tablet/masaüstü):** Google sayfası varsayılan olarak 3B ofis olarak açılır ("Ofis / Liste" ile eski
+  görünüme dönülür, tercih hatırlanır). Her kaynak ayrı bir oda ve kendi iş mantığıyla çalışır: Planlama (duvar
+  panosunda 7 günlük notlar), Posta odası (masalarda okunmamış zarf yığınları, önemliler kırmızı), İletişim (her aktif
+  sohbet bir masa, yeni mesajda parlayan konuşma balonu), Toplantı salonu (toplantı sürerken ekran kırmızı yanıp söner,
+  transkript kâğıtları), Dosya arşivi (rafta türüne göre renkli klasörler), Hafıza (her kaynak için sunucu dolabı;
+  LED'ler indirme durumunu gösterir). Rozetler odanın durumunu (çalışıyor / iş bekliyor / sakin / sorun) gösterir;
+  odaya tıklayınca kamera oraya uçar ve sağ panelde o kaynağın içeriği açılır. Koltuklar ve ortadaki "Agent merkezi"
+  boş: ileride agent'lar masalara atanacak.
 
 - **Kampüs görünümü (tablet + masaüstü):** Denetim sayfası 3B, "cozy" bir kampüs olarak açılır (React Three Fiber).
   10 rapor alanı = 10 depo binası, her kontrol maddesi = binanın önündeki yükleme rampası. Rampanın önünde iki palet
