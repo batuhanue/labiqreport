@@ -76,6 +76,8 @@ export interface UsageEntry {
   error?: string;
   retries?: number;
   ctxChars?: number;
+  /** asistan dışındaki kullanım (ör. "🧠 Beyin") */
+  label?: string;
 }
 interface DayAgg {
   requests: number;

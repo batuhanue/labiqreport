@@ -54,6 +54,17 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   yaklaşan/geçen rapor alanı terminleri, termini gelen/geciken aksiyonlar, Cuma 12:00 toplantı özeti ve ay başı
   hatırlatması. Zil menüsü aynı hatırlatmaları uygulama içinde de gösterir; hangi bildirimlerin geleceği oradan seçilir.
   iPhone/iPad'de önce Safari → Paylaş → **Ana Ekrana Ekle** (iOS 16.4+), sonra uygulamayı oradan açıp bildirimi aç.
+- **Beyin (Görevler sayfası):** İşini anlayan merkez ve ona bağlı yan ajanlar. Beyin seni bilgi dosyalarından ve
+  `gelistirme.md` belleğinden tanır; ajanlar kendi kaynaklarını okur: 📨 Posta (yeni e-postalar), 💬 Sohbet (sana
+  yazılanlar), 📅 Takvim (7 günlük toplantı hazırlıkları, yanıt bekleyen davetler), 🎥 Toplantı (transkriptlerden
+  kararlar/aksiyonlar), ✅ Denetim (termin baskısı, aksiyonu açılmamış ✗ bulgular), 📁 Dosya (her işe arşivden/Drive'dan
+  ilgili dosyaları ekler), 🗂️ Görev ("Beyne yaz" notlarını işe çevirir). Her düşünmede yalnızca yeni sinyaller işlenir;
+  ajanlar Claude'un şemalı (structured output) yanıtıyla iş açar ya da var olanı günceller (tekrar açmaz), sonra beyin
+  bütün açık işleri ve görevlerini rolüne göre sıralayıp "Bugün odak" brifingini yazar. Ajan önerileri **Öneriler**
+  sütununa düşer; onaylayınca Yapılacak'a geçer, "Gerek yok" dediğin bir daha önerilmez. Kanban: Öneriler → Yapılacak →
+  Devam → Bekliyor → Bitti; her iş adımlar, bulunan dosyalar ve kaynak bağlantılarıyla açılır, tek tuşla görev listesine
+  aktarılır (görev bitince iş de biter). Tetikleme: "Şimdi düşün", uygulama açıkken Google senkronundan sonra (en fazla
+  30 dk'da bir) ve her sabah cron. Kişisel görev listesi "Görevlerim" sekmesinde aynen duruyor.
 - **Google Workspace (Takvim, Gmail, Chat, Meet, Drive):** "Google" sayfasından şirket hesabı tek tıkla bağlanır (salt okunur).
   Takvim (sıradaki toplantı + Meet'e katıl), gelen kutusu (okunmamış/önemli), Chat alanları ve DM'ler, Meet toplantı
   kayıtları (katılımcılar, transkript/kayıt bağlantıları) görünür; her öğeden tek tuşla görev oluşturulur.

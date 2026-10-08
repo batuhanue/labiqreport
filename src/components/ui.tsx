@@ -8,7 +8,7 @@ type IconName =
   | "home" | "chart" | "history" | "flag" | "check" | "x" | "minus" | "note" | "plus" | "download"
   | "upload" | "back" | "close" | "chevron" | "calendar" | "info" | "trash" | "cloud" | "alert"
   | "flame" | "user" | "clock" | "share" | "play" | "edit" | "spark" | "bell" | "sidebar" | "todo"
-  | "mail" | "chat" | "video" | "refresh" | "external" | "link" | "folder";
+  | "mail" | "chat" | "video" | "refresh" | "external" | "link" | "folder" | "brain";
 
 const P: Record<IconName, React.ReactNode> = {
   home: <path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z" />,
@@ -45,6 +45,7 @@ const P: Record<IconName, React.ReactNode> = {
   video: <><rect x="3" y="6" width="12.5" height="12" rx="3" /><path d="m15.5 10.5 5-3v9l-5-3" /></>,
   refresh: <><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8" /><path d="M4 3.5V8h4.5M4 13a8 8 0 0 0 14.6 4.5L20 16" /><path d="M20 20.5V16h-4.5" /></>,
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
+  brain: <><path d="M9 4.5a3 3 0 0 0-3 3v.2A3 3 0 0 0 4 10.5a3 3 0 0 0 1 2.2A3 3 0 0 0 6.5 18 3 3 0 0 0 12 19V5.5a3 3 0 0 0-3-1z" /><path d="M15 4.5a3 3 0 0 1 3 3v.2a3 3 0 0 1 2 2.8 3 3 0 0 1-1 2.2 3 3 0 0 1-1.5 5.3A3 3 0 0 1 12 19" /><path d="M9 9.5h1.5M14.5 12H13M9 14.5h1.5" /></>,
   folder: <path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />,
   link: <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" />,
 };

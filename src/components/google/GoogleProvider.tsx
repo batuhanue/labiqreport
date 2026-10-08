@@ -91,6 +91,8 @@ export function GoogleProvider({ children }: { children: React.ReactNode }) {
         setError(null);
         setStatus((s) => (s ? { ...s, snapshot: j, needsReauth: false } : s));
         setTimeout(() => archiveStepRef.current(), 500);
+        // yeni veri geldi: beyin son düşünmeden 30 dk geçtiyse arka planda düşünür (sunucu kısıtlar)
+        fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "auto" }) }).catch(() => {});
       }
     } catch (e) {
       setError((e as Error).message);

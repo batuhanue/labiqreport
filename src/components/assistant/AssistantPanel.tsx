@@ -1026,7 +1026,7 @@ function ChatList({ current, onOpen, onNew, onDeleted }: { current: string; onOp
 /* ------------------------------------------------------------------ token kullanımı */
 interface UsageData {
   days: Record<string, { requests: number; prompt: number; cached: number; output: number; cost: number; errors: number }>;
-  recent: { at: string; model: string; rounds: number; prompt: number; cached: number; written: number; output: number; cost: number | null; ms: number; error?: string; retries?: number }[];
+  recent: { at: string; model: string; rounds: number; prompt: number; cached: number; written: number; output: number; cost: number | null; ms: number; error?: string; retries?: number; label?: string }[];
   model: string;
 }
 
@@ -1125,6 +1125,7 @@ function UsageView() {
                 </details>
               ) : (
                 <span className="min-w-0 flex-1 font-semibold tabular-nums">
+                  {r.label ? `${r.label} · ` : ""}
                   {k(r.prompt)} giriş ({k(r.cached)} önbellekten{r.written ? ` · ${k(r.written)} önbelleğe yazıldı` : ""}) · {k(r.output)} çıkış · {r.rounds} tur · {(r.ms / 1000).toFixed(1)} sn
                 </span>
               )}
