@@ -5,7 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatedNumber, Burst } from "@/components/fx";
 import { usePeriod } from "@/components/PeriodProvider";
 import { TiltCard } from "@/components/TiltCard";
-import { useTodos } from "@/components/todos/TodoProvider";
+import { todoDetail, useTodos } from "@/components/todos/TodoProvider";
+import { noteChoice } from "@/lib/learn-client";
 import { Icon, Ring, Segmented, Sheet } from "@/components/ui";
 import { AREAS, PEOPLE, areaByCode } from "@/lib/checklist";
 import { easeOutExpo, reveal, spring } from "@/lib/motion";
@@ -77,6 +78,7 @@ export default function TodoBoard() {
   }, [undo]);
 
   const runSuggestion = (s: Suggestion) => {
+    noteChoice({ where: "gorevler", kind: "suggestion_accept", title: s.title, detail: s.body });
     if (s.todo) {
       add(newTodo(s.todo));
       toast("Görev oluşturuldu");
@@ -91,7 +93,11 @@ export default function TodoBoard() {
       setView("upcoming");
     }
   };
-  const dismiss = (key: string) => mutate((st) => ({ ...st, dismissed: [...st.dismissed, key] }));
+  const dismiss = (key: string) => {
+    const s = sugg.find((x) => x.key === key);
+    if (s) noteChoice({ where: "gorevler", kind: "suggestion_dismiss", title: s.title, detail: s.body });
+    mutate((st) => ({ ...st, dismissed: [...st.dismissed, key] }));
+  };
 
   const focusCount = store.todos.filter((t) => t.focus && !t.done).length;
 
@@ -226,7 +232,10 @@ export default function TodoBoard() {
                             const r = remove(t.id);
                             if (r) setUndo(r);
                           }}
-                          onFocus={() => mutate((st) => ({ ...st, todos: st.todos.map((x) => (x.id === t.id ? { ...x, focus: !x.focus } : x)) }))}
+                          onFocus={() => {
+                            if (!t.focus) noteChoice({ where: "gorevler", kind: "todo_focus", title: t.title, detail: todoDetail(t) });
+                            mutate((st) => ({ ...st, todos: st.todos.map((x) => (x.id === t.id ? { ...x, focus: !x.focus } : x)) }));
+                          }}
                         />
                       ))}
                     </AnimatePresence>

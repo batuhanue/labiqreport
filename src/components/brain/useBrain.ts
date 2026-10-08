@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { usePeriod } from "@/components/PeriodProvider";
-import type { BrainItem, BrainRun, BrainState } from "@/lib/brain-types";
+import type { BrainItem, BrainRun, BrainState, Lesson } from "@/lib/brain-types";
+import { lessonToast } from "@/lib/learn-client";
 
 /** Beyin durumu ve eylemleri (liste ve ofis görünümü ortak kullanır). */
 export function useBrainState() {
@@ -55,12 +56,21 @@ export function useBrainState() {
     }
   };
 
-  const patch = async (id: string, p: Partial<BrainItem>) => {
+  /** reason: Batuhan'ın sebebi (ret/onay) — verilirse beyin hemen öğrenir ve ne öğrendiğini söyler */
+  const patch = async (id: string, p: Partial<BrainItem>, reason?: string) => {
     setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? { ...x, ...p } : x)) } : s));
     setOpen((o) => (o && o.id === id ? { ...o, ...p } : o));
-    const r = await fetch("/api/brain", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, patch: p }) });
+    if (reason) toast("Not aldım, öğreniyorum…");
+    const r = await fetch("/api/brain", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, patch: p, reason }) });
     if (!r.ok) {
       toast("Kaydedilemedi");
+      load();
+      return;
+    }
+    const j = await r.json().catch(() => ({}));
+    const msg = lessonToast((j.learned as Lesson[]) ?? []);
+    if (msg) {
+      toast(msg);
       load();
     }
   };

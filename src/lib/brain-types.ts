@@ -169,4 +169,83 @@ export interface BrainState {
   running?: boolean;
   /** her ajan için bekleyen (henüz işlenmemiş) sinyal sayısı — bir sonraki düşünmede işlenecek */
   pending?: Partial<Record<AgentId, number>>;
+  /** seçimlerden öğrenme: bekleyen seçim sayısı ve son öğrenilenler */
+  learning?: LearningState;
+}
+
+// ------------------------------------------------------------------ seçimlerden öğrenme
+/*
+ * Batuhan'ın uygulamadaki her seçimi (öneriye evet/hayır, öncelik, ajan değişikliği, görev tamamlama…)
+ * kaydedilir; asistan bunlardan kalıcı tercihler çıkarıp belleğe (gelistirme.md) yazar.
+ */
+export type ChoiceKind =
+  | "accept"
+  | "reject"
+  | "done"
+  | "reopen"
+  | "priority"
+  | "due"
+  | "reassign"
+  | "rename"
+  | "to_todo"
+  | "approve"
+  | "fix"
+  | "todo_add"
+  | "todo_done"
+  | "todo_delete"
+  | "todo_focus"
+  | "suggestion_accept"
+  | "suggestion_dismiss";
+
+export const CHOICE_LABEL: Record<ChoiceKind, string> = {
+  accept: "öneriyi onayladı",
+  reject: "öneriyi reddetti",
+  done: "işi bitirdi",
+  reopen: "işi yeniden açtı",
+  priority: "önceliği değiştirdi",
+  due: "termini değiştirdi",
+  reassign: "işi başka ajana verdi",
+  rename: "başlığı düzeltti",
+  to_todo: "görevlerine ekledi",
+  approve: "ajanın teslimatını onayladı",
+  fix: "ajanın teslimatını düzeltti",
+  todo_add: "asistanın önerdiği görevi ekledi",
+  todo_done: "görevi tamamladı",
+  todo_delete: "görevi sildi",
+  todo_focus: "görevi odağa aldı",
+  suggestion_accept: "asistan önerisini uyguladı",
+  suggestion_dismiss: "asistan önerisini gizledi",
+};
+
+/** Hazır ret sebepleri (tek dokunuş) */
+export const REJECT_REASONS = ["Benim işim değil", "Zaten yapıldı", "Şimdi değil", "Önemsiz / gürültü"] as const;
+
+export interface Choice {
+  id: string;
+  at: string;
+  kind: ChoiceKind;
+  /** nerede: beyin, görevler, asistan */
+  where: "beyin" | "gorevler" | "asistan";
+  agent?: AgentId;
+  title: string;
+  /** bağlam: kaynak, kişi, tür, eski → yeni değer */
+  detail?: string;
+  /** Batuhan'ın verdiği sebep (en güçlü sinyal) */
+  reason?: string;
+  learned?: boolean;
+}
+
+export interface Lesson {
+  topic: string;
+  entry: string;
+}
+export interface LearnLog {
+  at: string;
+  choices: number;
+  lessons: Lesson[];
+}
+export interface LearningState {
+  pending: number;
+  total: number;
+  log: LearnLog[];
 }

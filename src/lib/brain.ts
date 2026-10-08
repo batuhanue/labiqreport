@@ -10,7 +10,9 @@ import { store } from "./db";
 import { getSnapshot } from "./google";
 import { areaProgress, deadlineInfo, normalizePeriod, periodLabel } from "./period";
 import { emptyStore, type TodoStore } from "./todo";
-import { AGENTS, agentById, type AgentId, type AgentRun, type BrainFocus, type BrainItem, type BrainRun, type BrainState, type ItemSource, type ItemWork, type Signal, type TeamPiece, type TeamRun } from "./brain-types";
+import { brainSystem } from "./brain-prompt";
+import { learn, learningState, recentChoices, recordChoices } from "./learning";
+import { AGENTS, agentById, KIND_LABEL, type AgentId, type Choice, type AgentRun, type BrainFocus, type BrainItem, type BrainRun, type BrainState, type ItemSource, type ItemWork, type Signal, type TeamPiece, type TeamRun } from "./brain-types";
 
 /*
  * Beyin döngüsü (her "düşünme"):
@@ -230,20 +232,6 @@ const FOCUS_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-function brainSystem(knowledge: string) {
-  return `Sen Batuhan Başar'ın iş beynisin. Ona gelen her şeyi (e-posta, sohbet, takvim, toplantı, denetim listesi, kendi notları) okuyup onun işinin ne olduğunu anlayan, işi rolüne göre önceliklendiren ve somut, uygulanabilir işlere çeviren merkezsin. Yan ajanların her biri bir kaynaktan sorumludur; şu an hangi ajan olarak çalıştığın kullanıcı mesajında yazar.
-Batuhan'ı ve şirketi aşağıdaki BİLGİ DOSYALARI ve BELLEK'ten tanıyorsun: rolü, sınırı, iş tanımı, kişiler, takvim ve kontrol yöntemleri. Önceliği her zaman bu role göre ver.
-Kurallar:
-- Yalnızca gerçekten bir aksiyon gerektiren işleri çıkar; gürültü üretme. Emin değilsen iş açma.
-- Aynı konu açık işlerde zaten varsa yeni iş açma, op=update ile o işi güncelle (ref = açık işin kimliği) ve yeni bilgiyi ekle.
-- Başlık kısa ve fiille başlasın ("Tuğrul'a R-02 sayım farkı verisini gönder"). Adımlar somut olsun; ilgili kişi, dosya ve sistem adlarını yaz.
-- Terminleri bugünün tarihine göre gerçek tarihe çevir. Veride olmayan bilgiyi uydurma.
-- Kimseyi zan altında bırakan dil kullanma; düzeltmeyi sorumlu yapar, Batuhan kontrol eder ve takip eder.
-
-=============== BİLGİ DOSYALARI ===============
-${knowledge}`;
-}
-
 interface AgentOut {
   op: "create" | "update";
   ref: string;
@@ -278,9 +266,10 @@ const openList = (items: BrainItem[]) =>
 
 async function runAgent(agent: Exclude<AgentId, "dosya">, signals: Signal[], items: BrainItem[], system: Anthropic.TextBlockParam[], usage: Usage, timeout: number) {
   const today = istDay();
+  const choices = await recentChoices({ agent, limit: 25 }).catch(() => "");
   const content = `ŞU AN: ${AGENT_RULES[agent]}
 Bugün: ${today} (${new Date().toLocaleDateString("tr-TR", { weekday: "long", timeZone: "Europe/Istanbul" })}).
-
+${choices ? `\nBATUHAN'IN SON SEÇİMLERİ (önerilerine verdiği yanıtlar — bunlardan öğren: reddettiği türde iş açma, değiştirdiği önceliği/ajanı baştan öyle ver):\n${choices}\n` : ""}
 AÇIK İŞLER (tekrar açma; gerekirse op=update ile güncelle):
 ${openList(items)}
 
@@ -395,6 +384,9 @@ Bugünkü toplantılar: ${meetings.map((e) => `${e.allDay ? "tüm gün" : trTime
 BEYİNDEKİ İŞLER:
 ${open.map((x) => `- [${x.id}] (${x.status === "inbox" ? "öneri" : x.status}, P${x.priority}${x.due ? `, termin ${x.due}` : ""}, ${x.kind}) ${x.title} — ${clip(x.summary, 160)}`).join("\n") || "(yok)"}
 
+BATUHAN'IN SON SEÇİMLERİ (neye öncelik verdiğini gösterir):
+${(await recentChoices({ limit: 20 }).catch(() => "")) || "(henüz yok)"}
+
 BATUHAN'IN GÖREVLERİ (kimlik todo:…):
 ${todos.slice(0, 60).map((t) => `- [todo:${t.id}] (P${t.priority}${t.due ? `, ${t.due}` : ""}) ${t.title}`).join("\n") || "(yok)"}`;
   const res = await claude().messages.parse(
@@ -471,6 +463,8 @@ export async function think(opts: { trigger: BrainRun["trigger"]; budgetMs?: num
       calls++;
       meta.focus = (await prioritize(keep, system, usage, Math.max(6000, left() - 2000)).catch(() => null)) ?? meta.focus;
     }
+    // birikmiş seçimlerden öğren (sabah cron'unda da çalışır)
+    if (left() > 10000) await learn({ force: true, timeout: left() - 3000 }).catch(() => null);
   } catch (e) {
     run.error = e instanceof Error ? e.message.slice(0, 300) : String(e);
   } finally {
@@ -509,7 +503,7 @@ export async function capture(text: string) {
 }
 
 export async function state(): Promise<BrainState> {
-  const [items, meta, todos] = await Promise.all([readItems(), readMeta(), store().getKV<TodoStore>("todos")]);
+  const [items, meta, todos, learning] = await Promise.all([readItems(), readMeta(), store().getKV<TodoStore>("todos"), learningState().catch(() => undefined)]);
   // görev listesinde tamamlanan işler beyinde de biter
   const done = new Set((todos?.todos ?? []).filter((t) => t.done).map((t) => t.id));
   let changed = false;
@@ -530,13 +524,36 @@ export async function state(): Promise<BrainState> {
     lastRun: meta.lastRun,
     running: !!meta.lock && meta.lock > Date.now(),
     pending,
+    learning,
   };
 }
 
-export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "status" | "steps" | "priority" | "due" | "title" | "todoId" | "agent">>) {
+const PRIO = ["", "acil", "yüksek", "orta", "normal"];
+/** Seçimin bağlamı: öğrenen model işin türünü/kaynağını/kişisini görsün. */
+const itemDetail = (it: BrainItem) =>
+  [KIND_LABEL[it.kind], it.sources[0] && `kaynak: ${it.sources[0].title}${it.sources[0].who ? ` (${it.sources[0].who})` : ""}`, it.person && `kişi: ${it.person}`, it.area, `P${it.priority}`].filter(Boolean).join(" · ");
+
+export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "status" | "steps" | "priority" | "due" | "title" | "todoId" | "agent">>, opts: { reason?: string } = {}) {
   const items = await readItems();
   const it = items.find((x) => x.id === id);
   if (!it) return null;
+  // Batuhan'ın seçimleri (öğrenme için)
+  const choices: Omit<Choice, "id" | "at">[] = [];
+  const base = { where: "beyin" as const, agent: it.agent, title: it.title, detail: itemDetail(it) };
+  const reason = opts.reason?.trim() || undefined;
+  if (patch.todoId && !it.todoId) choices.push({ ...base, kind: "to_todo" });
+  else if (patch.status && patch.status !== it.status) {
+    const wasOpen = isOpen(it);
+    if (patch.status === "dismissed") choices.push({ ...base, kind: "reject", reason });
+    else if (patch.status === "done" && wasOpen) choices.push({ ...base, kind: "done" });
+    else if (!wasOpen) choices.push({ ...base, kind: "reopen" });
+    else if (it.status === "inbox") choices.push({ ...base, kind: "accept", reason });
+  }
+  if (patch.priority && patch.priority !== it.priority) choices.push({ ...base, kind: "priority", detail: `${base.detail} · ${PRIO[it.priority]} → ${PRIO[patch.priority]}` });
+  if (patch.due !== undefined && (patch.due || undefined) !== it.due) choices.push({ ...base, kind: "due", detail: `${base.detail} · ${it.due ?? "tarihsiz"} → ${patch.due || "tarihsiz"}` });
+  if (patch.agent && patch.agent !== it.agent && agentById(patch.agent)) choices.push({ ...base, kind: "reassign", detail: `${base.detail} · ${agentById(it.agent)?.name} → ${agentById(patch.agent)?.name}` });
+  if (patch.title?.trim() && patch.title.trim() !== it.title) choices.push({ ...base, kind: "rename", detail: `eski: ${it.title} → yeni: ${patch.title.trim()}` });
+
   if (patch.status) it.status = patch.status;
   if (patch.steps) it.steps = patch.steps.slice(0, 30).map((s) => ({ title: String(s.title).slice(0, 300), done: !!s.done }));
   if (patch.priority && [1, 2, 3, 4].includes(patch.priority)) it.priority = patch.priority;
@@ -546,7 +563,8 @@ export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "sta
   if (patch.agent && agentById(patch.agent)) it.agent = patch.agent;
   it.updatedAt = new Date().toISOString();
   await store().setKV(ITEMS_KEY, items);
-  return it;
+  const pending = choices.length ? await recordChoices(choices).catch(() => 0) : 0;
+  return { item: it, pending, explicit: choices.some((c) => c.reason) };
 }
 
 /** Otomatik tetikleme için: son düşünmeden bu yana yeterli süre geçti mi. */
@@ -810,6 +828,7 @@ export async function work(id: string, opts: { feedback?: string; budgetMs?: num
       rule = await classify(it.agent, it.title, opts.feedback, usage).catch(() => null);
       w.revisions.push({ at: new Date().toISOString(), feedback: opts.feedback, rule: rule ?? undefined });
       if (rule) await addRule(it.agent, rule);
+      await recordChoices([{ where: "beyin", kind: "fix", agent: it.agent, title: it.title, detail: itemDetail(it), reason: opts.feedback }]).catch(() => 0);
     }
   } catch (e) {
     w.status = "error";
@@ -985,5 +1004,6 @@ export async function approve(id: string) {
   it.status = "done";
   it.updatedAt = new Date().toISOString();
   await store().setKV(ITEMS_KEY, items);
+  await recordChoices([{ where: "beyin", kind: "approve", agent: it.agent, title: it.title, detail: `${itemDetail(it)}${it.work.outbound ? ` · gidecek: ${it.work.outbound}` : ""}` }]).catch(() => 0);
   return it;
 }

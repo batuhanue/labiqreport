@@ -1,5 +1,6 @@
 import { after } from "next/server";
 import { bad, handle } from "@/lib/api";
+import { LEARN_EVERY, learn } from "@/lib/learning";
 import { agentProfile, approve, capture, due, interview, state, think, updateItem, work, type InterviewTurn } from "@/lib/brain";
 import { agentById, type AgentId, type BrainItem, type ItemStatus } from "@/lib/brain-types";
 
@@ -78,12 +79,15 @@ export async function POST(req: Request) {
 
 /** { id, patch } — iş durumunu/adımlarını güncelle */
 export async function PATCH(req: Request) {
-  const b = (await req.json().catch(() => null)) as { id?: string; patch?: Partial<BrainItem> } | null;
+  const b = (await req.json().catch(() => null)) as { id?: string; patch?: Partial<BrainItem>; reason?: string } | null;
   if (!b?.id || !b.patch) return bad("Eksik bilgi");
   if (b.patch.status && !STATUSES.includes(b.patch.status)) return bad("Geçersiz durum");
   return handle(async () => {
-    const it = await updateItem(b.id!, b.patch!);
-    if (!it) return bad("İş bulunamadı", 404);
-    return { item: it };
+    const r = await updateItem(b.id!, b.patch!, { reason: b.reason?.slice(0, 400) });
+    if (!r) return bad("İş bulunamadı", 404);
+    // sebep verildiyse hemen öğren (yanıtta ne öğrendiğini göster); yoksa birikince arka planda
+    if (r.explicit) return { item: r.item, learned: (await learn({ force: true, timeout: 25000 }).catch(() => null)) ?? [] };
+    if (r.pending >= LEARN_EVERY) after(() => learn().catch(() => null));
+    return { item: r.item };
   });
 }

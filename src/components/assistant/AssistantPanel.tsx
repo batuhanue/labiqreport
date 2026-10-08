@@ -12,6 +12,7 @@ import { useTodos } from "../todos/TodoProvider";
 import { useGoogle } from "../google/GoogleProvider";
 import { Icon } from "../ui";
 import { spring } from "@/lib/motion";
+import { noteChoice } from "@/lib/learn-client";
 
 /* ------------------------------------------------------------------ bağlam */
 interface AssistantCtx {
@@ -786,6 +787,7 @@ function TaskSuggestions({ tasks }: { tasks: string[] }) {
     if (added.has(i) || !parsed[i].title) return;
     add(newTodo({ ...parsed[i] }));
     setAdded((s) => new Set(s).add(i));
+    noteChoice({ where: "asistan", kind: "todo_add", title: parsed[i].title, detail: tasks[i] });
   };
   return (
     <div className="clay-sm mt-2 rounded-[22px] p-3">

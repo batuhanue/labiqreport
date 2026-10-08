@@ -82,6 +82,14 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   nasıl yürüyor, en sık iş, iyi sonuç neye benzer, kırmızı çizgiler, kişiler/araçlar; "Atla" ve "Bitti, yaz" var), sonra
   kendi çalışma talimatını ve en sık iş için bir becerisini (adım adım) `ajan-talimatlari.md`'ye yazar ve denemen için bir
   görev önerir. Ajan kartı talimatını ve düzeltmelerden öğrendiği kuralları gösterir.
+  **Seçimlerinden öğrenir ("Seni tanıyorum"):** uygulamadaki her seçimin kaydedilir — öneriye Onayla/Gerek yok (neden:
+  "Benim işim değil", "Zaten yapıldı", "Şimdi değil", "Önemsiz" ya da kendi cümlen), öncelik/termin/ajan değişikliği,
+  teslimat onayı ve düzeltmesi, görev tamamlama/silme/odağa alma, asistan önerisini uygulama/gizleme, sohbette önerilen
+  görevi ekleme. Sebep verdiğinde beyin hemen, sebepsiz seçimlerde 5 seçim biriktikçe (ve her düşünmenin sonunda)
+  Claude seçimlerden kalıcı tercihleri çıkarıp belleğe (`gelistirme.md`, ör. "Benim işim / değil", "Öncelik ve
+  zamanlama" başlıkları) yazar; tek ve sebepsiz bir seçimden kural çıkarmaz, örüntü arar. Ajanlar, önceliklendirme ve
+  asistan son seçimlerini her istekte de görür (reddettiğin türde iş açılmaz). Beyin panelindeki "🎓 Seni tanıyorum"
+  kartı öğrenilenleri gösterir; bellekten düzenleyip silebilirsin.
   **Ekip olarak yap:** işin sahibi ajan lider olur; işi 2-4 bağımsız parçaya böler ve her parçayı uygun ajana verir,
   parçalar aynı anda çalışır (birbirine/lidere "NOT @…" bırakabilir), lider hepsini tek teslimatta birleştirir ve kim ne
   yaptı satırını ekler. Düzeltme ekibi yeniden çalıştırmaz, lider teslimatı düzeltir.

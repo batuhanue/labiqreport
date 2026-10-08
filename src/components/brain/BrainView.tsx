@@ -7,8 +7,9 @@ import { usePeriod } from "@/components/PeriodProvider";
 import { useTodos } from "@/components/todos/TodoProvider";
 import { Skeleton } from "@/components/fx";
 import { Icon, Sheet } from "@/components/ui";
-import { AGENTS, KIND_LABEL, STATUS_META, agentById, type AgentId, type BrainItem, type BrainRun, type BrainState, type ItemStatus } from "@/lib/brain-types";
+import { AGENTS, KIND_LABEL, REJECT_REASONS, STATUS_META, agentById, type Lesson, type LearningState, type AgentId, type BrainItem, type BrainRun, type BrainState, type ItemStatus } from "@/lib/brain-types";
 import { renderMd } from "@/lib/markdown";
+import { lessonToast } from "@/lib/learn-client";
 import { useBrainState } from "./useBrain";
 import { dueLabel, newTodo, PRIORITY, uid } from "@/lib/todo";
 
@@ -42,7 +43,7 @@ export function Brief({ text }: { text: string }) {
 /** Beyin sayfası: merkez + yan ajanlar, beyne yaz, bugün odak, iş panosu. */
 export default function BrainView() {
   const { toast } = usePeriod();
-  const { st, err, thinking, think, patch, runWork, approveWork, setSt, open, setOpen } = useBrainState();
+  const { st, err, thinking, think, patch, runWork, approveWork, setSt, open, setOpen, load } = useBrainState();
   const [agent, setAgent] = useState<AgentId | null>(null);
   const [mobileCol, setMobileCol] = useState<Col>("inbox");
   const [seed, setSeed] = useState<{ text: string; agent: AgentId; n: number } | null>(null);
@@ -83,6 +84,7 @@ export default function BrainView() {
         }}
       />
       {st.focus && <Focus st={st} onOpen={setOpen} />}
+      <Learning learning={st.learning} onLearned={load} />
 
       {/* pano */}
       <div className="flex items-center justify-between gap-3 px-1">
@@ -112,7 +114,7 @@ export default function BrainView() {
             <div className="space-y-2.5 lg:min-h-[120px] lg:rounded-[22px] lg:bg-track/40 lg:p-2">
               <AnimatePresence initial={false}>
                 {byCol[c].map((x) => (
-                  <Card key={x.id} x={x} onOpen={() => setOpen(x)} onApprove={() => patch(x.id, { status: "todo" })} onDismiss={() => patch(x.id, { status: "dismissed" })} />
+                  <Card key={x.id} x={x} onOpen={() => setOpen(x)} onApprove={() => patch(x.id, { status: "todo" })} onDismiss={(r) => patch(x.id, { status: "dismissed" }, r)} />
                 ))}
               </AnimatePresence>
               {!byCol[c].length && <div className="px-2 py-6 text-center text-xs font-semibold text-ink-3">{c === "inbox" ? (busy ? "Ajanlar çalışıyor…" : "Öneri yok") : "Boş"}</div>}
@@ -390,7 +392,8 @@ export function Focus({ st, onOpen }: { st: BrainState; onOpen: (x: BrainItem) =
 }
 
 // ------------------------------------------------------------------ kart
-function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () => void; onApprove: () => void; onDismiss: () => void }) {
+function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () => void; onApprove: () => void; onDismiss: (reason?: string) => void }) {
+  const [asking, setAsking] = useState(false);
   const a = agentById(x.agent)!;
   const done = x.steps.filter((s) => s.done).length;
   const overdue = x.due && x.status !== "done" && x.due < new Date().toLocaleDateString("sv-SE");
@@ -422,14 +425,19 @@ function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () =>
           {x.work?.status === "error" && <span className="text-fail">⚠ hata</span>}
         </div>
       </button>
-      {x.status === "inbox" && (
+      {x.status === "inbox" && !asking && (
         <div className="flex border-t border-line text-xs font-extrabold">
           <button onClick={onApprove} className="flex-1 py-2 text-ok hover:bg-ok/10">
             ✓ Onayla
           </button>
-          <button onClick={onDismiss} className="flex-1 border-l border-line py-2 text-ink-3 hover:bg-track">
+          <button onClick={() => setAsking(true)} className="flex-1 border-l border-line py-2 text-ink-3 hover:bg-track">
             ✕ Gerek yok
           </button>
+        </div>
+      )}
+      {x.status === "inbox" && asking && (
+        <div className="border-t border-line p-2">
+          <RejectReasons compact onPick={onDismiss} onCancel={() => setAsking(false)} />
         </div>
       )}
     </motion.div>
@@ -437,11 +445,13 @@ function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () =>
 }
 
 // ------------------------------------------------------------------ ayrıntı
-export function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: BrainItem | null; onClose: () => void; onPatch: (id: string, p: Partial<BrainItem>) => void; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string) => void }) {
+export function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: BrainItem | null; onClose: () => void; onPatch: (id: string, p: Partial<BrainItem>, reason?: string) => void; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string) => void }) {
   const { add } = useTodos();
   const { toast } = usePeriod();
   const { ask } = useAssistant();
   const a = x ? agentById(x.agent) : null;
+  const [asking, setAsking] = useState(false);
+  useEffect(() => setAsking(false), [x?.id]);
   const toTodo = () => {
     if (!x) return;
     const id = uid();
@@ -579,19 +589,128 @@ export function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: Brain
             >
               ✨ Asistanla planla
             </button>
-            <button
-              onClick={() => {
-                onPatch(x.id, { status: "dismissed" });
+            {x.status !== "dismissed" && x.status !== "done" && (
+              <button onClick={() => setAsking((v) => !v)} className="rounded-full bg-track px-4 py-2 text-sm font-bold text-ink-2">
+                Gerek yok
+              </button>
+            )}
+          </div>
+          {asking && (
+            <RejectReasons
+              onPick={(r) => {
+                onPatch(x.id, { status: "dismissed" }, r);
                 onClose();
               }}
-              className="rounded-full bg-track px-4 py-2 text-sm font-bold text-ink-2"
-            >
-              Gerek yok
-            </button>
-          </div>
+              onCancel={() => setAsking(false)}
+            />
+          )}
         </div>
       )}
     </Sheet>
+  );
+}
+
+// ------------------------------------------------------------------ seçimlerden öğrenme
+/** "Gerek yok" denince neden: beyin bundan öğrenir (benim işim değil → bu tür iş bir daha açılmaz). */
+export function RejectReasons({ onPick, onCancel, compact }: { onPick: (reason?: string) => void; onCancel: () => void; compact?: boolean }) {
+  const [other, setOther] = useState("");
+  return (
+    <div className={compact ? "" : "clay-sm rounded-2xl p-3"}>
+      <div className="mb-1.5 text-[11px] font-extrabold text-ink-3">Neden? Bundan öğreneceğim</div>
+      <div className="flex flex-wrap gap-1.5">
+        {REJECT_REASONS.map((r) => (
+          <button key={r} onClick={() => onPick(r)} className="rounded-full bg-track px-2.5 py-1 text-[11px] font-extrabold text-ink-2 hover:bg-blue hover:text-white">
+            {r}
+          </button>
+        ))}
+      </div>
+      <form
+        className="mt-1.5 flex gap-1.5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (other.trim()) onPick(other.trim());
+        }}
+      >
+        <input value={other} onChange={(e) => setOther(e.target.value)} placeholder={compact ? "Başka sebep…" : "Başka bir sebep… (ör. bu Tuğrul'un işi)"} className="field min-w-0 flex-1 py-1.5 text-xs" />
+        {other.trim() ? (
+          <button className="rounded-full bg-blue px-3 text-[11px] font-extrabold text-white">Gönder</button>
+        ) : (
+          <button type="button" onClick={() => onPick()} className="rounded-full px-2 text-[11px] font-bold text-ink-3 hover:text-ink">
+            Sebepsiz
+          </button>
+        )}
+        <button type="button" onClick={onCancel} className="px-1 text-[11px] font-bold text-ink-3 hover:text-ink" aria-label="Vazgeç">
+          ✕
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/** Seni tanıyorum: seçimlerden öğrendikleri (belleğe yazılanlar) ve bekleyen seçimler. */
+export function Learning({ learning, onLearned, compact }: { learning?: LearningState; onLearned?: () => void; compact?: boolean }) {
+  const { toast } = usePeriod();
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  if (!learning || (!learning.total && !learning.log.length)) {
+    return (
+      <div className={`clay-sm rounded-2xl ${compact ? "p-3 text-xs" : "p-4 text-sm"} text-ink-3`}>
+        🎓 <b className="text-ink-2">Seni tanıyorum</b> — önerilere verdiğin her evet/hayır, öncelik ve ajan değişikliği, teslimat düzeltmesi buraya düşer; bunlardan
+        tercihlerini öğrenip belleğe yazarım.
+      </div>
+    );
+  }
+  const lessons = learning.log.flatMap((g) => g.lessons.map((l) => ({ ...l, at: g.at })));
+  const shown = open ? lessons.slice(0, 12) : lessons.slice(0, compact ? 2 : 3);
+  const now = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch("/api/learning", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "learn" }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+      toast(lessonToast(j.learned as Lesson[]) ?? "Seçimleri inceledim; yeni bir kalıcı tercih çıkmadı");
+      onLearned?.();
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={`clay-sm rounded-2xl ${compact ? "p-3" : "p-4"}`}>
+      <div className="flex items-center gap-2">
+        <span className={compact ? "text-lg" : "text-xl"}>🎓</span>
+        <div className="min-w-0 flex-1">
+          <div className={`${compact ? "text-[11px] uppercase tracking-[0.16em]" : "text-sm"} font-extrabold`}>Seni tanıyorum</div>
+          <div className="text-[11px] font-semibold text-ink-3">
+            {learning.total} seçim · {lessons.length} tercih öğrenildi{learning.pending ? ` · ${learning.pending} seçim sırada` : ""}
+          </div>
+        </div>
+        {learning.pending > 0 && (
+          <button onClick={now} disabled={busy} className="shrink-0 rounded-full bg-blue px-3 py-1 text-[11px] font-extrabold text-white disabled:opacity-60">
+            {busy ? "Öğreniyor…" : "Şimdi öğren"}
+          </button>
+        )}
+      </div>
+      {shown.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {shown.map((l, i) => (
+            <li key={i} className="flex gap-1.5 text-xs leading-snug text-ink-2">
+              <span className="shrink-0 text-ink-3">•</span>
+              <span>
+                {l.entry} <span className="text-[10px] font-bold text-ink-3">· {l.topic}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {lessons.length > shown.length || open ? (
+        <button onClick={() => setOpen((v) => !v)} className="mt-1.5 text-[11px] font-extrabold text-blue">
+          {open ? "Daha az" : `Tümü (${lessons.length})`}
+        </button>
+      ) : null}
+      {!compact && <div className="mt-1.5 text-[10px] font-semibold text-ink-3">Belleğe (gelistirme.md) yazılır; asistanın bilgi dosyalarından düzenleyip silebilirsin.</div>}
+    </div>
   );
 }
 

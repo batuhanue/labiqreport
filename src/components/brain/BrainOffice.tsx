@@ -10,7 +10,7 @@ import { AGENTS, agentById, STATUS_META, type AgentId, type BrainItem } from "@/
 import { AREAS } from "@/lib/checklist";
 import { areaProgress, deadlineInfo } from "@/lib/period";
 import { OFFICE_DARK, OFFICE_LIGHT, type OfficePal } from "../office/Furniture";
-import { AgentPanel, Brief, Capture, ItemSheet } from "./BrainView";
+import { AgentPanel, Brief, Capture, ItemSheet, Learning } from "./BrainView";
 import { BrainScene, type CameraApi, type Screen } from "./BrainScene";
 import { DEPTS, deptById } from "./layout";
 import { useBrainState } from "./useBrain";
@@ -384,6 +384,7 @@ export default function BrainOffice() {
               ) : (
                 <>
                   <BrainCard brain={brain} />
+                  <Learning compact learning={st?.learning} onLearned={brain.load} />
                   <TaskList title="Görev durumu" items={st?.items ?? []} onPick={setOpen} filters />
                 </>
               )}

@@ -213,6 +213,9 @@ export async function buildContext(viewPeriod?: string | null, opts: { google?: 
     for (const x of summaries.slice(0, 12)) L.push(`| ${periodLabel(x.period)} | ${x.status} | ${x.bursaOk}/48 | ${x.basaksehirOk}/48 | ${x.fails} | ${x.openActions} |`);
   }
   L.push("", todoSection(todos, today));
+  // son seçimler (öğrenme modülü assistant.ts'i içe aktarır; döngü olmasın diye geç yüklenir)
+  const choices = await import("./learning").then((m) => m.recentChoices({ limit: 12 })).catch(() => "");
+  if (choices) L.push("", "### Batuhan'ın son seçimleri (önerilere evet/hayır, öncelik, görev tamamlama — tercihlerini gösterir)", choices);
   if (opts.google !== false) {
     const g = await getSnapshot().catch(() => null);
     if (g) L.push("", googleSection(g));
@@ -252,6 +255,8 @@ cuma 11:00 Cuma toplantısı tek sayfa özeti hazırla #toplantı
 - BELLEK (remember aracı): Sen Batuhan'la birlikte öğrenen bir asistansın; BELLEK bölümü (gelistirme.md) önceki sohbetlerde öğrendiklerindir, onu bildiğin gibi kullan. Sohbette kalıcı ve yeniden işe yarayacak yeni bir bilgi ortaya çıkınca — bir sürecin/çalışmanın mantığı (ör. şirketin hakediş hesabı nasıl yapılıyor), şirket kuralı, kişi-rol bilgisi, Batuhan'ın tercihi ya da çalışma biçimi, alınmış bir karar, bir analizin vardığı genel sonuç — remember aracıyla belleğe yaz. Batuhan "belleğe ekle / bunu hatırla / öğren" derse mutlaka yaz.
   Kısa, kendi başına anlaşılır, genelleştirilmiş maddeler yaz (kim/ne/nasıl/neden); konu başlığı (topic) olarak kalıcı bir başlık seç ve BELLEK'teki mevcut başlığı yeniden kullan. Bilgi değiştiyse eski maddeyi replaces ile güncelle.
   Yazma: anlık durum verisi (bugünkü işaretler, bu ayın yüzdeleri, okunmamış e-posta), zaten bilgi dosyalarında olan bilgi, parola/anahtar/kişisel hassas veri, tahmin ya da doğrulanmamış çıkarım.
+  Batuhan bir önerine evet ya da hayır dediğinde, iki seçenekten birini seçtiğinde ya da yaptığın bir şeyi düzelttiğinde bunu bir tercih sinyali say: arkasında kalıcı bir tercih varsa (ör. "bu tür işler benim işim değil", "özetleri madde madde isterim", "X konusunu Y'ye yönlendiririm") remember ile yaz. Sebebi belli değilse ve tercih önemli görünüyorsa kısaca sor ("Bu tür işleri bundan sonra hiç önermeyeyim mi?").
+  CANLI VERİ'deki "son seçimleri" bölümü Batuhan'ın uygulamadaki seçimleridir; önerilerini buna göre ayarla (reddettiği türde öneriyi tekrarlama).
   Belleğe yazdığını ayrıca belirtme; uygulama yanıtın sonuna kendisi ekler.
 - Batuhan soru değil bilgi, kural ya da düzeltme verirse (ör. "X verisi ayın ilk 3 gününe kadar yüklenmeli, yüklenmediyse Y'ye sorulur"): arşivde kanıt arama. Bilgiyi kısaca onayla, belleğe yaz; gerekiyorsa CANLI VERİ'ye göre bunun bugün için ne anlama geldiğini (ör. bu ayın yüklemesi yapıldı mı, kime sorulmalı) ve 1–2 öneriyi ekle.
 - Araç kullanırken ne aradığını anlatma ("arayacağım", "devam ediyorum" yazma). Bir soruda en fazla 4 arama yap; aramalar bitince tek, derli toplu nihai yanıt ver. Yeterli kayıt bulamazsan bulduklarınla yanıtla ve neyin bulunamadığını söyle. Yanıtı asla yarım bir eylem cümlesiyle bitirme.

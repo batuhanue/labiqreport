@@ -1,7 +1,14 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { noteChoice } from "@/lib/learn-client";
 import { emptyStore, nextDue, type Todo, type TodoStore } from "@/lib/todo";
+
+/** Görevin bağlamı (öğrenme için): öncelik, termin, kişi, etiket, nereden geldiği */
+export const todoDetail = (t: Todo) =>
+  [`P${t.priority}`, t.due && `termin ${t.due}`, t.person && `kişi: ${t.person}`, t.areaCode, t.tags.length && t.tags.map((x) => `#${x}`).join(" "), t.source?.startsWith("brain:") ? "beyinden" : t.source ? "asistan önerisinden" : "elle eklendi"]
+    .filter(Boolean)
+    .join(" · ");
 
 interface Ctx {
   store: TodoStore;
@@ -85,7 +92,9 @@ export function TodoProvider({ children }: { children: React.ReactNode }) {
     [mutate],
   );
   const toggle = useCallback(
-    (id: string) =>
+    (id: string) => {
+      const cur = ref.current.todos.find((x) => x.id === id);
+      if (cur && !cur.done) noteChoice({ where: "gorevler", kind: "todo_done", title: cur.title, detail: todoDetail(cur) });
       mutate((s) => {
         const t = s.todos.find((x) => x.id === id);
         if (!t) return s;
@@ -96,12 +105,14 @@ export function TodoProvider({ children }: { children: React.ReactNode }) {
           return { ...s, todos: [next, ...s.todos.map((x) => (x.id === id ? { ...x, done: true, doneAt: now, recur: undefined, updatedAt: now } : x))] };
         }
         return { ...s, todos: s.todos.map((x) => (x.id === id ? { ...x, done: !x.done, doneAt: !x.done ? now : undefined, updatedAt: now } : x)) };
-      }),
+      });
+    },
     [mutate],
   );
   const remove = useCallback(
     (id: string) => {
       const t = ref.current.todos.find((x) => x.id === id);
+      if (t && !t.done) noteChoice({ where: "gorevler", kind: "todo_delete", title: t.title, detail: todoDetail(t) });
       mutate((s) => ({ ...s, todos: s.todos.filter((x) => x.id !== id) }));
       return t;
     },
