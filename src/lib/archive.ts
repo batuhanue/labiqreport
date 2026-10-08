@@ -80,8 +80,22 @@ async function writeAll(items: ArchiveItem[]) {
 }
 
 // ------------------------------------------------------------------ API
-export async function upsertItems(items: ArchiveItem[]) {
-  if (!items.length) return;
+/**
+ * Postgres metin/jsonb alanları NUL (\u0000) karakterini ve eşi olmayan UTF-16 vekillerini kabul etmez
+ * ("unsupported Unicode escape sequence"); bazı Drive/Office dosyalarının metninde bulunur. Kayıttan önce temizlenir.
+ */
+const BAD_CHARS = /\u0000|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+const cleanStr = (s: string) => s.replace(BAD_CHARS, "");
+function clean<T>(v: T): T {
+  if (typeof v === "string") return cleanStr(v) as T;
+  if (Array.isArray(v)) return v.map(clean) as T;
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clean(x)])) as T;
+  return v;
+}
+
+export async function upsertItems(raw: ArchiveItem[]) {
+  if (!raw.length) return;
+  const items = raw.map(clean);
   if (!url) {
     const all = await readAll();
     const idx = new Map(all.map((x, i) => [`${x.source}:${x.id}`, i]));
@@ -94,17 +108,33 @@ export async function upsertItems(items: ArchiveItem[]) {
   }
   const sql = pg();
   await ready;
-  // tek istekte toplu ekleme (jsonb_to_recordset)
-  for (let i = 0; i < items.length; i += 100) {
-    const chunk = items.slice(i, i + 100).map((x) => ({ ...x, meta: x.meta ?? null, link: x.link ?? null, norm: normOf(x) }));
-    await sql.query(
+  type Row = ArchiveItem & { norm: string };
+  const insert = (rows: Row[]) =>
+    sql.query(
       `INSERT INTO google_archive (source, id, ts, title, who, body, link, meta, norm)
        SELECT source, id, ts, title, who, body, link, meta, norm
        FROM jsonb_to_recordset($1::jsonb) AS r(source text, id text, ts timestamptz, title text, who text, body text, link text, meta jsonb, norm text)
        ON CONFLICT (source, id) DO UPDATE SET ts = EXCLUDED.ts, title = EXCLUDED.title, who = EXCLUDED.who, body = EXCLUDED.body,
          link = EXCLUDED.link, meta = EXCLUDED.meta, norm = EXCLUDED.norm`,
-      [JSON.stringify(chunk)],
+      [JSON.stringify(rows)],
     );
+  // tek istekte toplu ekleme (jsonb_to_recordset)
+  for (let i = 0; i < items.length; i += 100) {
+    const chunk = items.slice(i, i + 100).map((x) => ({ ...x, meta: x.meta ?? null, link: x.link ?? null, norm: normOf(x) })) as Row[];
+    try {
+      await insert(chunk);
+    } catch (e) {
+      // bir kayıt yüzünden bütün parti takılmasın: tek tek dene, yazılamayanı metinsiz kaydet
+      if (chunk.length === 1 && chunk[0].body === "") throw e;
+      console.error("[archive] toplu kayıt başarısız, tek tek deneniyor:", e instanceof Error ? e.message : e);
+      for (const row of chunk) {
+        try {
+          await insert([row]);
+        } catch {
+          await insert([{ ...row, body: "", norm: normOf({ ...row, body: "" }), meta: { ...(row.meta ?? {}), error: "metin kaydedilemedi" } }]).catch(() => {});
+        }
+      }
+    }
   }
 }
 

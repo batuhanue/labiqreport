@@ -72,6 +72,13 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   **Düzeltmelerden öğrenir:** teslimatı "Düzelt: …" ile geri gönder; Claude düzeltmenin bu işe özel mi kalıcı tercih mi
   olduğuna karar verir, kalıcıysa `ajan-kurallari.md` bilgi dosyasında o ajanın başlığı altına yazar ve ajan her işte uyar
   (dosyadan silersen unutur). Görev çubuğunda ajanı kendin seçebilir ya da "Beyin seçsin" diyebilirsin.
+  **Kurulum görüşmesi:** ajan grafiğinde bir ajana tıkla → "🎤 Kurulum görüşmesi". Ajan 5 kısa soru sorar (burada iş
+  nasıl yürüyor, en sık iş, iyi sonuç neye benzer, kırmızı çizgiler, kişiler/araçlar; "Atla" ve "Bitti, yaz" var), sonra
+  kendi çalışma talimatını ve en sık iş için bir becerisini (adım adım) `ajan-talimatlari.md`'ye yazar ve denemen için bir
+  görev önerir. Ajan kartı talimatını ve düzeltmelerden öğrendiği kuralları gösterir.
+  **Ekip olarak yap:** işin sahibi ajan lider olur; işi 2-4 bağımsız parçaya böler ve her parçayı uygun ajana verir,
+  parçalar aynı anda çalışır (birbirine/lidere "NOT @…" bırakabilir), lider hepsini tek teslimatta birleştirir ve kim ne
+  yaptı satırını ekler. Düzeltme ekibi yeniden çalıştırmaz, lider teslimatı düzeltir.
 - **Google Workspace (Takvim, Gmail, Chat, Meet, Drive):** "Google" sayfasından şirket hesabı tek tıkla bağlanır (salt okunur).
   Takvim (sıradaki toplantı + Meet'e katıl), gelen kutusu (okunmamış/önemli), Chat alanları ve DM'ler, Meet toplantı
   kayıtları (katılımcılar, transkript/kayıt bağlantıları) görünür; her öğeden tek tuşla görev oluşturulur.

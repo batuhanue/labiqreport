@@ -47,6 +47,7 @@ export default function BrainView() {
   const [open, setOpen] = useState<BrainItem | null>(null);
   const [agent, setAgent] = useState<AgentId | null>(null);
   const [mobileCol, setMobileCol] = useState<Col>("inbox");
+  const [seed, setSeed] = useState<{ text: string; agent: AgentId; n: number } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -103,12 +104,12 @@ export default function BrainView() {
 
   /** ajan işi yapar (teslimat); feedback ile düzeltir */
   const runWork = useCallback(
-    async (id: string, feedback?: string) => {
+    async (id: string, feedback?: string, team?: boolean) => {
       const mark = (x: BrainItem): BrainItem => ({ ...x, status: x.status === "inbox" || x.status === "todo" ? "doing" : x.status, work: { status: "running", output: x.work?.output ?? "", used: [], revisions: x.work?.revisions ?? [], at: new Date().toISOString() } });
       setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? mark(x) : x)) } : s));
       setOpen((o) => (o && o.id === id ? mark(o) : o));
       try {
-        const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "work", id, feedback }) });
+        const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "work", id, feedback, team }) });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
         const item = j.item as BrainItem;
@@ -161,7 +162,9 @@ export default function BrainView() {
   return (
     <div className="space-y-5">
       <Hero st={st} busy={busy} onThink={think} agent={agent} onAgent={setAgent} />
+      <AnimatePresence>{agent && <AgentPanel key={agent} agent={agent} onTry={(t) => setSeed((x) => ({ text: t, agent, n: (x?.n ?? 0) + 1 }))} onClose={() => setAgent(null)} />}</AnimatePresence>
       <Capture
+        seed={seed}
         onDone={(s, newId, doNow) => {
           setSt(s);
           const it = newId ? s.items.find((x) => x.id === newId) : undefined;
@@ -229,6 +232,13 @@ function Hero({ st, busy, onThink, agent, onAgent }: { st: BrainState; busy: boo
     return c;
   }, [st.items]);
   const last = st.runs[0];
+  // şu an çalışan ajanlar (tek iş ya da ekip parçası)
+  const active = new Set<string>();
+  for (const x of st.items) {
+    if (x.work?.status !== "running") continue;
+    active.add(x.agent);
+    for (const p of x.work.team?.pieces ?? []) if (p.status === "running") active.add(p.agent);
+  }
   const inbox = st.items.filter((x) => x.status === "inbox").length;
   const todo = st.items.filter((x) => x.status === "todo" || x.status === "doing").length;
   const todayKey = new Date().toLocaleDateString("sv-SE");
@@ -316,7 +326,7 @@ function Hero({ st, busy, onThink, agent, onAgent }: { st: BrainState; busy: boo
             >
               <span className="relative grid h-9 w-9 place-items-center rounded-xl text-lg" style={{ background: `${a.color}22` }}>
                 {a.emoji}
-                {busy && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-ping rounded-full" style={{ background: a.color }} />}
+                {(busy || active.has(a.id)) && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-ping rounded-full" style={{ background: a.color }} />}
               </span>
               <span>
                 <span className="block whitespace-nowrap text-xs font-extrabold">{a.name}</span>
@@ -356,9 +366,16 @@ function Hero({ st, busy, onThink, agent, onAgent }: { st: BrainState; busy: boo
 }
 
 // ------------------------------------------------------------------ görev çubuğu
-function Capture({ onDone }: { onDone: (s: BrainState, newId: string | undefined, doNow: boolean) => void }) {
+function Capture({ onDone, seed }: { onDone: (s: BrainState, newId: string | undefined, doNow: boolean) => void; seed: { text: string; agent: AgentId; n: number } | null }) {
   const [text, setText] = useState("");
   const [agent, setAgent] = useState<AgentId | "">("");
+  const ref = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (!seed) return;
+    setText(seed.text);
+    setAgent(seed.agent);
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [seed]);
   const [doNow, setDoNow] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -381,7 +398,7 @@ function Capture({ onDone }: { onDone: (s: BrainState, newId: string | undefined
     }
   };
   return (
-    <form onSubmit={submit} className="clay p-2.5">
+    <form ref={ref} onSubmit={submit} className="clay p-2.5">
       <div className="flex flex-wrap items-center gap-2 px-1 pb-2">
         <select value={agent} onChange={(e) => setAgent(e.target.value as AgentId | "")} className="clay-sm rounded-full bg-transparent px-3 py-1.5 text-xs font-extrabold outline-none" aria-label="Ajan">
           <option value="">🧠 Beyin seçsin</option>
@@ -508,7 +525,7 @@ function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () =>
 }
 
 // ------------------------------------------------------------------ ayrıntı
-function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: BrainItem | null; onClose: () => void; onPatch: (id: string, p: Partial<BrainItem>) => void; onWork: (id: string, feedback?: string) => void; onApprove: (id: string) => void }) {
+function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: BrainItem | null; onClose: () => void; onPatch: (id: string, p: Partial<BrainItem>) => void; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string) => void }) {
   const { add } = useTodos();
   const { toast } = usePeriod();
   const { ask } = useAssistant();
@@ -712,7 +729,7 @@ function Runs({ runs }: { runs: BrainRun[] }) {
 }
 
 // ------------------------------------------------------------------ teslimat
-function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: string, feedback?: string) => void; onApprove: (id: string) => void }) {
+function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string) => void }) {
   const { toast } = usePeriod();
   const [fb, setFb] = useState("");
   const a = agentById(x.agent)!;
@@ -721,15 +738,24 @@ function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: stri
   const mailLink = x.sources.find((s) => s.ref?.source === "gmail" && s.link)?.link;
   if (!w) {
     return (
-      <button onClick={() => onWork(x.id)} className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed px-4 py-3 text-left hover:bg-track/50" style={{ borderColor: `${a.color}66` }}>
-        <span className="grid h-10 w-10 place-items-center rounded-xl text-xl" style={{ background: `${a.color}22` }}>
-          {a.emoji}
-        </span>
-        <span>
-          <span className="block font-extrabold">🤖 {a.name} bu işi yapsın</span>
-          <span className="block text-xs text-ink-3">Kaynakları ve arşivi okuyup teslimatı yazar (taslak, özet, hazırlık notu). Dışarıya bir şey göndermez.</span>
-        </span>
-      </button>
+      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+        <button onClick={() => onWork(x.id)} className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed px-4 py-3 text-left hover:bg-track/50" style={{ borderColor: `${a.color}66` }}>
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-xl" style={{ background: `${a.color}22` }}>
+            {a.emoji}
+          </span>
+          <span>
+            <span className="block font-extrabold">🤖 {a.name} bu işi yapsın</span>
+            <span className="block text-xs text-ink-3">Kaynakları ve arşivi okuyup teslimatı yazar (taslak, özet, hazırlık notu). Dışarıya bir şey göndermez.</span>
+          </span>
+        </button>
+        <button onClick={() => onWork(x.id, undefined, true)} className="flex items-center gap-2 rounded-2xl border-2 border-dashed border-[#8b5cf6]/50 px-4 py-3 text-left hover:bg-track/50" title="Lider işi 2-4 parçaya böler, ajanlar aynı anda çalışır, lider birleştirir">
+          <span className="text-xl">👥</span>
+          <span>
+            <span className="block whitespace-nowrap font-extrabold">Ekip olarak yap</span>
+            <span className="block text-xs text-ink-3">2–4 ajan aynı anda</span>
+          </span>
+        </button>
+      </div>
     );
   }
   if (w.status === "running") {
@@ -737,9 +763,9 @@ function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: stri
       <div className="rounded-2xl p-4" style={{ background: `${a.color}14` }}>
         <div className="flex items-center gap-2 font-extrabold">
           <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="inline-block h-4 w-4 rounded-full border-2 border-blue border-t-transparent" />
-          {a.name} çalışıyor…
+          {w.team ? `Ekip çalışıyor — lider ${a.name}` : `${a.name} çalışıyor…`}
         </div>
-        <div className="mt-1 text-xs text-ink-3">Kaynakları okuyor, gerekirse arşivde arıyor. 15–40 sn sürebilir.</div>
+        {w.team ? <TeamPieces team={w.team} /> : <div className="mt-1 text-xs text-ink-3">Kaynakları okuyor, gerekirse arşivde arıyor. 15–40 sn sürebilir.</div>}
       </div>
     );
   }
@@ -762,6 +788,12 @@ function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: stri
         <div className="px-4 py-3 text-sm text-fail">⚠ {w.error}</div>
       ) : (
         <div className="md max-h-[50vh] overflow-y-auto bg-card px-4 py-3 text-[14.5px] leading-relaxed" dangerouslySetInnerHTML={{ __html: html }} />
+      )}
+      {w.team && (
+        <details className="border-t border-line bg-card px-4 py-2 text-xs">
+          <summary className="cursor-pointer font-bold text-ink-2">👥 Ekip: {w.team.pieces.map((p) => agentById(p.agent)?.emoji).join(" ")} — parçalar ve notlar</summary>
+          <TeamPieces team={w.team} full />
+        </details>
       )}
       {w.used.length > 0 && (
         <details className="border-t border-line bg-card px-4 py-2 text-xs text-ink-3">
@@ -822,5 +854,185 @@ function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: stri
         </button>
       </form>
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ ekip parçaları
+function TeamPieces({ team, full }: { team: NonNullable<NonNullable<BrainItem["work"]>["team"]>; full?: boolean }) {
+  return (
+    <div className="mt-2 space-y-2">
+      {team.pieces.map((p, i) => {
+        const a = agentById(p.agent)!;
+        return (
+          <div key={i} className="rounded-xl bg-card/80 p-2.5">
+            <div className="flex items-center gap-2 text-xs font-extrabold">
+              <span>{a.emoji}</span>
+              <span>{a.name}</span>
+              {p.agent === team.lead && <span className="rounded-full bg-[#8b5cf6]/15 px-1.5 text-[10px] text-[#8b5cf6]">lider</span>}
+              <span className={`ml-auto ${p.status === "running" ? "animate-pulse text-blue" : p.status === "error" ? "text-fail" : "text-ok"}`}>
+                {p.status === "running" ? "çalışıyor…" : p.status === "error" ? "hata" : `✓ ${p.ms ? `${Math.round(p.ms / 1000)} sn` : ""}`}
+              </span>
+            </div>
+            <div className="mt-0.5 text-xs text-ink-2">{p.task}</div>
+            {full && p.output && <div className="mt-1.5 whitespace-pre-wrap rounded-lg bg-track/60 p-2 text-xs leading-relaxed">{p.output}</div>}
+          </div>
+        );
+      })}
+      {full && team.notes.length > 0 && (
+        <div className="space-y-1">
+          {team.notes.map((n, i) => (
+            <div key={i} className="text-xs">
+              💬 <b>{agentById(n.from)?.name}</b> → {n.to}: {n.text}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ ajan kartı + kurulum görüşmesi
+function AgentPanel({ agent, onTry, onClose }: { agent: AgentId; onTry: (task: string) => void; onClose: () => void }) {
+  const a = agentById(agent)!;
+  const [profile, setProfile] = useState<{ guide: string; rules: string } | null>(null);
+  const [talk, setTalk] = useState<{ turns: { q: string; a: string }[]; q: string | null; step: number; busy: boolean; result?: { brief: string; skill: { name: string; when: string; steps: string[]; format: string }; tryTask: string } } | null>(null);
+  const [answer, setAnswer] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const loadProfile = useCallback(() => {
+    fetch(`/api/brain?agent=${agent}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => setProfile(j.profile ?? { guide: "", rules: "" }))
+      .catch(() => setProfile({ guide: "", rules: "" }));
+  }, [agent]);
+  useEffect(loadProfile, [loadProfile]);
+
+  const ask = async (turns: { q: string; a: string }[]) => {
+    setErr(null);
+    setTalk((t) => ({ turns, q: null, step: turns.length + 1, busy: true, result: t?.result }));
+    try {
+      const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "interview", agent, turns }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+      if (j.done) {
+        setTalk({ turns, q: null, step: turns.length, busy: false, result: j });
+        loadProfile();
+      } else setTalk({ turns, q: j.question, step: j.step, busy: false });
+    } catch (e) {
+      setErr((e as Error).message);
+      setTalk((t) => (t ? { ...t, busy: false } : t));
+    }
+  };
+  const reply = (text: string) => {
+    if (!talk?.q) return;
+    const turns = [...talk.turns, { q: talk.q, a: text }];
+    setAnswer("");
+    ask(turns);
+  };
+  const guideHtml = useMemo(() => (profile?.guide ? renderMd(profile.guide) : ""), [profile]);
+
+  return (
+    <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="clay overflow-hidden">
+      <div className="flex items-start gap-3 p-4" style={{ background: `${a.color}14` }}>
+        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl text-2xl" style={{ background: `${a.color}26` }}>
+          {a.emoji}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-lg font-extrabold leading-tight">{a.name}</div>
+          <div className="text-xs text-ink-2">
+            {a.source} · {a.role}
+          </div>
+        </div>
+        {!talk && (
+          <button onClick={() => ask([])} className="shrink-0 rounded-full bg-blue px-4 py-2 text-xs font-extrabold text-white">
+            🎤 {profile?.guide ? "Yeniden görüş" : "Kurulum görüşmesi"}
+          </button>
+        )}
+        <button onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-black/5 dark:hover:bg-white/10" aria-label="Kapat">
+          <Icon name="close" size={16} />
+        </button>
+      </div>
+
+      {talk ? (
+        <div className="space-y-3 p-4">
+          <div className="text-[11px] font-extrabold uppercase tracking-wider text-ink-3">
+            Kurulum görüşmesi · {talk.result ? "tamamlandı" : `soru ${Math.min(talk.step, 5)}/5`}
+          </div>
+          {talk.turns.map((t, i) => (
+            <div key={i} className="space-y-1.5">
+              <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-track px-3.5 py-2 text-sm">
+                {a.emoji} {t.q}
+              </div>
+              <div className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-blue px-3.5 py-2 text-sm text-white">{t.a}</div>
+            </div>
+          ))}
+          {talk.busy && <div className="animate-pulse text-sm text-ink-3">{a.emoji} {talk.turns.length >= 5 || /^(bitti|tamam|yeter)/i.test(talk.turns.at(-1)?.a ?? "") ? "talimatını ve becerisini yazıyor…" : "düşünüyor…"}</div>}
+          {talk.q && !talk.busy && (
+            <>
+              <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-track px-3.5 py-2 text-sm">
+                {a.emoji} {talk.q}
+              </div>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (answer.trim()) reply(answer.trim());
+                }}
+                className="flex gap-2"
+              >
+                <input autoFocus value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Cevabın…" className="min-w-0 flex-1 rounded-full bg-track px-4 py-2 text-sm outline-none" />
+                <button disabled={!answer.trim()} className="rounded-full bg-blue px-4 py-2 text-xs font-extrabold text-white disabled:opacity-40">
+                  Gönder
+                </button>
+              </form>
+              <div className="flex gap-2 text-xs font-bold">
+                <button onClick={() => reply("(atla)")} className="rounded-full bg-track px-3 py-1.5">
+                  Atla
+                </button>
+                {talk.turns.length > 0 && (
+                  <button onClick={() => reply("bitti")} className="rounded-full bg-track px-3 py-1.5">
+                    Bitti, yaz
+                  </button>
+                )}
+                <button onClick={() => setTalk(null)} className="rounded-full px-3 py-1.5 text-ink-3">
+                  İptal
+                </button>
+              </div>
+            </>
+          )}
+          {talk.result && (
+            <div className="space-y-2 rounded-2xl bg-tint-info p-3 text-sm">
+              <div className="font-extrabold">✍️ Yazdım: talimatım ve “{talk.result.skill.name}” becerim (ajan-talimatlari.md)</div>
+              <div className="text-xs text-ink-2">Bundan sonra her işte bunlara uyacağım. Bilgi dosyaları panelinden düzenleyebilirsin.</div>
+              <button
+                onClick={() => {
+                  onTry(talk.result!.tryTask);
+                  setTalk(null);
+                }}
+                className="rounded-full bg-blue px-3 py-1.5 text-xs font-extrabold text-white"
+              >
+                ▶ Dene: {talk.result.tryTask}
+              </button>
+            </div>
+          )}
+          {err && <div className="text-xs font-semibold text-fail">{err}</div>}
+        </div>
+      ) : (
+        <div className="grid gap-3 p-4 md:grid-cols-2">
+          <div>
+            <div className="mb-1 text-[11px] font-extrabold uppercase tracking-wider text-ink-3">Talimat ve beceri</div>
+            {profile === null ? (
+              <div className="text-xs text-ink-3">Yükleniyor…</div>
+            ) : profile.guide ? (
+              <div className="md max-h-64 overflow-y-auto text-[13px] leading-relaxed" dangerouslySetInnerHTML={{ __html: guideHtml }} />
+            ) : (
+              <div className="text-xs text-ink-2">Henüz yok. “Kurulum görüşmesi” ile 5 kısa soruya cevap ver; ajan senin işini nasıl yaptığını öğrenip kendi talimatını ve becerisini yazar.</div>
+            )}
+          </div>
+          <div>
+            <div className="mb-1 text-[11px] font-extrabold uppercase tracking-wider text-ink-3">Düzeltmelerinden öğrendikleri</div>
+            {profile?.rules ? <div className="whitespace-pre-wrap text-[13px] leading-relaxed">{profile.rules}</div> : <div className="text-xs text-ink-2">Henüz kural yok. Teslimatlarını “Düzelt: …” ile geri gönderdiğinde kalıcı tercihler burada birikir.</div>}
+          </div>
+        </div>
+      )}
+    </motion.div>
   );
 }

@@ -10,7 +10,7 @@ import { store } from "./db";
 import { getSnapshot } from "./google";
 import { areaProgress, deadlineInfo, normalizePeriod, periodLabel } from "./period";
 import { emptyStore, type TodoStore } from "./todo";
-import { agentById, type AgentId, type AgentRun, type BrainFocus, type BrainItem, type BrainRun, type BrainState, type ItemSource, type ItemWork, type Signal } from "./brain-types";
+import { AGENTS, agentById, type AgentId, type AgentRun, type BrainFocus, type BrainItem, type BrainRun, type BrainState, type ItemSource, type ItemWork, type Signal, type TeamPiece, type TeamRun } from "./brain-types";
 
 /*
  * Beyin döngüsü (her "düşünme"):
@@ -620,11 +620,153 @@ async function classify(agent: AgentId, title: string, feedback: string, usage: 
   return p?.standing && p.rule.trim() ? p.rule.trim() : null;
 }
 
-export async function work(id: string, opts: { feedback?: string; budgetMs?: number } = {}): Promise<BrainItem | null> {
+/** Bir ajanın araçlarla (arşiv, Drive) çalışma döngüsü; son metni döndürür. */
+async function agentLoop(system: Anthropic.TextBlockParam[], content: string, usage: Usage, deadline: number, used: string[], maxRounds = 6) {
+  const left = () => deadline - Date.now();
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content }];
+  let text = "";
+  for (let round = 0; round < maxRounds; round++) {
+    const res = await claude().messages.create(
+      { model: ASSISTANT_MODEL, max_tokens: 8000, system, tools: ARCHIVE_TOOLS, output_config: { effort: "medium" }, messages },
+      { timeout: Math.max(6000, left() - 2000) },
+    );
+    addUsage(usage, res);
+    text = res.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("\n").trim() || text;
+    const calls = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    if (res.stop_reason !== "tool_use" || !calls.length || left() < 10000) break;
+    messages.push({ role: "assistant", content: res.content });
+    const results: Anthropic.ToolResultBlockParam[] = [];
+    for (const c of calls) {
+      used.push(statusOf(c));
+      try {
+        results.push({ type: "tool_result", tool_use_id: c.id, content: JSON.stringify(await runTool(c)) });
+      } catch (e) {
+        results.push({ type: "tool_result", tool_use_id: c.id, is_error: true, content: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    messages.push({ role: "user", content: results });
+  }
+  return text;
+}
+
+const persona = (agent: AgentId) => {
+  const a = agentById(agent);
+  return `${a?.name ?? "Ajan"} olarak çalışıyorsun. ${WORK_HINT[agent]} Bilgi dosyalarındaki "${GUIDE_FILE}" ve "${RULES_FILE}" içinde kendi başlığın altındaki talimat, beceri ve kurallara mutlaka uy.`;
+};
+
+const DELIVER = `Teslimatın kendisini yaz, ne yapacağını anlatma. Türkçe, kısa başlık + kısa bölümler/maddeler; taslak metinler gönderilmeye hazır olsun. Eksik bilgi varsa (varsayım) diye işaretle; veri uydurma.
+Dışarıya hiçbir şey gönderemezsin. Bir e-posta/mesaj gönderilmesi gerekiyorsa taslağını yaz ve EN SONA tek satır ekle: "GİDECEK: <kime, hangi kanaldan, ne>". Gerekmiyorsa bu satırı ekleme.
+Kullandığın kaynak/dosyaları sonda tek satırda belirt ("Kaynak: …").`;
+
+/** İşin bağlamı (başlık, özet, kaynakların tam metni, dosyalar) — tek ajan ve ekip aynı bağlamı okur. */
+async function itemContext(it: BrainItem) {
+  const bodies = await Promise.all(
+    it.sources.slice(0, 6).map(async (s) => {
+      const full = s.ref ? await getItem(s.ref.source as "gmail", s.ref.id).catch(() => null) : null;
+      return `### ${s.title}${s.who ? ` — ${s.who}` : ""} (${trTime(s.ts)})\n${clip(full?.body ?? "", 5000) || "(metin arşivde yok; gerekirse ara)"}`;
+    }),
+  );
+  return `Bugün: ${istDay()}.
+
+İŞ: ${it.title}
+Özet: ${it.summary}
+Neden: ${it.why}
+${it.due ? `Termin: ${it.due}\n` : ""}${it.person ? `İlgili kişi: ${it.person}\n` : ""}${it.area ? `Denetim başlığı: ${it.area}\n` : ""}Adımlar: ${it.steps.map((s) => `${s.done ? "✓" : "☐"} ${s.title}`).join(" · ")}
+
+KAYNAKLAR:
+${bodies.join("\n\n") || "(yok)"}
+
+BULUNAN DOSYALAR:
+${it.files.map((f) => `- [${f.id}] ${f.name}: ${f.excerpt ?? ""}`).join("\n") || "(yok — gerekirse arşivde source=drive ile ara, get_archive_item ile oku)"}`;
+}
+
+const PLAN_SCHEMA = {
+  type: "object",
+  properties: {
+    pieces: {
+      type: "array",
+      description: "2-4 bağımsız parça; her biri işine en uygun ajana",
+      items: {
+        type: "object",
+        properties: {
+          agent: { type: "string", enum: ["posta", "sohbet", "takvim", "toplanti", "denetim", "dosya", "gorev"] },
+          task: { type: "string", description: "bu ajanın yapacağı parça: net, tek başına yapılabilir" },
+        },
+        required: ["agent", "task"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["pieces"],
+  additionalProperties: false,
+} as const;
+
+/** Ekip: lider (işin sahibi ajan) işi 2-4 parçaya böler; parçalar aynı anda çalışır; lider birleştirir. */
+async function teamWork(it: BrainItem, system: Anthropic.TextBlockParam[], ctx: string, usage: Usage, deadline: number, w: ItemWork, save: () => Promise<void>) {
+  const lead = it.agent;
+  const roster = AGENTS.map((a) => `- ${a.id}: ${a.name} — ${a.role}`).join("\n");
+  const plan = await claude().messages.parse(
+    {
+      model: ASSISTANT_MODEL,
+      max_tokens: 3000,
+      system,
+      output_config: { effort: "low", format: jsonSchemaOutputFormat(PLAN_SCHEMA) },
+      messages: [
+        {
+          role: "user",
+          content: `ŞU AN: ${persona(lead)} Bu işin ekip lideri sensin. İşi birbirinden bağımsız 2-4 parçaya böl ve her parçayı işine en uygun ajana ver (bir parçayı kendin de alabilirsin). Tek doğrusal bir işse 2 parça yeter.\n\nAJANLAR:\n${roster}\n\n${ctx}`,
+        },
+      ],
+    },
+    { timeout: Math.max(6000, deadline - Date.now() - 30000) },
+  );
+  addUsage(usage, plan);
+  const pieces = (plan.parsed_output?.pieces ?? []).filter((p) => agentById(p.agent)).slice(0, 4);
+  if (pieces.length < 2) throw new Error("Lider işi parçalara bölemedi");
+  const team: TeamRun = (w.team = { lead, pieces: pieces.map((p): TeamPiece => ({ agent: p.agent as AgentId, task: p.task, output: "", status: "running", used: [] })), notes: [] });
+  await save();
+  // parçalar aynı anda; her biri kendi persona ve araçlarıyla, son ~15 sn lidere kalır
+  const pieceDeadline = deadline - 15000;
+  await Promise.all(
+    team.pieces.map(async (p) => {
+      const t0 = Date.now();
+      try {
+        const others = team.pieces.filter((x) => x !== p).map((x) => `${agentById(x.agent)?.name}: ${x.task}`).join(" · ");
+        const text = await agentLoop(
+          system,
+          `ŞU AN: ${persona(p.agent)} Bir ekipte çalışıyorsun; lider ${agentById(lead)?.name}. Senin parçan: "${p.task}". Diğerleri: ${others}.\n${ctx}\n\nYalnızca kendi parçanı yap; kısa ve somut yaz. Bir ekip arkadaşına ya da lidere söylemen gereken bir şey varsa sona "NOT @<ajan adı ya da lider>: …" satırı ekle. Dışarıya hiçbir şey gönderme.`,
+          usage,
+          pieceDeadline,
+          p.used,
+          4,
+        );
+        const notes = [...text.matchAll(/^\s*NOT\s+@([^:]+):\s*(.+)$/gim)];
+        for (const n of notes) team.notes.push({ from: p.agent, to: n[1].trim(), text: n[2].trim() });
+        p.output = text.replace(/^\s*NOT\s+@[^:]+:.*$/gim, "").trim();
+        p.status = p.output ? "done" : "error";
+      } catch (e) {
+        p.status = "error";
+        p.output = `(parça tamamlanamadı: ${e instanceof Error ? e.message.slice(0, 120) : e})`;
+      }
+      p.ms = Date.now() - t0;
+    }),
+  );
+  await save();
+  const final = await agentLoop(
+    system,
+    `ŞU AN: ${persona(lead)} Bu işin ekip liderisin. Ekip parçaları aşağıda; hepsini tek, bütünlüklü teslimatta birleştir (çelişkileri çöz, tekrarları at). Sona "Ekip: <kim ne yaptı>" tek satırı ekle.\n${ctx}\n\nEKİP PARÇALARI:\n${team.pieces.map((p) => `### ${agentById(p.agent)?.name} — ${p.task}\n${p.output}`).join("\n\n")}${team.notes.length ? `\n\nEKİP NOTLARI:\n${team.notes.map((n) => `- ${agentById(n.from)?.name} → ${n.to}: ${n.text}`).join("\n")}` : ""}\n\n${DELIVER}`,
+    usage,
+    deadline,
+    w.used,
+    2,
+  );
+  return final;
+}
+
+export async function work(id: string, opts: { feedback?: string; budgetMs?: number; team?: boolean } = {}): Promise<BrainItem | null> {
   if (!claudeConfigured()) throw new Error("ANTHROPIC_API_KEY tanımlı değil");
   const t0 = Date.now();
-  const budget = opts.budgetMs ?? 55000;
-  const left = () => budget - (Date.now() - t0);
+  const deadline = t0 + (opts.budgetMs ?? 56000);
   let items = await readItems();
   const it = items.find((x) => x.id === id);
   if (!it) return null;
@@ -636,62 +778,29 @@ export async function work(id: string, opts: { feedback?: string; budgetMs?: num
   const usage: Usage = { input: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, output: 0 };
   let rule: string | null = null;
   const w: ItemWork = it.work;
+  // ara durum (ekip parçaları) panoda görünsün
+  const save = async () => {
+    const list = await readItems();
+    const cur = list.find((x) => x.id === id);
+    if (cur) {
+      cur.work = { ...w, team: w.team && { ...w.team, pieces: w.team.pieces.map((p) => ({ ...p })) } };
+      await store().setKV(ITEMS_KEY, list);
+    }
+  };
   try {
     const [knowledge, memory] = await Promise.all([loadKnowledge(), loadMemory()]);
     const system: Anthropic.TextBlockParam[] = [
       { type: "text", text: brainSystem(knowledge), cache_control: { type: "ephemeral", ttl: "1h" } },
       { type: "text", text: memoryPrompt(memory), cache_control: { type: "ephemeral", ttl: "1h" } },
     ];
-    // kaynakların tam metni (arşivden)
-    const bodies = await Promise.all(
-      it.sources.slice(0, 6).map(async (s) => {
-        const full = s.ref ? await getItem(s.ref.source as "gmail", s.ref.id).catch(() => null) : null;
-        return `### ${s.title}${s.who ? ` — ${s.who}` : ""} (${trTime(s.ts)})\n${clip(full?.body ?? "", 5000) || "(metin arşivde yok; gerekirse ara)"}`;
-      }),
-    );
-    const agent = agentById(it.agent);
-    const ruleLine = `${agent?.name ?? "Ajan"} olarak çalışıyorsun. ${WORK_HINT[it.agent]} Bilgi dosyalarındaki "${RULES_FILE}" içinde kendi başlığın altındaki kurallara mutlaka uy.`;
-    const content = `ŞU AN: ${ruleLine}
-Bugün: ${istDay()}.
-
-İŞ: ${it.title}
-Özet: ${it.summary}
-Neden: ${it.why}
-${it.due ? `Termin: ${it.due}\n` : ""}${it.person ? `İlgili kişi: ${it.person}\n` : ""}${it.area ? `Denetim başlığı: ${it.area}\n` : ""}Adımlar: ${it.steps.map((s) => `${s.done ? "✓" : "☐"} ${s.title}`).join(" · ")}
-
-KAYNAKLAR:
-${bodies.join("\n\n") || "(yok)"}
-
-BULUNAN DOSYALAR:
-${it.files.map((f) => `- [${f.id}] ${f.name}: ${f.excerpt ?? ""}`).join("\n") || "(yok — gerekirse arşivde source=drive ile ara, get_archive_item ile oku)"}
-${opts.feedback && prev?.output ? `\nÖNCEKİ TESLİMATIN:\n${prev.output}\n\nBATUHAN'IN DÜZELTMESİ: "${opts.feedback}" — teslimatı buna göre yeniden yaz.` : ""}
-
-Teslimatın kendisini yaz, ne yapacağını anlatma. Türkçe, kısa başlık + kısa bölümler/maddeler; taslak metinler gönderilmeye hazır olsun. Eksik bilgi varsa (varsayım) diye işaretle; veri uydurma.
-Dışarıya hiçbir şey gönderemezsin. Bir e-posta/mesaj gönderilmesi gerekiyorsa taslağını yaz ve EN SONA tek satır ekle: "GİDECEK: <kime, hangi kanaldan, ne>". Gerekmiyorsa bu satırı ekleme.
-Kullandığın kaynak/dosyaları sonda tek satırda belirt ("Kaynak: …").`;
-    const messages: Anthropic.MessageParam[] = [{ role: "user", content }];
-    let text = "";
-    for (let round = 0; round < 6; round++) {
-      const res = await claude().messages.create(
-        { model: ASSISTANT_MODEL, max_tokens: 8000, system, tools: ARCHIVE_TOOLS, output_config: { effort: "medium" }, messages },
-        { timeout: Math.max(8000, left() - 3000) },
-      );
-      addUsage(usage, res);
-      text = res.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("\n").trim() || text;
-      const calls = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-      if (res.stop_reason !== "tool_use" || !calls.length || left() < 12000) break;
-      messages.push({ role: "assistant", content: res.content });
-      const results: Anthropic.ToolResultBlockParam[] = [];
-      for (const c of calls) {
-        w.used.push(statusOf(c));
-        try {
-          results.push({ type: "tool_result", tool_use_id: c.id, content: JSON.stringify(await runTool(c)) });
-        } catch (e) {
-          results.push({ type: "tool_result", tool_use_id: c.id, is_error: true, content: e instanceof Error ? e.message : String(e) });
-        }
-      }
-      messages.push({ role: "user", content: results });
-    }
+    const ctx = await itemContext(it);
+    const revise = opts.feedback && prev?.output ? `\nÖNCEKİ TESLİMATIN:\n${prev.output}\n\nBATUHAN'IN DÜZELTMESİ: "${opts.feedback}" — teslimatı buna göre yeniden yaz.` : "";
+    // düzeltme ekibi yeniden çalıştırmaz: lider aynı teslimatı düzeltir
+    const text =
+      opts.team && !revise
+        ? await teamWork(it, system, ctx, usage, deadline, w, save)
+        : await agentLoop(system, `ŞU AN: ${persona(it.agent)}\n${ctx}\n${revise}\n\n${DELIVER}`, usage, deadline, w.used);
+    if (revise && prev?.team) w.team = prev.team;
     if (!text) throw new Error("Ajan boş teslimat döndürdü");
     const m = text.match(/\n?\s*GİDECEK:\s*(.+)\s*$/i);
     w.outbound = m?.[1].trim();
@@ -728,10 +837,143 @@ Kullandığın kaynak/dosyaları sonda tek satırda belirt ("Kaynak: …").`;
       cost: w.cost ?? null,
       ms: w.ms ?? 0,
       error: w.error,
-      label: `${agentById(it.agent)?.emoji ?? "🧠"} İş`,
+      label: `${agentById(it.agent)?.emoji ?? "🧠"} ${opts.team ? "Ekip işi" : "İş"}`,
     });
   }
   return (await readItems()).find((x) => x.id === id) ?? null;
+}
+
+// ------------------------------------------------------------------ lider görüşmesi
+/*
+ * Ajan Batuhan'a en fazla 5 soru sorar (bir seferde bir soru): bu işin burada ne olduğu, en sık yaptığı iş,
+ * iyi sonucun neye benzediği, asla olmaması gereken, ilgili araç ve kişiler. Son cevaptan sonra
+ * kendi çalışma talimatını ve bir becerisini (adım adım nasıl yapılır) "ajan-talimatlari.md"ye yazar.
+ */
+const GUIDE_FILE = "ajan-talimatlari.md";
+const INTERVIEW_TOPICS = [
+  "bu şirkette senin alanında (ajanın kaynağı) iş nasıl yürüyor, Batuhan'ın buradaki rolü ne",
+  "en sık yapılan iş / en çok zaman alan iş hangisi",
+  "iyi bir sonuç neye benzer (biçim, ton, uzunluk, örnek)",
+  "asla olmaması gereken şey (kırmızı çizgiler)",
+  "hangi kişiler, araçlar, dosyalar devrede; kime ne zaman danışılır",
+];
+
+const QUESTION_SCHEMA = {
+  type: "object",
+  properties: { question: { type: "string", description: "tek, kısa, somut soru (gerekirse kısa bir örnekle)" } },
+  required: ["question"],
+  additionalProperties: false,
+} as const;
+
+const GUIDE_SCHEMA = {
+  type: "object",
+  properties: {
+    brief: { type: "string", description: "ajanın kalıcı çalışma talimatı: 3-6 madde (ton, kırmızı çizgiler, kime danışılır)" },
+    skill_name: { type: "string", description: "becerinin kısa adı (ör. 'Hakediş hatırlatma yanıtı')" },
+    skill_when: { type: "string", description: "bu beceri ne zaman kullanılır (tek cümle)" },
+    skill_steps: { type: "array", items: { type: "string" }, description: "3-7 adım" },
+    skill_format: { type: "string", description: "çıktının biçimi/şablonu (kısa)" },
+    try_task: { type: "string", description: "Batuhan'ın denemesi için görev çubuğuna yazılacak tek bir örnek iş" },
+  },
+  required: ["brief", "skill_name", "skill_when", "skill_steps", "skill_format", "try_task"],
+  additionalProperties: false,
+} as const;
+
+export type InterviewTurn = { q: string; a: string };
+
+export async function interview(agent: AgentId, turns: InterviewTurn[]) {
+  if (!claudeConfigured()) throw new Error("ANTHROPIC_API_KEY tanımlı değil");
+  const a = agentById(agent);
+  if (!a) throw new Error("Bilinmeyen ajan");
+  const usage: Usage = { input: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, output: 0 };
+  const [knowledge, memory] = await Promise.all([loadKnowledge(), loadMemory()]);
+  const system: Anthropic.TextBlockParam[] = [
+    { type: "text", text: brainSystem(knowledge), cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text", text: memoryPrompt(memory), cache_control: { type: "ephemeral", ttl: "1h" } },
+  ];
+  const transcript = turns.map((t, i) => `${i + 1}. Soru: ${t.q}\nCevap: ${t.a}`).join("\n");
+  const done = turns.length >= INTERVIEW_TOPICS.length || /^(bitti|tamam|yeter)\b/i.test(turns.at(-1)?.a.trim() ?? "");
+  try {
+    if (!done) {
+      const res = await claude().messages.parse({
+        model: ASSISTANT_MODEL,
+        max_tokens: 1500,
+        system,
+        output_config: { effort: "low", format: jsonSchemaOutputFormat(QUESTION_SCHEMA) },
+        messages: [
+          {
+            role: "user",
+            content: `ŞU AN: ${a.name} olarak (${a.role}) Batuhan'la kısa bir kurulum görüşmesi yapıyorsun; amacın onun bu işi nasıl yaptığını öğrenip kendi talimatını ve becerini yazmak. Bilgi dosyalarında zaten yazan şeyi sorma; onları bildiğini göster.
+Şu ana kadar:
+${transcript || "(henüz soru yok)"}
+
+Sıradaki konu (${turns.length + 1}/${INTERVIEW_TOPICS.length}): ${INTERVIEW_TOPICS[turns.length]}.
+Bu konuda tek bir soru sor. Türkçe, sıcak ama kısa.`,
+          },
+        ],
+      });
+      addUsage(usage, res);
+      return { question: res.parsed_output?.question ?? INTERVIEW_TOPICS[turns.length], step: turns.length + 1, of: INTERVIEW_TOPICS.length };
+    }
+    const res = await claude().messages.parse({
+      model: ASSISTANT_MODEL,
+      max_tokens: 4000,
+      system,
+      output_config: { effort: "medium", format: jsonSchemaOutputFormat(GUIDE_SCHEMA) },
+      messages: [
+        {
+          role: "user",
+          content: `ŞU AN: ${a.name} olarak (${a.role}) Batuhan'la kurulum görüşmesini bitirdin. Cevaplarına dayanarak kendi kalıcı çalışma talimatını ve en sık yapılan iş için bir beceri yaz. Cevaplarda olmayanı uydurma; "atla" denen konuları boş geç.\n\nGÖRÜŞME:\n${transcript}`,
+        },
+      ],
+    });
+    addUsage(usage, res);
+    const g = res.parsed_output;
+    if (!g) throw new Error("Talimat yazılamadı");
+    const section = `## ${a.name}
+_Kurulum görüşmesi: ${istDay()}_
+
+### Talimat
+${g.brief.trim()}
+
+### Beceri: ${g.skill_name.trim()}
+Ne zaman: ${g.skill_when.trim()}
+${g.skill_steps.map((s, i) => `${i + 1}. ${s.trim()}`).join("\n")}
+Biçim: ${g.skill_format.trim()}`;
+    const files = await listKnowledge();
+    let md = files.find((f) => f.name === GUIDE_FILE)?.md?.trim() || "# Ajan talimatları\n\nHer ajanın kurulum görüşmesinden çıkan çalışma talimatı ve becerisi. Ajan kendi başlığındakine her işte uyar; elle düzenlenebilir.";
+    // aynı ajanın eski bölümü yenisiyle değişir
+    const re = new RegExp(`\\n## ${a.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n[\\s\\S]*?(?=\\n## |$)`);
+    md = re.test(`\n${md}`) ? `\n${md}`.replace(re, `\n${section}\n`).trim() : `${md.trimEnd()}\n\n${section}`;
+    await saveKnowledge(GUIDE_FILE, `${md.trim()}\n`);
+    return { done: true, brief: g.brief, skill: { name: g.skill_name, when: g.skill_when, steps: g.skill_steps, format: g.skill_format }, tryTask: g.try_task };
+  } finally {
+    await recordUsage({
+      at: new Date().toISOString(),
+      model: ASSISTANT_MODEL,
+      rounds: 1,
+      prompt: usage.input + usage.cacheRead + usage.cacheWrite,
+      cached: usage.cacheRead,
+      written: usage.cacheWrite,
+      output: usage.output,
+      cost: costUsd(ASSISTANT_MODEL, usage),
+      ms: 0,
+      label: `${a.emoji} Görüşme`,
+    });
+  }
+}
+
+/** Ajanın bilgi dosyalarındaki talimatı ve öğrendiği kurallar (ajan kartı için). */
+export async function agentProfile(agent: AgentId) {
+  const a = agentById(agent);
+  if (!a) return null;
+  const files = await listKnowledge();
+  const section = (file: string) => {
+    const md = files.find((f) => f.name === file)?.md ?? "";
+    const m = `\n${md}`.match(new RegExp(`\\n## ${a.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n([\\s\\S]*?)(?=\\n## |$)`));
+    return m?.[1].trim() ?? "";
+  };
+  return { guide: section(GUIDE_FILE), rules: section(RULES_FILE) };
 }
 
 /** Onay: taslak onaylandı (gönderim şimdilik Batuhan'da — Gmail'de açıp gönderir). */

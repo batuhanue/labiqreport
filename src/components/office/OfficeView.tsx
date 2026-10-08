@@ -130,7 +130,11 @@ export default function OfficeView({
       else if (x.status === "inbox" || x.status === "todo") c.next++;
       else if (x.status === "done") c.done++;
       if (x.status !== "done" && x.status !== "dismissed") c.open++;
-      if (x.work?.status === "running") c.running = true;
+      if (x.work?.status === "running") {
+        c.running = true;
+        // ekip parçalarındaki ajanlar da çalışıyor sayılır (kabloları ışır)
+        for (const p of x.work.team?.pieces ?? []) if (p.status === "running" && m[p.agent]) m[p.agent].running = true;
+      }
     }
     return m;
   }, [brain.st]);

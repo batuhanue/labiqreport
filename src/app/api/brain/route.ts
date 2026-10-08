@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import { bad, handle } from "@/lib/api";
-import { approve, capture, due, state, think, updateItem, work } from "@/lib/brain";
+import { agentProfile, approve, capture, due, interview, state, think, updateItem, work, type InterviewTurn } from "@/lib/brain";
 import { agentById, type AgentId, type BrainItem, type ItemStatus } from "@/lib/brain-types";
 
 export const dynamic = "force-dynamic";
@@ -8,8 +8,13 @@ export const maxDuration = 60;
 
 const STATUSES: ItemStatus[] = ["inbox", "todo", "doing", "waiting", "done", "dismissed"];
 
-/** Beyin durumu: işler, odak, son düşünmeler. */
-export async function GET() {
+/** Beyin durumu: işler, odak, son düşünmeler. ?agent=… : ajanın talimatı ve öğrendiği kurallar */
+export async function GET(req: Request) {
+  const agent = new URL(req.url).searchParams.get("agent");
+  if (agent) {
+    if (!agentById(agent)) return bad("Bilinmeyen ajan");
+    return handle(async () => ({ profile: await agentProfile(agent as AgentId) }));
+  }
   return handle(state);
 }
 
@@ -19,7 +24,7 @@ export async function GET() {
  * { action: "capture", text }    — beyne not yaz; görev ajanı hemen işe çevirir
  */
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => null)) as { action?: string; text?: string; id?: string; feedback?: string; agent?: string } | null;
+  const b = (await req.json().catch(() => null)) as { action?: string; text?: string; id?: string; feedback?: string; agent?: string; team?: boolean; turns?: InterviewTurn[] } | null;
   if (b?.action === "capture") {
     const text = b.text?.trim();
     if (!text) return bad("Boş not");
@@ -38,10 +43,16 @@ export async function POST(req: Request) {
     if (!b.id) return bad("İş seçilmedi");
     const id = b.id;
     return handle(async () => {
-      const item = await work(id, { feedback: b.feedback?.trim() || undefined });
+      const item = await work(id, { feedback: b.feedback?.trim() || undefined, team: !!b.team });
       if (!item) return bad("İş bulunamadı", 404);
       return { item };
     });
+  }
+  // lider görüşmesi: sıradaki soru ya da (bitince) yazılan talimat + beceri
+  if (b?.action === "interview") {
+    if (!b.agent || !agentById(b.agent)) return bad("Ajan seçilmedi");
+    const turns = (b.turns ?? []).slice(0, 5).map((t) => ({ q: String(t.q ?? "").slice(0, 500), a: String(t.a ?? "").slice(0, 2000) }));
+    return handle(() => interview(b.agent as AgentId, turns));
   }
   if (b?.action === "approve") {
     if (!b.id) return bad("İş seçilmedi");

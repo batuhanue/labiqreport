@@ -87,6 +87,23 @@ export interface ItemWork {
   ms?: number;
   cost?: number | null;
   error?: string;
+  /** ekip olarak yapıldıysa: lider işi parçalara böldü, ajanlar aynı anda çalıştı, lider birleştirdi */
+  team?: TeamRun;
+}
+
+export interface TeamPiece {
+  agent: AgentId;
+  task: string;
+  output: string;
+  status: "running" | "done" | "error";
+  used: string[];
+  ms?: number;
+}
+export interface TeamRun {
+  lead: AgentId;
+  pieces: TeamPiece[];
+  /** ajanların birbirine / lidere bıraktığı notlar */
+  notes: { from: AgentId; to: string; text: string }[];
 }
 
 export interface BrainItem {
