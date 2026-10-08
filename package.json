@@ -10,6 +10,7 @@
     "vapid": "web-push generate-vapid-keys"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
     "@neondatabase/serverless": "^1.2.0",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.1",

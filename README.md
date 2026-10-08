@@ -33,15 +33,18 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   El yazısı: kalem basıncına duyarlı, düşük gecikmeli (tahmini noktalar, ayrı çizim katmanı); kalem algılanınca avuç içi
   çizmez, parmak kaydırır; iki parmak her zaman kaydırır. Araçlar: kalem, fosforlu, silgi, 6 renk, 3 kalınlık, çizgili/kareli/boş kâğıt.
   Kısayollar: `N` yeni not · `T` yazı · `P` kalem · `H` fosforlu · `E` silgi · `1–6` renk · `⌘/Ctrl+Z` geri al · `⌘/Ctrl+Shift+Z` yinele · `Esc` kapat.
-- **Yapay zekâ asistanı (Gemini 3.8 Flash):** Üst bardaki ✨ düğmesi ya da **J** / **Alt+J**. Her soruda
+- **Yapay zekâ asistanı (Anthropic Claude Haiku 5.5):** Üst bardaki ✨ düğmesi ya da **J** / **Alt+J**. Her soruda
   `knowledge/*.md` dosyalarını (00 okuma kılavuzu · 01 iş tanımı ve iş süreci · 02 aylık kontrol iş akışı — uygulama içinden düzenlenebilir veya yeni .md
   yüklenebilir) ile canlı veriyi birlikte okur: 10 başlığın iki hastane için güncel durumu, madde notları / anomaliler,
   aksiyonlar, dönem notları (el yazısı notlar görüntü olarak gönderilir), kişisel görevler, terminler ve geçmiş dönem özeti.
   Yanıtlar akışla gelir; önerdiği görevler tek tuşla Görevler'e eklenir. Alan sayfasında "✨ Asistana sor" düğmesi var.
-  Maliyet: sabit kurallar + bilgi dosyaları isteğin başında, değişen canlı veri sonda durur; Gemini'nin örtük önbelleği
-  bu ~30k token'lık öneki otomatik yeniden kullanır (indirimli). Her yanıtın altında "Nk token · Mk önbellekten ⚡" görünür.
-  Dosyaların sonuna ekleme yapmak öneki bozmaz.
-  Kurulum: Vercel'e `GEMINI_API_KEY` (Google AI Studio → API key) ekleyin; model `GEMINI_MODEL` ile değiştirilebilir.
+  Maliyet: sabit kurallar + bilgi dosyaları (~30k token) Claude istem önbelleğinde tutulur (`cache_control`); her soruda ve
+  her arşiv araması turunda önbellekten (~%90 indirimli) okunur. Değişen canlı veri son kullanıcı mesajının başına eklenir,
+  böylece önceki mesajlar da önbellekte kalır. Her yanıtın altında "Nk token · Mk önbellekten ⚡ · $" görünür; asistan
+  panelindeki 📊 düğmesi günlük/haftalık/aylık token ve tahmini maliyeti gösterir. Aşırı yük (529) ve hız sınırında (429)
+  SDK yeniden dener; yanıt ortada koparsa yarım metin silinip tur yeniden istenir.
+  Kurulum: Vercel'e `ANTHROPIC_API_KEY` (console.anthropic.com → Settings → API keys) ekleyin; model `ANTHROPIC_MODEL`
+  ile değiştirilebilir (varsayılan `claude-haiku-5-5`; ör. `claude-sonnet-5-5`, `claude-opus-5-5`).
 - **Push bildirimleri:** Sağ üstteki zil → "Bildirimleri aç". Her sabah 09:00'da (Vercel Cron) aktif dönem için:
   yaklaşan/geçen rapor alanı terminleri, termini gelen/geciken aksiyonlar, Cuma 12:00 toplantı özeti ve ay başı
   hatırlatması. Zil menüsü aynı hatırlatmaları uygulama içinde de gösterir; hangi bildirimlerin geleceği oradan seçilir.
@@ -53,7 +56,7 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   transkriptlerini) okur; asistan panelindeki "📬 Google" düğmesiyle kapatılabilir. Sabah bildirimine bugünkü toplantılar eklenir.
   **Hafıza (arşiv):** geçmiş tüm e-postalar, Chat mesajları, Meet transkriptleri ve takvim `google_archive` tablosunda
   kalıcı birikir. İlk bağlantıdan sonra geçmiş, uygulama açıkken arka planda parça parça indirilir (kaldığı yerden devam
-  eder); sonra yeni gelenler otomatik eklenir. Asistan geçmişe dönük sorularda arşivde arar (Gemini araç çağrısı).
+  eder); sonra yeni gelenler otomatik eklenir. Asistan geçmişe dönük sorularda arşivde arar (Claude araç kullanımı).
   Google sayfası → Arşiv sekmesinden ilerleme görülür ve doğrudan aranabilir. Bağlantı sunucuda saklandığından tüm
   cihazlarda tek seferlik giriş yeterlidir.
 

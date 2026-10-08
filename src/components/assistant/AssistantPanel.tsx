@@ -29,7 +29,7 @@ interface Msg {
   text: string;
   error?: boolean;
   at: string;
-  usage?: { prompt: number; cached: number; output: number };
+  usage?: { prompt: number; cached: number; output: number; model?: string; rounds?: number; cost?: number | null };
   /** asistanın yaptığı arşiv aramaları (durum satırları) */
   steps?: string[];
 }
@@ -118,7 +118,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
   const [withGoogle, setWithGoogle] = useState(true);
   const googleOn = !!useGoogle()?.status?.connected;
   const [status, setStatus] = useState<{ configured: boolean; model: string } | null>(null);
-  const [view, setView] = useState<"chat" | "knowledge">("chat");
+  const [view, setView] = useState<"chat" | "knowledge" | "usage">("chat");
   const [diag, setDiag] = useState<Diag | null>(null);
   const runDiag = useCallback(async () => {
     setDiag({ loading: true });
@@ -138,7 +138,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
         return { _ms: Date.now() - t0, _raw: err.name === "TimeoutError" ? `${ms / 1000} sn içinde yanıt gelmedi` : `${err.name}: ${err.message}` };
       }
     };
-    // 1) sunucu ayakta mı (Gemini'ye gitmeden)
+    // 1) sunucu ayakta mı (modele gitmeden)
     const ping = await get("/api/assistant", 15000);
     if (ping.configured === undefined) {
       setDiag({ server: { ok: false, detail: `HTTP ${ping._status ?? "—"} · ${String(ping.error ?? ping._raw ?? "")}` } });
@@ -146,7 +146,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
       setDiag({ server: { ok: true, detail: `${ping._ms} ms` }, configured: false });
     } else {
       setDiag({ loading: true, server: { ok: true, detail: `${ping._ms} ms` } });
-      // 2) Gemini teşhisi
+      // 2) Claude teşhisi
       const t = await get("/api/assistant?test=1", 70000);
       const server = { ok: true, detail: `${ping._ms} ms` };
       if (t.configured === undefined) setDiag({ server, configured: true, keyHint: ping.keyHint as string, model: ping.model as string, testError: `HTTP ${t._status ?? "—"} · ${String(t.error ?? t._raw ?? "")}` });
@@ -263,7 +263,7 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
         let text = "";
         try {
           text = await run(true);
-          // sunucu ile Gemini arasındaki akış koptuysa akışsız yeniden dene
+          // sunucu ile Claude arasındaki akış koptuysa akışsız yeniden dene
           if (/_\(bağlantı kesildi[^)]*\)_\s*$/.test(text)) throw new Error("akış koptu");
         } catch (e) {
           // kullanıcı durdurmadıysa ve sunucu açık bir hata vermediyse: akışsız yeniden dene
@@ -357,9 +357,12 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
               <div className="min-w-0 flex-1">
                 <div className="text-lg font-extrabold leading-tight">Asistan</div>
                 <div className="truncate text-xs font-semibold text-ink-3">
-                  {status?.model || "Gemini"} · {data ? periodLabel(data.period) : "dönem seçili değil"} verisiyle
+                  {status?.model || "Claude"} · {data ? periodLabel(data.period) : "dönem seçili değil"} verisiyle
                 </div>
               </div>
+              <button onClick={() => setView(view === "usage" ? "chat" : "usage")} className={`grid h-10 w-10 place-items-center rounded-full ${view === "usage" ? "clay-pressed text-blue" : "clay-sm"}`} title="Token kullanımı" aria-label="Kullanım">
+                <Icon name="chart" size={18} />
+              </button>
               <button onClick={() => setView(view === "chat" ? "knowledge" : "chat")} className={`grid h-10 w-10 place-items-center rounded-full ${view === "knowledge" ? "clay-pressed text-blue" : "clay-sm"}`} title="Bilgi dosyaları (.md)" aria-label="Bilgi dosyası">
                 <Icon name="note" size={18} />
               </button>
@@ -375,14 +378,16 @@ function AssistantPanel({ open, onClose, seed }: { open: boolean; onClose: () =>
 
             {view === "knowledge" ? (
               <KnowledgeEditor />
+            ) : view === "usage" ? (
+              <UsageView />
             ) : (
               <>
                 {/* mesajlar */}
                 <div ref={scroller} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
                   {status && !status.configured && (
                     <div className="clay-sm bg-tint-warn p-4 text-sm">
-                      <b>Gemini anahtarı tanımlı değil.</b> Vercel → Settings → Environment Variables'a <code>GEMINI_API_KEY</code> ekleyip yeniden dağıtın.
-                      Anahtarı <a className="font-bold text-blue underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>'dan alabilirsiniz.
+                      <b>Anthropic API anahtarı tanımlı değil.</b> Vercel → Settings → Environment Variables'a <code>ANTHROPIC_API_KEY</code> ekleyip yeniden dağıtın.
+                      Anahtarı <a className="font-bold text-blue underline" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">Anthropic Console</a>'dan alabilirsiniz.
                     </div>
                   )}
                   {msgs.length === 0 && (
@@ -504,7 +509,6 @@ interface Diag {
   listStatus?: number;
   listError?: string;
   modelFound?: boolean;
-  flashModels?: string[];
   testStatus?: number;
   testText?: string;
   testError?: string;
@@ -530,13 +534,13 @@ function DiagCard({ d, onClose }: { d: Diag; onClose: () => void }) {
       <div className="mb-1 font-extrabold">🔌 Bağlantı testi</div>
       {d.server && row(d.server.ok, "Uygulama sunucusu yanıt veriyor", d.server.ok ? d.server.detail : `${d.server.detail} · Vercel → Deployments → son deploy → Logs`)}
       {d.loading ? (
-        <div className="py-2 text-sm text-ink-3">{d.server ? "Gemini'ye bağlanılıyor… (30 sn sürebilir)" : "Sunucu kontrol ediliyor…"}</div>
+        <div className="py-2 text-sm text-ink-3">{d.server ? "Claude'a bağlanılıyor…" : "Sunucu kontrol ediliyor…"}</div>
       ) : d.server && !d.server.ok ? null : (
         <>
-          {row(d.configured, "GEMINI_API_KEY tanımlı", d.configured ? d.keyHint : "Vercel → Settings → Environment Variables (Production) + Redeploy")}
+          {row(d.configured, "ANTHROPIC_API_KEY tanımlı", d.configured ? d.keyHint : "Vercel → Settings → Environment Variables (Production) + Redeploy")}
           {d.warning && row(false, "Anahtar biçimi", d.warning)}
-          {d.configured && row(d.listStatus === 200, "Anahtar geçerli", d.listStatus === 200 ? "Google model listesine erişildi" : `HTTP ${d.listStatus ?? "?"} · ${d.listError ?? ""}`)}
-          {d.configured && d.listStatus === 200 && row(d.modelFound, `Model: ${d.model}`, d.modelFound ? "Hesabında kullanılabilir" : `Hesapta bulunamadı. Mevcut Flash modelleri: ${(d.flashModels ?? []).join(", ") || "—"} · Vercel'de GEMINI_MODEL ile değiştirebilirsin`)}
+          {d.configured && row(d.listStatus === 200, "Anahtar geçerli", d.listStatus === 200 ? "Anthropic API anahtarı doğrulandı" : `HTTP ${d.listStatus ?? "?"} · ${d.listError ?? ""}`)}
+          {d.configured && d.listStatus === 200 && row(d.modelFound, `Model: ${d.model}`, d.modelFound ? "Hesabında kullanılabilir" : `Bu model bulunamadı · Vercel'de ANTHROPIC_MODEL ile değiştirebilirsin (ör. claude-haiku-5-5)`)}
           {d.configured && row(d.ok, "Deneme isteği", d.ok ? `“${d.testText}” · ${d.ms} ms` : `HTTP ${d.testStatus ?? "?"} · ${d.testError ?? ""}`)}
           {d.ok && <div className="mt-2 rounded-xl bg-tint-info px-3 py-2 text-xs">Bağlantı sağlam. Sorun sürerse yanıt süresi uzun olabilir; “Derin düşün”ü kapatıp tekrar dene.</div>}
         </>
@@ -547,7 +551,17 @@ function DiagCard({ d, onClose }: { d: Diag; onClose: () => void }) {
 
 /** sunucunun \u001fS…\u001f durum satırları (arşiv aramaları) */
 const stepsOf = (raw: string) => [...raw.matchAll(/\u001fS([^\u001f]*)\u001f/g)].map((m) => m[1]);
-const clean = (raw: string) => raw.replace(/\u001f[^\u001f]*\u001f/g, "").replace(/\u001f[^\u001f]*$/, "");
+/** Metni durum işaretlerinden arındırır; \u001fX<n>\u001f gelince (yarıda kopan tur) son n karakter silinir. */
+const clean = (raw: string) => {
+  let out = "";
+  for (const seg of raw.replace(/\u001f[^\u001f]*$/, "").split(/(\u001f[^\u001f]*\u001f)/)) {
+    if (seg.startsWith("\u001f")) {
+      const m = seg.match(/^\u001fX(\d+)\u001f$/);
+      if (m) out = out.slice(0, Math.max(0, out.length - Number(m[1])));
+    } else out += seg;
+  }
+  return out;
+};
 
 /** Arşiv aramaları: yanıt beklerken son adım canlı, sonra katlanmış özet. */
 function Steps({ steps, live }: { steps: string[]; live: boolean }) {
@@ -628,8 +642,10 @@ function Bubble({ m, streaming, onRetry, onTest }: { m: Msg; streaming: boolean;
         </div>
         {tasks.length > 0 && !streaming && <TaskSuggestions tasks={tasks} />}
         {!streaming && m.usage && (
-          <span className="ml-2 text-[11px] font-semibold text-ink-3" title="Gemini örtük önbellek: sabit bilgi dosyaları tekrar ücretlendirilmez (indirimli)">
+          <span className="ml-2 text-[11px] font-semibold text-ink-3" title="Sabit bilgi dosyaları Claude istem önbelleğinden okunur (~%90 indirimli). Her arşiv araması bir tur daha ekler.">
             {Math.round(m.usage.prompt / 1000)}k token{m.usage.cached ? ` · ${Math.round(m.usage.cached / 1000)}k önbellekten ⚡` : ""}
+            {m.usage.rounds && m.usage.rounds > 1 ? ` · ${m.usage.rounds} tur` : ""}
+            {m.usage.cost != null ? ` · $${m.usage.cost < 0.01 ? m.usage.cost.toFixed(4) : m.usage.cost.toFixed(3)}` : ""}
           </span>
         )}
         {!streaming && m.text && !m.error && (
@@ -828,6 +844,127 @@ function KnowledgeEditor() {
         <button disabled={!dirty || busy || !cur} onClick={() => cur && save(cur.name, md)} className="clay-dark rounded-full px-6 py-3 font-extrabold disabled:opacity-40">
           {busy ? "Kaydediliyor…" : "Kaydet"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ token kullanımı */
+interface UsageData {
+  days: Record<string, { requests: number; prompt: number; cached: number; output: number; cost: number; errors: number }>;
+  recent: { at: string; model: string; rounds: number; prompt: number; cached: number; written: number; output: number; cost: number | null; ms: number; error?: string; retries?: number }[];
+  model: string;
+}
+
+const k = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+const usd = (n: number | null | undefined) => (n == null ? "—" : n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
+
+function UsageView() {
+  const [u, setU] = useState<UsageData | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/api/assistant?usage=1", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(setU)
+      .catch((e) => setErr(e.message));
+  }, []);
+  if (err) return <div className="p-6 text-sm text-fail">Kullanım okunamadı: {err}</div>;
+  if (!u) return <div className="p-6 text-sm text-ink-3">Yükleniyor…</div>;
+
+  const dayKey = (d: Date) => new Date(d.getTime() + 3 * 3600_000).toISOString().slice(0, 10);
+  const empty = { requests: 0, prompt: 0, cached: 0, output: 0, cost: 0, errors: 0 };
+  const today = u.days[dayKey(new Date())] ?? empty;
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(Date.now() - (6 - i) * 86400_000);
+    return { key: dayKey(d), label: d.toLocaleDateString("tr-TR", { weekday: "short" }), v: u.days[dayKey(d)] };
+  });
+  const month = Object.entries(u.days)
+    .filter(([d]) => d.slice(0, 7) === dayKey(new Date()).slice(0, 7))
+    .reduce((s, [, v]) => s + v.cost, 0);
+  const max = Math.max(1, ...last7.map((x) => (x.v ? x.v.prompt + x.v.output : 0)));
+  const week = last7.reduce((s, x) => ({ req: s.req + (x.v?.requests ?? 0), tok: s.tok + (x.v ? x.v.prompt + x.v.output : 0), cached: s.cached + (x.v?.cached ?? 0), prompt: s.prompt + (x.v?.prompt ?? 0), cost: s.cost + (x.v?.cost ?? 0) }), { req: 0, tok: 0, cached: 0, prompt: 0, cost: 0 });
+  const ok = u.recent.filter((r) => !r.error);
+  const avg = ok.length ? ok.reduce((s, r) => s + (r.cost ?? 0), 0) / ok.length : 0;
+
+  return (
+    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        {[
+          { l: "Bugün", v: `${today.requests} soru`, s: usd(today.cost) },
+          { l: "Bu ay", v: usd(month), s: "tahmini maliyet" },
+          { l: "Önbellek oranı (bugün)", v: today.prompt ? `%${Math.round((today.cached / today.prompt) * 100)}` : "—", s: `${k(today.prompt + today.output)} token` },
+          { l: "Soru başına ort.", v: avg ? usd(avg) : "—", s: ok.length ? `son ${ok.length} soru` : "" },
+        ].map((x) => (
+          <div key={x.l} className="clay-sm rounded-2xl p-3">
+            <div className="text-[11px] font-bold text-ink-3">{x.l}</div>
+            <div className="text-xl font-extrabold tabular-nums">{x.v}</div>
+            <div className="text-[11px] text-ink-3">{x.s}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="clay-sm rounded-2xl p-4">
+        <div className="mb-3 flex items-baseline justify-between">
+          <div className="text-sm font-extrabold">Son 7 gün</div>
+          <div className="text-[11px] font-semibold text-ink-3">
+            {week.req} soru · {k(week.tok)} token · {week.prompt ? `%${Math.round((week.cached / week.prompt) * 100)}` : "—"} önbellekten · {usd(week.cost)}
+          </div>
+        </div>
+        <div className="flex h-28 items-end gap-2">
+          {last7.map((x) => {
+            const tot = x.v ? x.v.prompt + x.v.output : 0;
+            const h = (tot / max) * 100;
+            return (
+              <div key={x.key} className="flex flex-1 flex-col items-center gap-1" title={x.v ? `${x.v.requests} soru · ${k(tot)} token · ${k(x.v.cached)} önbellekten · ${usd(x.v.cost)} · ${x.v.errors} hata` : "kullanım yok"}>
+                <div className="relative flex h-20 w-full items-end">
+                  <div className="relative w-full overflow-hidden rounded-t-md bg-blue/80" style={{ height: `${h}%`, minHeight: tot ? 3 : 0 }}>
+                    <div className="absolute inset-x-0 bottom-0 bg-ok/80" style={{ height: `${tot && x.v ? (x.v.cached / tot) * 100 : 0}%` }} />
+                  </div>
+                </div>
+                <div className="text-[10px] font-bold text-ink-3">{x.label}</div>
+                {x.v?.errors ? <div className="text-[9px] font-bold text-fail">{x.v.errors}⚠</div> : <div className="h-[13px]" />}
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-2 flex gap-3 text-[10px] font-bold text-ink-3">
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-sm bg-ok/80" /> önbellekten (~%90 indirimli)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-sm bg-blue/80" /> tam fiyat + çıktı
+          </span>
+        </div>
+      </div>
+
+      <div className="clay-sm rounded-2xl p-4">
+        <div className="mb-2 text-sm font-extrabold">Son istekler</div>
+        {!u.recent.length && <div className="text-xs text-ink-3">Henüz kayıt yok.</div>}
+        <div className="space-y-1.5">
+          {u.recent.slice(0, 12).map((r, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+              <span className="w-[86px] shrink-0 font-bold tabular-nums text-ink-3">{new Date(r.at).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+              {r.error ? (
+                <span className="min-w-0 flex-1 truncate font-semibold text-fail" title={r.error}>
+                  ⚠ {r.error}
+                </span>
+              ) : (
+                <span className="min-w-0 flex-1 font-semibold tabular-nums">
+                  {k(r.prompt)} giriş ({k(r.cached)} önbellek) · {k(r.output)} çıkış · {r.rounds} tur · {(r.ms / 1000).toFixed(1)} sn
+                </span>
+              )}
+              {!!r.retries && <span className="rounded-full bg-track px-1.5 font-bold">{r.retries} tekrar</span>}
+              <span className="rounded-full bg-tint-info px-1.5 font-bold text-blue">{usd(r.cost)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-1 px-1 text-[11px] text-ink-3">
+        <div>
+          Model: <b>{u.model}</b> · fiyatlar Anthropic liste fiyatından tahmin edilir; kesin tutar Anthropic Console → Usage'dadır.
+        </div>
+        <div>Sabit bilgi dosyaları önbellekten okunur; her arşiv araması bir “tur” ekler.</div>
       </div>
     </div>
   );

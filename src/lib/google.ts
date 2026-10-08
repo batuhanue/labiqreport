@@ -489,39 +489,42 @@ export async function sync(opts: { force?: boolean } = {}): Promise<GoogleSnapsh
 const trTime = (s: string) => new Date(s).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul", weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
 export function googleSection(s: GoogleSnapshot) {
-  const L = [`### Google Workspace (${s.account.email}) — son senkron ${trTime(s.syncedAt)}`];
+  // Kısa tutulur (token): ayrıntı gerektiğinde asistan search_archive / get_archive_item ile arşivden okur.
+  const one = (t: string, n: number) => t.replace(/\s+/g, " ").trim().slice(0, n);
+  const L = [`### Google Workspace (${s.account.email}) — son senkron ${trTime(s.syncedAt)} · ayrıntı için arşivde ara`];
   const now = Date.now();
-  const upcoming = s.calendar.items.filter((e) => Date.parse(e.end) >= now - 3600000 && Date.parse(e.start) <= now + 10 * 86400000).slice(0, 40);
+  const upcoming = s.calendar.items
+    .filter((e) => e.response !== "declined" && Date.parse(e.end) >= now - 3600000 && Date.parse(e.start) <= now + 7 * 86400000)
+    .slice(0, 20);
   if (upcoming.length) {
-    L.push("", "#### Takvim (bugün + 10 gün)");
+    L.push("", "#### Takvim (bugün + 7 gün)");
     for (const e of upcoming)
       L.push(
-        `- ${e.allDay ? e.start + " (tüm gün)" : trTime(e.start) + "–" + new Date(e.end).toLocaleTimeString("tr-TR", { timeZone: "Europe/Istanbul", hour: "2-digit", minute: "2-digit" })} · ${e.title}` +
-          `${e.meet ? " · Meet" : ""}${e.location ? ` · yer: ${e.location}` : ""}${e.organizer ? ` · düzenleyen: ${e.organizer}` : ""}` +
-          `${e.attendees.length ? ` · katılımcı: ${e.attendees.slice(0, 8).map((a) => a.name).join(", ")}${e.attendees.length > 8 ? "…" : ""}` : ""}` +
-          `${e.response && e.response !== "accepted" ? ` · yanıtın: ${e.response}` : ""}${e.description ? ` · açıklama: ${e.description.slice(0, 200)}` : ""}`,
+        `- ${e.allDay ? e.start + " (tüm gün)" : trTime(e.start)} · ${e.title}${e.meet ? " · Meet" : ""}` +
+          `${e.attendees.length ? ` · ${e.attendees.slice(0, 4).map((a) => a.name).join(", ")}${e.attendees.length > 4 ? ` +${e.attendees.length - 4}` : ""}` : ""}` +
+          `${e.response === "needsAction" ? " · YANIT BEKLİYOR" : ""}${e.description ? ` · ${one(e.description, 100)}` : ""}`,
       );
   }
   if (s.gmail.items.length) {
-    L.push("", `#### Gmail gelen kutusu — okunmamış ${s.gmail.unread ?? s.gmail.items.filter((m) => m.unread).length} (son e-postalar)`);
-    for (const m of s.gmail.items.slice(0, 30))
-      L.push(`- ${m.unread ? "[OKUNMADI] " : ""}${m.important ? "[ÖNEMLİ] " : ""}${trTime(m.date)} · ${m.from} <${m.fromEmail}> · "${m.subject}" — ${m.snippet.slice(0, 220)}`);
+    const mails = [...s.gmail.items].sort((a, b) => Number(b.unread || b.important) - Number(a.unread || a.important)).slice(0, 15);
+    L.push("", `#### Gmail — okunmamış ${s.gmail.unread ?? s.gmail.items.filter((m) => m.unread).length} (öncelikliler)`);
+    for (const m of mails) L.push(`- ${m.unread ? "[OKUNMADI] " : ""}${m.important ? "[ÖNEMLİ] " : ""}${trTime(m.date)} · ${m.from} · "${one(m.subject, 90)}" — ${one(m.snippet, 140)}`);
   }
   if (s.chat.items.length) {
     L.push("", "#### Google Chat (son mesajlar)");
-    for (const sp of s.chat.items.slice(0, 10)) {
+    for (const sp of s.chat.items.slice(0, 6)) {
       L.push(`- ${sp.kind === "DIRECT_MESSAGE" ? "DM" : "Alan"}: ${sp.title}`);
-      for (const m of sp.messages.slice(-6)) L.push(`  - ${trTime(m.time)} ${m.sender}: ${m.text.replace(/\s+/g, " ").slice(0, 280)}`);
+      for (const m of sp.messages.slice(-3)) L.push(`  - ${trTime(m.time)} ${m.sender}: ${one(m.text, 180)}`);
     }
   }
   if (s.meet.items.length) {
-    L.push("", "#### Google Meet (son toplantılar)");
-    for (const m of s.meet.items.slice(0, 10)) {
-      L.push(`- ${trTime(m.start)} · ${m.title ?? m.code ?? "Toplantı"}${m.participants.length ? ` · katılanlar: ${m.participants.join(", ")}` : ""}${m.transcripts.length ? " · transkript var" : ""}`);
-      if (m.transcriptText) L.push(`  Transkript (başı):\n  ${m.transcriptText.slice(0, 3500).replace(/\n/g, "\n  ")}`);
-    }
+    L.push("", "#### Google Meet (son toplantılar; transkript için arşivde ara)");
+    s.meet.items.slice(0, 5).forEach((m, i) => {
+      L.push(`- ${trTime(m.start)} · ${m.title ?? m.code ?? "Toplantı"}${m.participants.length ? ` · ${m.participants.slice(0, 5).join(", ")}` : ""}${m.transcripts.length ? " · transkript var" : ""}`);
+      if (i === 0 && m.transcriptText) L.push(`  Transkript (başı): ${one(m.transcriptText, 1200)}`);
+    });
   }
   const errs = (["calendar", "gmail", "chat", "meet"] as const).filter((k) => s[k].error);
-  if (errs.length) L.push("", `(Senkron edilemeyen kaynaklar: ${errs.map((k) => s[k].error).join(" | ")})`);
+  if (errs.length) L.push("", `(Senkron edilemeyen kaynaklar: ${errs.map((k) => one(s[k].error!, 120)).join(" | ")})`);
   return L.join("\n");
 }

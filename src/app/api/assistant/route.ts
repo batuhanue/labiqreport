@@ -1,10 +1,12 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
-import { buildContext, GEMINI_MODEL, loadKnowledge, systemPrompt } from "@/lib/assistant";
+import { buildContext, liveMessage, loadKnowledge, staticPrompt } from "@/lib/assistant";
 import { bad } from "@/lib/api";
 import { PERIOD_RE } from "@/lib/period";
 import { getItem, search } from "@/lib/archive";
 import { status as googleStatus } from "@/lib/google";
 import type { ArchiveSource } from "@/lib/google-types";
+import { ASSISTANT_MODEL, claude, claudeConfigured, costUsd, friendlyError, getUsage, isTransient, recordUsage } from "@/lib/claude";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -19,283 +21,234 @@ interface Img {
   label: string;
 }
 
-const BASE = () => process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
-const modelUrl = (method: string) => `${BASE()}/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:${method}`;
-
-/** fetch + zaman aşımı: Vercel fonksiyonu öldürmeden önce anlaşılır bir hata döndürebilmek için. */
-async function timed(url: string, init: RequestInit, ms: number) {
-  try {
-    return await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(ms) });
-  } catch (e) {
-    const name = (e as Error)?.name;
-    if (name === "TimeoutError" || name === "AbortError") throw new Error(`Gemini ${Math.round(ms / 1000)} sn içinde yanıt vermedi (zaman aşımı)`);
-    throw e;
-  }
-}
-
-async function errorText(r: Response) {
-  const t = await r.text().catch(() => "");
-  try {
-    const j = JSON.parse(t);
-    return j.error?.message ?? t;
-  } catch {
-    return t;
-  }
-}
+const keyHint = () => {
+  const k = process.env.ANTHROPIC_API_KEY?.trim() ?? "";
+  return k ? `${k.slice(0, 7)}…${k.slice(-4)} (${k.length} karakter)` : null;
+};
 
 /**
- * GET: yapılandırma durumu.
- * GET ?test=1: bağlantı teşhisi — anahtar geçerli mi, model hesapta var mı, küçük bir deneme isteği ne döndürüyor.
+ * GET: yapılandırma durumu. ?usage=1: token/maliyet kaydı.
+ * ?test=1: bağlantı teşhisi — anahtar geçerli mi, model hesapta var mı, küçük bir deneme isteği ne döndürüyor.
  */
 export async function GET(req: Request) {
-  const key = process.env.GEMINI_API_KEY;
-  const configured = !!key;
-  if (new URL(req.url).searchParams.get("test") !== "1" || !key) {
-    return NextResponse.json({ configured, model: GEMINI_MODEL, keyHint: key ? `${key.slice(0, 4)}…${key.slice(-4)} (${key.length} karakter)` : null });
-  }
-  const out: Record<string, unknown> = { configured, model: GEMINI_MODEL, keyHint: `${key.slice(0, 4)}…${key.slice(-4)} (${key.length} karakter)` };
-  if (key.trim() !== key) out.warning = "Anahtarın başında/sonunda boşluk var — Vercel'de silip yeniden yapıştırın.";
+  const q = new URL(req.url).searchParams;
+  const configured = claudeConfigured();
+  if (q.get("usage") === "1") return NextResponse.json({ ...(await getUsage()), model: ASSISTANT_MODEL });
+  const base = { configured, model: ASSISTANT_MODEL, keyHint: keyHint() };
+  if (q.get("test") !== "1" || !configured) return NextResponse.json(base);
 
-  // 1) modeller
+  const out: Record<string, unknown> = { ...base };
+  const raw = process.env.ANTHROPIC_API_KEY ?? "";
+  if (raw.trim() !== raw) out.warning = "Anahtarın başında/sonunda boşluk var — Vercel'de silip yeniden yapıştırın.";
+  // 1) anahtar + model
   try {
-    const r = await timed(`${BASE()}/v1beta/models?pageSize=1000`, { headers: { "x-goog-api-key": key.trim() } }, 15000);
-    out.listStatus = r.status;
-    if (r.ok) {
-      const j = (await r.json()) as { models?: { name: string }[] };
-      const names = (j.models ?? []).map((m) => m.name.replace(/^models\//, ""));
-      out.modelFound = names.includes(GEMINI_MODEL);
-      out.flashModels = names.filter((n) => /flash/i.test(n)).slice(-12);
-    } else out.listError = (await errorText(r)).slice(0, 400);
+    const m = await claude().models.retrieve(ASSISTANT_MODEL);
+    out.listStatus = 200;
+    out.modelFound = true;
+    out.modelName = m.display_name;
   } catch (e) {
-    out.listError = e instanceof Error ? e.message : String(e);
+    if (e instanceof Anthropic.NotFoundError) {
+      out.listStatus = 200;
+      out.modelFound = false;
+    } else {
+      out.listStatus = e instanceof Anthropic.APIError ? (e.status ?? 0) : 0;
+      out.listError = friendlyError(e);
+    }
   }
-
-  // 2) küçük deneme (akışsız)
+  // 2) küçük deneme
   const t0 = Date.now();
   try {
-    const r = await timed(
-      modelUrl("generateContent"),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": key.trim() },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: "Bağlantı testi: yalnızca 'Hazırım' yaz." }] }],
-          generationConfig: { thinkingConfig: { thinkingLevel: "low" }, maxOutputTokens: 256 },
-        }),
-      },
-      30000,
-    );
-    out.testStatus = r.status;
+    const r = await claude().messages.create({
+      model: ASSISTANT_MODEL,
+      max_tokens: 1024,
+      output_config: { effort: "low" },
+      messages: [{ role: "user", content: "Bağlantı testi: yalnızca 'Hazırım' yaz." }],
+    });
+    out.testStatus = 200;
     out.ms = Date.now() - t0;
-    if (r.ok) {
-      const j = await r.json();
-      out.testText = (j.candidates?.[0]?.content?.parts ?? []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text ?? "").join("");
-      out.ok = true;
-    } else out.testError = (await errorText(r)).slice(0, 600);
+    out.testText = r.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+    out.ok = true;
   } catch (e) {
     out.ms = Date.now() - t0;
-    out.testError = e instanceof Error ? e.message : String(e);
+    out.testStatus = e instanceof Anthropic.APIError ? (e.status ?? 0) : 0;
+    out.testError = friendlyError(e);
   }
-  out.region = process.env.VERCEL_REGION ?? null;
   return NextResponse.json(out);
 }
 
-/** POST: soruyu bağlamla birlikte Gemini'ye gönderir; yanıtı düz metin akışı (veya stream:false ile tek parça) döndürür. */
+/** POST: soruyu bağlamla birlikte Claude'a gönderir; yanıtı düz metin akışı (veya stream:false ile tek parça) döndürür. */
 export async function POST(req: Request) {
-  const key = process.env.GEMINI_API_KEY?.trim();
-  if (!key) return bad("GEMINI_API_KEY tanımlı değil. Vercel → Settings → Environment Variables'a ekleyip Redeploy yapın.", 503);
+  if (!claudeConfigured()) return bad("ANTHROPIC_API_KEY tanımlı değil. Vercel → Settings → Environment Variables'a ekleyip Redeploy yapın.", 503);
 
   const body = (await req.json().catch(() => null)) as { messages?: Msg[]; period?: string; images?: Img[]; deep?: boolean; stream?: boolean; google?: boolean } | null;
-  const messages = (body?.messages ?? []).filter((x) => x.text?.trim()).slice(-20);
-  if (!messages.length || messages[messages.length - 1].role !== "user") return bad("Soru boş");
+  const history = (body?.messages ?? []).filter((x) => x.text?.trim()).slice(-20);
+  if (!history.length || history[history.length - 1].role !== "user") return bad("Soru boş");
   const period = body?.period && PERIOD_RE.test(body.period) ? body.period : null;
   const images = (body?.images ?? []).filter((x) => /^image\/(png|jpeg|webp)$/.test(x.mime) && x.data.length < 1_500_000).slice(0, 6);
   const streaming = body?.stream !== false;
+  const started = Date.now();
+  const left = () => 55000 - (Date.now() - started);
+
+  // Google bağlıysa asistan geçmiş arşivde (e-posta, Chat, Meet transkripti, takvim) arama yapabilir
+  const archiveOn = body?.google !== false && !!(await googleStatus("", false).catch(() => null))?.connected;
 
   let system: string;
+  let context: string;
   try {
     const [k, ctx] = await Promise.all([loadKnowledge(), buildContext(period, { google: body?.google !== false })]);
-    system = systemPrompt(k, ctx);
+    system = staticPrompt(k);
+    context = ctx;
   } catch (e) {
     return bad(`Bağlam hazırlanamadı: ${e instanceof Error ? e.message : e}`, 500);
   }
 
-  const contents: { role: string; parts: Record<string, unknown>[] }[] = messages.map((x, i) => {
-    const parts: Record<string, unknown>[] = [{ text: x.text.slice(0, 20000) }];
-    if (i === messages.length - 1 && images.length) {
-      for (const im of images) {
-        parts.push({ text: `[El yazısı not görüntüsü: ${im.label}]` });
-        parts.push({ inline_data: { mime_type: im.mime, data: im.data } });
-      }
+  /*
+   * Önbellek düzeni (önek eşleşmesi: araçlar → sistem → mesajlar):
+   *  - sistem (kurallar + bilgi dosyaları, ~30k token) açık önbellek noktası: her soruda önbellekten okunur
+   *  - önceki mesajlar değişmez; canlı veri SON kullanıcı mesajının başında (her soruda değişen kısım en sonda)
+   *  - üst düzey otomatik önbellek: arşiv araması turlarında bütün konuşma önbellekten okunur
+   */
+  const messages: Anthropic.MessageParam[] = history.map((x, i) => {
+    if (i < history.length - 1) return { role: x.role, content: x.text.slice(0, 20000) };
+    const content: Anthropic.ContentBlockParam[] = [{ type: "text", text: liveMessage(context) }];
+    for (const im of images) {
+      content.push({ type: "text", text: `[El yazısı not görüntüsü: ${im.label}]` });
+      content.push({ type: "image", source: { type: "base64", media_type: im.mime as "image/png" | "image/jpeg" | "image/webp", data: im.data } });
     }
-    return { role: x.role === "assistant" ? "model" : "user", parts };
+    content.push({ type: "text", text: `SORU: ${x.text.slice(0, 20000)}` });
+    return { role: "user", content };
   });
+  const systemBlocks: Anthropic.TextBlockParam[] = [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+  const effort = body?.deep ? "high" : "low";
 
-  // Google bağlıysa asistan geçmiş arşivde (e-posta, Chat, Meet transkripti, takvim) arama yapabilir
-  const archiveOn = body?.google !== false && !!(await googleStatus("", false).catch(() => null))?.connected;
-  const genConfig = { thinkingConfig: { thinkingLevel: body?.deep ? "high" : "low" }, maxOutputTokens: 8192 };
-  // Gemini 3: temperature/top_p kullanılmaz; düşünme seviyesi thinkingLevel ile.
-  // Sıra (araçlar → sistem → konuşma) örtük önbellek için sabit kalır.
-  const payload = () =>
-    JSON.stringify({
-      ...(archiveOn ? { tools: [{ functionDeclarations: TOOLS }] } : {}),
-      system_instruction: { parts: [{ text: system }] },
-      contents,
-      generationConfig: genConfig,
-    });
-  const url = streaming ? modelUrl("streamGenerateContent?alt=sse") : modelUrl("generateContent");
-  const call = (ms: number) => timed(url, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body: payload() }, ms);
+  const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+  let rounds = 0;
+  let retries = 0;
+  let finalError: string | undefined;
 
-  // Not: istemcinin iptal sinyali Gemini isteğine bağlanmaz (Vercel'de erken kesmeye yol açabiliyordu).
-  // Zaman aşımları Vercel'in 60 sn sınırının altında tutulur; böylece bağlantı sessizce kopmak yerine hata mesajı döner.
-  const started = Date.now();
-  const left = () => 54000 - (Date.now() - started);
-  const first = await call(streaming ? 40000 : 50000).catch((e) => e as Error);
-  if (first instanceof Error) return bad(`Gemini'ye ulaşılamadı: ${first.message}`, 502);
-  if (!first.ok || !first.body) return bad(`Gemini hatası (${first.status}): ${(await errorText(first)).slice(0, 500)}`, 502);
-
-  const usage = { prompt: 0, cached: 0, output: 0 };
-  const addUsage = (u?: Record<string, number>) => {
-    if (!u) return;
-    usage.prompt += u.promptTokenCount ?? 0;
-    usage.cached += u.cachedContentTokenCount ?? 0;
-    usage.output += (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0);
-  };
-  const noteOf = (ev: Ev) => {
-    const reason = ev.candidates?.[0]?.finishReason;
-    let t = "";
-    if (reason && !["STOP", "MAX_TOKENS", "FINISH_REASON_UNSPECIFIED"].includes(reason)) t += `\n\n_(yanıt durduruldu: ${reason})_`;
-    if (ev.promptFeedback?.blockReason) t += `\n\n_(istek engellendi: ${ev.promptFeedback.blockReason})_`;
-    return t;
-  };
-
-  /** Bir model turunu okur: metni emit eder, tüm parçaları (araç çağrıları + imzalar dahil) döndürür. */
-  async function readRound(res: Response, emit: (s: string) => void) {
-    const parts: GPart[] = [];
-    let u: Record<string, number> | undefined;
-    const onEv = (ev: Ev) => {
-      if (ev.usageMetadata) u = ev.usageMetadata;
-      if (ev.error) emit(`\n\n⚠️ Gemini: ${ev.error.message ?? "hata"}`);
-      for (const p of ev.candidates?.[0]?.content?.parts ?? []) {
-        parts.push(p);
-        if (p.text && !p.thought) emit(p.text);
-      }
-      const n = noteOf(ev);
-      if (n) emit(n);
+  /** Tek model turu: metni akıtır, tamamlanan mesajı döndürür. */
+  async function turn(emit: (s: string) => void) {
+    const params = {
+      model: ASSISTANT_MODEL,
+      max_tokens: 16000,
+      cache_control: { type: "ephemeral" as const },
+      system: systemBlocks,
+      ...(archiveOn ? { tools: TOOLS } : {}),
+      output_config: { effort: effort as "low" | "high" },
+      messages,
     };
-    if (!streaming) {
-      onEv(await res.json().catch(() => ({})));
-      addUsage(u);
-      return { parts, timedOut: false };
-    }
-    const reader = res.body!.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    let timedOut = false;
-    try {
-      for (;;) {
-        const next = await Promise.race([reader.read(), new Promise<null>((r) => setTimeout(() => r(null), Math.max(0, left())))]);
-        if (!next) {
-          emit("\n\n_(yanıt süre sınırında kesildi — soruyu daraltıp tekrar dene)_");
-          reader.cancel().catch(() => {});
-          timedOut = true;
-          break;
-        }
-        if (next.done) break;
-        buf += dec.decode(next.value, { stream: true });
-        let i;
-        while ((i = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, i).trim();
-          buf = buf.slice(i + 1);
-          if (!line.startsWith("data:")) continue;
-          const json = line.slice(5).trim();
-          if (!json || json === "[DONE]") continue;
-          try {
-            onEv(JSON.parse(json));
-          } catch {}
-        }
-      }
-    } catch (e) {
-      emit(`\n\n_(bağlantı kesildi: ${e instanceof Error ? e.message : e})_`);
-      timedOut = true;
-    }
-    addUsage(u);
-    return { parts, timedOut };
+    const opts = { timeout: Math.max(5000, Math.min(50_000, left() - 2000)) };
+    if (!streaming) return claude().messages.create(params, opts);
+    const stream = claude().messages.stream(params, opts);
+    stream.on("text", (delta) => emit(delta));
+    return stream.finalMessage();
   }
 
-  /** Araç çağrılarını (en fazla 4 tur) yürütüp son yanıta kadar ilerler. */
+  /** Araç çağrılarını (en fazla 5 tur) yürütüp son yanıta kadar ilerler; yarıda kopan turu bir kez yeniden dener. */
   async function converse(emit: (s: string) => void) {
-    let res = first as Response;
-    for (let round = 0; ; round++) {
-      const { parts, timedOut } = await readRound(res, emit);
-      const calls = parts.filter((p) => p.functionCall);
-      if (!calls.length || timedOut) break;
-      if (round >= 4 || left() < 9000) {
-        emit("\n\n_(arama turu sınırına ulaşıldı)_");
-        break;
+    let roundRetries = 0;
+    for (let round = 0; round < 6; round++) {
+      rounds++;
+      let emitted = 0;
+      let message: Anthropic.Message;
+      try {
+        message = await turn((t) => {
+          emitted += t.length;
+          emit(t);
+        });
+      } catch (e) {
+        // akış ortasında koptuysa yarım metni istemcide sil (\u001fX<n>\u001f) ve turu yeniden iste
+        if (emitted) emit(`\u001fX${emitted}\u001f`);
+        if (isTransient(e) && roundRetries < 1 && left() > 12000) {
+          roundRetries++;
+          retries++;
+          emit("\u001fS⏳ Claude yoğun, yeniden deneniyor…\u001f");
+          round--;
+          continue;
+        }
+        finalError = friendlyError(e);
+        emit(`\n\n⚠️ ${finalError}`);
+        return;
       }
-      contents.push({ role: "model", parts });
-      const responses: Record<string, unknown>[] = [];
+      usage.input += message.usage.input_tokens ?? 0;
+      usage.cacheRead += message.usage.cache_read_input_tokens ?? 0;
+      usage.cacheWrite += message.usage.cache_creation_input_tokens ?? 0;
+      usage.output += message.usage.output_tokens ?? 0;
+      if (!streaming) for (const b of message.content) if (b.type === "text") emit(b.text);
+
+      if (message.stop_reason === "refusal") {
+        emit("\n\n_(Claude bu isteği yanıtlamadı — soruyu farklı ifade etmeyi dene)_");
+        return;
+      }
+      const calls = message.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+      if (message.stop_reason !== "tool_use" || !calls.length) {
+        if (message.stop_reason === "max_tokens") emit("\n\n_(yanıt uzunluk sınırında kesildi)_");
+        return;
+      }
+      if (left() < 10000) {
+        emit("\n\n_(süre sınırı: arama sonuçları işlenemedi, soruyu daraltıp tekrar dene)_");
+        return;
+      }
+      // düşünce blokları dahil asistan içeriği olduğu gibi geri gönderilir
+      messages.push({ role: "assistant", content: message.content });
+      const results: Anthropic.ToolResultBlockParam[] = [];
       for (const c of calls) {
-        const fc = c.functionCall!;
-        emit(`\u001fS${statusOf(fc)}\u001f`);
-        const response = await runTool(fc).catch((e) => ({ hata: e instanceof Error ? e.message : String(e) }));
-        responses.push({ functionResponse: { ...(fc.id ? { id: fc.id } : {}), name: fc.name, response } });
+        emit(`\u001fS${statusOf(c)}\u001f`);
+        try {
+          results.push({ type: "tool_result", tool_use_id: c.id, content: JSON.stringify(await runTool(c)) });
+        } catch (e) {
+          results.push({ type: "tool_result", tool_use_id: c.id, is_error: true, content: e instanceof Error ? e.message : String(e) });
+        }
       }
-      contents.push({ role: "user", parts: responses });
-      const next = await call(Math.min(40000, left())).catch((e) => e as Error);
-      if (next instanceof Error || !next.ok || !next.body) {
-        emit(`\n\n⚠️ Gemini: ${next instanceof Error ? next.message : `HTTP ${next.status} ${(await errorText(next)).slice(0, 300)}`}`);
-        break;
-      }
-      res = next;
+      // paralel çağrıların tüm sonuçları tek kullanıcı mesajında
+      messages.push({ role: "user", content: results });
     }
+    emit("\n\n_(arama turu sınırına ulaşıldı)_");
   }
-  const meta = () => `\u001eMETA${JSON.stringify(usage)}`;
+
+  const totals = () => ({ prompt: usage.input + usage.cacheRead + usage.cacheWrite, cached: usage.cacheRead, written: usage.cacheWrite, output: usage.output });
+  const meta = () => `\u001eMETA${JSON.stringify({ ...totals(), model: ASSISTANT_MODEL, rounds, cost: costUsd(ASSISTANT_MODEL, usage) })}`;
+  const log = () =>
+    recordUsage({ at: new Date().toISOString(), model: ASSISTANT_MODEL, rounds, ...totals(), cost: costUsd(ASSISTANT_MODEL, usage), ms: Date.now() - started, error: finalError?.slice(0, 200), retries, ctxChars: context.length });
 
   // akışsız (yedek yol)
   if (!streaming) {
     let text = "";
     await converse((s) => (text += s));
+    await log();
     if (!text.replace(/\u001f[^\u001f]*\u001f/g, "").trim()) text += "_(boş yanıt)_";
     return new Response(text + meta(), { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
   }
 
-  // SSE → düz metin akışı (düşünce parçaları atlanır; \u001fS…\u001f = durum satırı)
+  // düz metin akışı (\u001fS…\u001f = durum satırı, \u001fX<n>\u001f = son n karakteri sil, \u001eMETA = kullanım)
   const enc = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
         await converse((s) => controller.enqueue(enc.encode(s)));
       } catch (e) {
-        controller.enqueue(enc.encode(`\n\n_(bağlantı kesildi: ${e instanceof Error ? e.message : e})_`));
+        finalError = friendlyError(e);
+        controller.enqueue(enc.encode(`\n\n⚠️ ${finalError}`));
       } finally {
+        await log();
         controller.enqueue(enc.encode(meta()));
         controller.close();
       }
     },
   });
-  return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no", "X-Model": GEMINI_MODEL } });
+  return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no", "X-Model": ASSISTANT_MODEL } });
 }
 
-// ------------------------------------------------------------------ araçlar
-type GPart = { text?: string; thought?: boolean; thoughtSignature?: string; functionCall?: { id?: string; name: string; args?: Record<string, unknown> } };
-type Ev = {
-  candidates?: { content?: { parts?: GPart[] }; finishReason?: string }[];
-  promptFeedback?: { blockReason?: string };
-  usageMetadata?: Record<string, number>;
-  error?: { message?: string };
-};
-
+// ------------------------------------------------------------------ araçlar (Google arşivi)
 const SOURCE_ENUM = ["gmail", "chat", "meet", "calendar"];
-const TOOLS = [
+const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_archive",
     description:
       "Batuhan'ın Google Workspace arşivinde (geçmiş tüm e-postalar, Google Chat mesajları, Meet toplantı transkriptleri, takvim etkinlikleri) arama yapar. " +
       "Geçmişe dönük her soruda (kim ne dedi, ne zaman konuşuldu, hangi e-posta geldi, toplantıda ne kararlaştırıldı) kullan. " +
       "query boş bırakılıp tarih aralığı verilirse o aralıktaki kayıtları en yeniden eskiye listeler. Gerekirse farklı kelimelerle birden çok kez ara.",
-    parameters: {
+    input_schema: {
       type: "object",
       properties: {
         query: { type: "string", description: "Anahtar kelimeler (kişi adı, konu, kod, ürün vb.). Türkçe ekler sorun değil." },
@@ -309,7 +262,7 @@ const TOOLS = [
   {
     name: "get_archive_item",
     description: "search_archive sonucundaki bir kaydın tam metnini getirir (uzun e-posta gövdesi veya toplantı transkriptinin tamamı için).",
-    parameters: {
+    input_schema: {
       type: "object",
       properties: {
         source: { type: "string", enum: SOURCE_ENUM },
@@ -322,16 +275,16 @@ const TOOLS = [
 
 const trDate = (s: string) => new Date(s).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul", dateStyle: "medium", timeStyle: "short" });
 
-function statusOf(fc: { name: string; args?: Record<string, unknown> }) {
-  const a = fc.args ?? {};
+function statusOf(fc: { name: string; input: unknown }) {
+  const a = (fc.input ?? {}) as Record<string, unknown>;
   if (fc.name === "get_archive_item") return "📄 Kayıt okunuyor…";
   const src = { gmail: "e-postalarda", chat: "Chat'te", meet: "toplantılarda", calendar: "takvimde" }[String(a.source)] ?? "arşivde";
   const range = a.after || a.before ? ` (${a.after ?? "…"} – ${a.before ?? "…"})` : "";
   return a.query ? `🔎 ${src[0].toUpperCase() + src.slice(1)} aranıyor: “${String(a.query).slice(0, 60)}”${range}` : `🔎 ${src[0].toUpperCase() + src.slice(1)} kayıtlar listeleniyor${range}`;
 }
 
-async function runTool(fc: { name: string; args?: Record<string, unknown> }) {
-  const a = fc.args ?? {};
+async function runTool(fc: { name: string; input: unknown }) {
+  const a = (fc.input ?? {}) as Record<string, unknown>;
   const source = SOURCE_ENUM.includes(String(a.source)) ? (a.source as ArchiveSource) : undefined;
   if (fc.name === "search_archive") {
     const hits = await search({ query: a.query ? String(a.query) : undefined, source, after: a.after ? String(a.after) : undefined, before: a.before ? String(a.before) : undefined, limit: Number(a.limit) || 15 });

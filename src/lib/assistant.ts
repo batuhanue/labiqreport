@@ -9,7 +9,6 @@ import { areaProgress, deadlineInfo, normalizePeriod, overallProgress, periodLab
 import type { Todo, TodoStore } from "./todo";
 import type { Mark, PeriodData } from "./types";
 
-export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 
 /* ------------------------------------------------------------------ bilgi dosyaları */
 // knowledge/*.md (varsayılanlar, depoda) + uygulama içinden yapılan düzenlemeler/eklenen dosyalar (veritabanı).
@@ -168,15 +167,15 @@ export async function buildContext(viewPeriod?: string | null, opts: { google?: 
 }
 
 /**
- * Sıra önemli: sabit kurallar + bilgi dosyaları BAŞTA, değişen canlı veri SONDA.
- * Böylece Gemini'nin örtük önbelleği (implicit caching) ~30k token'lık sabit öneki her soruda yeniden kullanır;
- * dosyaların sonuna eklenen içerik de öneki bozmaz.
+ * Sabit sistem metni: kurallar + bilgi dosyaları. Claude'un istem önbelleğinde tutulur (cache_control);
+ * ~30k token'lık bu önek her soruda ve her arşiv araması turunda önbellekten okunur.
+ * Değişen canlı veri sistem metnine girmez, son kullanıcı mesajının başında gönderilir.
  */
-export function systemPrompt(knowledge: string, context: string) {
+export function staticPrompt(knowledge: string) {
   return `Sen Batuhan Başar'ın kişisel yapay zekâ iş asistanısın. Türkçe, kısa, net ve aksiyona dönük yanıt ver.
-Aşağıda iki kaynak var: (1) BİLGİ DOSYALARI — Batuhan'ın kim olduğu, şirketi, rolü ve sınırı, iş tanımı, takvimi, atanmış görevleri, açık bulguları, kişiler ve kontrol yöntemleri; (2) CANLI VERİ — uygulamadaki güncel durum ve (bağlıysa) Google Workspace verisi: takvim, Gmail, Google Chat ve Meet toplantıları/transkriptleri.
+İki kaynağın var: (1) aşağıdaki BİLGİ DOSYALARI — Batuhan'ın kim olduğu, şirketi, rolü ve sınırı, iş tanımı, takvimi, atanmış görevleri, açık bulguları, kişiler ve kontrol yöntemleri; (2) son kullanıcı mesajının başındaki CANLI VERİ bloğu — uygulamadaki şu anki durum ve (bağlıysa) Google Workspace verisi: takvim, Gmail, Google Chat ve Meet toplantıları/transkriptleri.
 Batuhan'ı bu dosyalardan tanıyorsun: onu yeniden tanıtma, adıyla hitap et; geçmişini, çalışma biçimini ve tercihlerini bildiğini davranışınla göster.
-Bilgi dosyalarındaki durum bilgileri belirli bir tarihe aittir; CANLI VERİ ile çelişirse canlı veriye güven ve farkı belirt.
+Bilgi dosyalarındaki durum bilgileri belirli bir tarihe aittir; CANLI VERİ ile çelişirse canlı veriye güven ve farkı belirt. Önceki mesajlarda yanıtladığın durum bilgisi eskimiş olabilir; her zaman en son CANLI VERİ'yi esas al. Asıl soru CANLI VERİ'den sonraki SORU satırıdır.
 
 Kurallar:
 - Soruları önce CANLI VERİ'ye dayanarak yanıtla; madde kodu (ör. R-02-4), hastane ve not alıntısıyla kanıt göster.
@@ -197,8 +196,13 @@ cuma 11:00 Cuma toplantısı tek sayfa özeti hazırla #toplantı
 - El yazısı not görüntüleri eklenmişse onları da oku ve gerekiyorsa içeriğine atıf yap.
 
 =============== BİLGİ DOSYALARI ===============
-${knowledge}
+${knowledge}`;
+}
 
-=============== CANLI VERİ ===============
-${context}`;
+/** Canlı veri, sabit önekten (önbellek) sonra konuşmanın ilk mesajı olarak gönderilir. */
+export const liveMessage = (context: string) => `=============== CANLI VERİ (uygulamadan, şu an) ===============\n${context}`;
+
+/** Geriye dönük uyumluluk: tek parça sistem metni */
+export function systemPrompt(knowledge: string, context: string) {
+  return `${staticPrompt(knowledge)}\n\n${liveMessage(context)}`;
 }
