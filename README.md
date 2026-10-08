@@ -54,7 +54,7 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   yaklaşan/geçen rapor alanı terminleri, termini gelen/geciken aksiyonlar, Cuma 12:00 toplantı özeti ve ay başı
   hatırlatması. Zil menüsü aynı hatırlatmaları uygulama içinde de gösterir; hangi bildirimlerin geleceği oradan seçilir.
   iPhone/iPad'de önce Safari → Paylaş → **Ana Ekrana Ekle** (iOS 16.4+), sonra uygulamayı oradan açıp bildirimi aç.
-- **Google Workspace (Takvim, Gmail, Chat, Meet):** "Google" sayfasından şirket hesabı tek tıkla bağlanır (salt okunur).
+- **Google Workspace (Takvim, Gmail, Chat, Meet, Drive):** "Google" sayfasından şirket hesabı tek tıkla bağlanır (salt okunur).
   Takvim (sıradaki toplantı + Meet'e katıl), gelen kutusu (okunmamış/önemli), Chat alanları ve DM'ler, Meet toplantı
   kayıtları (katılımcılar, transkript/kayıt bağlantıları) görünür; her öğeden tek tuşla görev oluşturulur.
   Senkron: uygulama açıkken 5 dakikada bir, elle yenileme ve her sabah cron. Asistan bu verileri (ve son toplantı
@@ -64,6 +64,11 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   eder); sonra yeni gelenler otomatik eklenir. Asistan geçmişe dönük sorularda arşivde arar (Claude araç kullanımı).
   Google sayfası → Arşiv sekmesinden ilerleme görülür ve doğrudan aranabilir. Bağlantı sunucuda saklandığından tüm
   cihazlarda tek seferlik giriş yeterlidir.
+  **Drive:** Google sayfası → Drive sekmesi: son değişenler, benimle paylaşılanlar, yıldızlılar, klasör gezinme ve
+  ad/içerik araması (ortak drive'lar dahil). Dosyalar uygulama içinde okunur: Google Dokümanlar/Slaytlar metin,
+  E-Tablolar tablo olarak; Word/Excel/PowerPoint dosyalarının metni de çıkarılır; PDF ve görseller Drive önizlemesiyle
+  açılır. Dosya içerikleri arşive de yazılır, asistan "şu tablodaki…/prosedürde ne yazıyor" sorularında Drive'da arar.
+  Önceden bağlanmış hesapta Drive için bir kez **yeniden bağlanıp** Drive iznini vermek gerekir.
 
 - **Kampüs görünümü (tablet + masaüstü):** Denetim sayfası 3B, "cozy" bir kampüs olarak açılır (React Three Fiber).
   10 rapor alanı = 10 depo binası, her kontrol maddesi = binanın önündeki yükleme rampası. Rampanın önünde iki palet
@@ -85,7 +90,7 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
    - Zamanlama `vercel.json` içinde: `0 6 * * *` (UTC) = her gün 09:00 İstanbul
 5. Google Workspace bağlantısı (bir kerelik):
    - console.cloud.google.com → şirket hesabıyla yeni proje
-   - **APIs & Services → Library**: Gmail API, Google Calendar API, Google Chat API, Google Meet REST API, People API → Enable
+   - **APIs & Services → Library**: Gmail API, Google Calendar API, Google Chat API, Google Meet REST API, People API, Google Drive API → Enable
    - **OAuth consent screen**: User type **Internal** (yalnızca şirket hesapları; Google doğrulaması gerekmez)
    - **Credentials → Create credentials → OAuth client ID → Web application**;
      Authorized redirect URI: `https://<vercel-alan-adın>/api/google/callback`

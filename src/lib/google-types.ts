@@ -1,5 +1,7 @@
 /** Google Workspace senkron verisi — sunucu ve istemci ortak tipleri. */
 
+export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+
 export interface GAccount {
   email: string;
   name: string;
@@ -66,6 +68,26 @@ export interface GMeeting {
   transcriptText?: string;
 }
 
+export interface GFile {
+  id: string;
+  name: string;
+  mime: string;
+  /** son değişiklik (ISO) */
+  modified: string;
+  modifiedBy?: string;
+  owner?: string;
+  /** Drive'da açma bağlantısı */
+  link: string;
+  size?: number;
+  /** klasör mü */
+  folder?: boolean;
+  /** benimle paylaşılan (sahibi başkası) */
+  shared?: boolean;
+  starred?: boolean;
+  /** ortak drive adı ya da kimliği */
+  drive?: string;
+}
+
 interface Part<T> {
   items: T[];
   error?: string;
@@ -79,6 +101,8 @@ export interface GoogleSnapshot {
   gmail: Part<GMail> & { unread?: number };
   chat: Part<GChatSpace>;
   meet: Part<GMeeting>;
+  /** son değişen Drive dosyaları (eski görüntülerde yok) */
+  drive?: Part<GFile>;
 }
 
 export interface GoogleStatus {
@@ -94,7 +118,7 @@ export interface GoogleStatus {
 }
 
 // ------------------------------------------------------------------ arşiv (geriye dönük hafıza)
-export type ArchiveSource = "gmail" | "chat" | "meet" | "calendar";
+export type ArchiveSource = "gmail" | "chat" | "meet" | "calendar" | "drive";
 
 export interface ArchiveItem {
   source: ArchiveSource;
@@ -128,6 +152,8 @@ export interface ArchiveProgress {
   /** geçmişin tamamı indirildi mi (kaynak bazında) */
   done: Partial<Record<ArchiveSource, boolean>>;
   running?: boolean;
+  /** izni verilmemiş kaynaklar (yeniden bağlanınca indirilir) */
+  needsScope?: ArchiveSource[];
   lastError?: string;
   updatedAt?: string;
 }

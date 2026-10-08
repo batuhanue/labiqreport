@@ -14,9 +14,9 @@ import { iso, newTodo } from "@/lib/todo";
 
 /** Türkçe duyarsız karşılaştırma */
 const norm = (s: string) => s.toLocaleLowerCase("tr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i");
-import type { ArchiveHit, ArchiveProgress, ArchiveSource, GChatSpace, GEvent, GMail, GMeeting, GoogleSnapshot } from "@/lib/google-types";
+import { DRIVE_SCOPE, type ArchiveHit, type ArchiveProgress, type ArchiveSource, type GChatSpace, type GEvent, type GFile, type GMail, type GMeeting, type GoogleSnapshot } from "@/lib/google-types";
 
-type Tab = "calendar" | "gmail" | "chat" | "meet" | "archive";
+type Tab = "calendar" | "gmail" | "chat" | "meet" | "drive" | "archive";
 
 // ------------------------------------------------------------------ zaman yardımcıları
 const hm = (s: string) => new Date(s).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
@@ -126,6 +126,7 @@ export default function GooglePage() {
                   { value: "gmail", label: <TabLabel icon="mail" text="Gmail" n={status.snapshot.gmail.unread} /> },
                   { value: "chat", label: <TabLabel icon="chat" text="Chat" /> },
                   { value: "meet", label: <TabLabel icon="video" text="Meet" /> },
+                  { value: "drive", label: <TabLabel icon="folder" text="Drive" /> },
                   { value: "archive", label: <TabLabel icon="history" text="Arşiv" /> },
                 ]}
               />
@@ -135,6 +136,7 @@ export default function GooglePage() {
                   {tab === "gmail" && <GmailTab snap={status.snapshot} />}
                   {tab === "chat" && <ChatTab snap={status.snapshot} />}
                   {tab === "meet" && <MeetTab snap={status.snapshot} />}
+                  {tab === "drive" && <DriveTab snap={status.snapshot} scoped={!!status.scopes?.includes(DRIVE_SCOPE)} email={status.account?.email ?? ""} />}
                   {tab === "archive" && <ArchiveTab />}
                 </motion.div>
               </AnimatePresence>
@@ -145,7 +147,7 @@ export default function GooglePage() {
                 <Icon name="refresh" size={32} />
               </motion.div>
               <div className="font-extrabold">İlk senkron yapılıyor…</div>
-              <div className="text-sm text-ink-2">Takvim, Gmail, Chat ve Meet verileri çekiliyor. Bu birkaç saniye sürebilir.</div>
+              <div className="text-sm text-ink-2">Takvim, Gmail, Chat, Meet ve Drive verileri çekiliyor. Bu birkaç saniye sürebilir.</div>
             </div>
           )}
           <div className="flex flex-wrap items-center justify-between gap-3 px-1 pt-2 text-xs text-ink-3">
@@ -167,7 +169,7 @@ export default function GooglePage() {
   );
 }
 
-function TabLabel({ icon, text, n }: { icon: "calendar" | "mail" | "chat" | "video" | "history"; text: string; n?: number }) {
+function TabLabel({ icon, text, n }: { icon: "calendar" | "mail" | "chat" | "video" | "folder" | "history"; text: string; n?: number }) {
   return (
     <span className="inline-flex items-center justify-center gap-1.5">
       <Icon name={icon} size={16} className="hidden sm:block" />
@@ -187,7 +189,7 @@ function SetupCard({ redirectUri }: { redirectUri?: string }) {
       &apos;da şirket hesabınla bir proje oluştur.
     </>,
     <>
-      <b>APIs &amp; Services → Library</b>&apos;den etkinleştir: Gmail API, Google Calendar API, Google Chat API, Google Meet REST API, People API.
+      <b>APIs &amp; Services → Library</b>&apos;den etkinleştir: Gmail API, Google Calendar API, Google Chat API, Google Meet REST API, People API, Google Drive API.
     </>,
     <>
       <b>OAuth consent screen</b>: Kullanıcı türü <b>Internal</b> (yalnızca şirket hesapları; Google incelemesi gerekmez).
@@ -1339,13 +1341,340 @@ function Empty({ emoji, text }: { emoji: string; text: string }) {
   );
 }
 
+// ------------------------------------------------------------------ Drive
+type DriveView = "recent" | "shared" | "starred" | "folder";
+const FILE_ICON: [RegExp, string, string][] = [
+  [/folder$/, "📁", "#ffa53d"],
+  [/google-apps\.document|wordprocessing|msword/, "📄", "#5b7cff"],
+  [/google-apps\.spreadsheet|spreadsheetml|ms-excel|text\/csv/, "📊", "#34c26b"],
+  [/google-apps\.presentation|presentationml|powerpoint/, "📽️", "#ffa53d"],
+  [/pdf$/, "📕", "#ff5e6c"],
+  [/^image\//, "🖼️", "#8b5cf6"],
+  [/^video\//, "🎬", "#2ec4b6"],
+  [/google-apps\.form/, "📝", "#8b5cf6"],
+];
+const iconOf = (mime: string) => FILE_ICON.find(([r]) => r.test(mime)) ?? [null, "📎", "#8a94a6"];
+const KIND_LABEL: [RegExp, string][] = [
+  [/folder$/, "Klasör"],
+  [/google-apps\.document/, "Google Dokümanlar"],
+  [/google-apps\.spreadsheet/, "Google E-Tablolar"],
+  [/google-apps\.presentation/, "Google Slaytlar"],
+  [/google-apps\.form/, "Google Formlar"],
+  [/wordprocessing|msword/, "Word"],
+  [/spreadsheetml|ms-excel/, "Excel"],
+  [/presentationml|powerpoint/, "PowerPoint"],
+  [/pdf$/, "PDF"],
+  [/^image\//, "Görsel"],
+  [/^video\//, "Video"],
+  [/text\/csv/, "CSV"],
+];
+const kindLabel = (mime: string) => KIND_LABEL.find(([r]) => r.test(mime))?.[1] ?? "Dosya";
+const sizeLabel = (n?: number) => (!n ? "" : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+function DriveTab({ snap, scoped, email }: { snap: GoogleSnapshot; scoped: boolean; email: string }) {
+  const [view, setView] = useState<DriveView>("recent");
+  const [q, setQ] = useState("");
+  const [search, setSearch] = useState("");
+  const [path, setPath] = useState<{ id: string; name: string }[]>([{ id: "root", name: "Drive'ım" }]);
+  const [files, setFiles] = useState<GFile[] | null>(view === "recent" && snap.drive?.items.length ? snap.drive.items : null);
+  const [next, setNext] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState<GFile | null>(null);
+  const folder = path.at(-1)!.id;
+
+  const load = async (page?: string) => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const p = new URLSearchParams(search ? { view: "search", q: search } : { view, ...(view === "folder" ? { folder } : {}) });
+      if (page) p.set("page", page);
+      const r = await fetch(`/api/google/drive?${p}`, { cache: "no-store" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+      setFiles((f) => (page ? [...(f ?? []), ...j.files] : j.files));
+      setNext(j.next);
+    } catch (e) {
+      setErr((e as Error).message);
+      if (!page) setFiles((f) => f ?? []);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (scoped) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, search, folder, scoped]);
+
+  const groups = useMemo(() => {
+    if (!files) return [];
+    if (view === "folder" && !search) return [["", files] as [string, GFile[]]];
+    const g: [string, GFile[]][] = [];
+    for (const f of files) {
+      const k = search ? "" : dayLabel(iso(new Date(f.modified)));
+      if (g.at(-1)?.[0] === k) g.at(-1)![1].push(f);
+      else g.push([k, [f]]);
+    }
+    return g;
+  }, [files, view, search]);
+
+  if (!scoped) {
+    return (
+      <div className="clay flex flex-col items-center gap-3 px-6 py-10 text-center">
+        <div className="text-4xl">📁</div>
+        <div className="text-lg font-extrabold">Drive'ı bağla</div>
+        <p className="max-w-md text-sm text-ink-2">
+          Drive salt okunur izni gerekiyor. Hesabı yeniden bağla ve izin ekranında <b>Google Drive</b> kutusunu işaretle. Önce Cloud Console'da <b>Google Drive API</b>'yi etkinleştirmeyi unutma.
+        </p>
+        <a href={`/api/google/auth?hint=${encodeURIComponent(email)}`} className="clay-dark mt-1 rounded-full px-5 py-2.5 font-bold">
+          Drive iznini ver
+        </a>
+      </div>
+    );
+  }
+
+
+  return (
+    <div className="space-y-4">
+      <SourceError text={snap.drive?.error && !snap.drive.error.startsWith("Drive izni yok") ? snap.drive.error : undefined} />
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          setSearch(q.trim());
+        }}
+        className="clay-pressed flex items-center gap-2 rounded-full p-1.5 pl-4"
+      >
+        <input value={q} onChange={(e) => (setQ(e.target.value), !e.target.value && setSearch(""))} placeholder="Drive'da ara: dosya adı ya da içerik…" className="min-w-0 flex-1 bg-transparent py-2 text-[15px] outline-none placeholder:text-ink-3" />
+        {search && (
+          <button type="button" onClick={() => (setQ(""), setSearch(""))} className="px-2 text-xs font-bold text-ink-3">
+            Temizle
+          </button>
+        )}
+        <motion.button whileTap={{ scale: 0.92 }} className="clay-color grid h-10 w-10 shrink-0 place-items-center rounded-full bg-blue text-white" aria-label="Ara">
+          🔎
+        </motion.button>
+      </form>
+
+      {!search && (
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              ["recent", "🕘 Son değişenler"],
+              ["shared", "👥 Benimle paylaşılanlar"],
+              ["starred", "⭐ Yıldızlı"],
+              ["folder", "📁 Drive'ım"],
+            ] as [DriveView, string][]
+          ).map(([v, l]) => (
+            <button key={v} onClick={() => setView(v)} className={`rounded-full px-3.5 py-2 text-sm font-bold ${view === v ? "bg-blue text-white" : "clay-sm text-ink-2"}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {view === "folder" && !search && (
+        <div className="flex flex-wrap items-center gap-1 px-1 text-sm font-bold">
+          {path.map((p, i) => (
+            <span key={p.id} className="flex items-center gap-1">
+              {i > 0 && <span className="text-ink-3">›</span>}
+              <button onClick={() => setPath(path.slice(0, i + 1))} className={i === path.length - 1 ? "text-ink" : "text-blue"}>
+                {p.name}
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {err && <SourceError text={err} />}
+      {!files ? (
+        <div className="space-y-2">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-16 rounded-2xl" />
+          ))}
+        </div>
+      ) : !files.length && !loading ? (
+        <Empty emoji="📭" text={search ? `"${search}" için dosya bulunamadı.` : view === "folder" ? "Bu klasör boş." : "Dosya yok."} />
+      ) : (
+        <div className="space-y-4">
+          {groups.map(([k, fs]) => (
+            <div key={k || "all"}>
+              {k && <div className="mb-2 px-1 text-xs font-extrabold uppercase tracking-wide text-ink-3">{k}</div>}
+              <div className="clay divide-y divide-line overflow-hidden p-0">
+                {fs.map((f) => {
+                  const [, emoji, color] = iconOf(f.mime);
+                  return (
+                    <button
+                      key={f.id}
+                      onClick={() => (f.folder ? (setView("folder"), setSearch(""), setQ(""), setPath(view === "folder" && !search ? [...path, { id: f.id, name: f.name }] : [{ id: "root", name: "Drive'ım" }, { id: f.id, name: f.name }])) : setOpen(f))}
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-track/60"
+                    >
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-xl" style={{ background: `${color}22` }}>
+                        {emoji}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-bold">{f.name}</span>
+                        <span className="block truncate text-xs text-ink-3">
+                          {kindLabel(f.mime)} · {ago(f.modified)}
+                          {f.modifiedBy ? ` · ${f.modifiedBy}` : f.owner ? ` · ${f.owner}` : ""}
+                          {f.size ? ` · ${sizeLabel(f.size)}` : ""}
+                        </span>
+                      </span>
+                      {f.starred && <span className="text-sm">⭐</span>}
+                      {f.folder ? <Icon name="chevron" size={16} className="text-ink-3" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          {next && (
+            <div className="flex justify-center">
+              <button onClick={() => load(next)} disabled={loading} className="clay-sm rounded-full px-5 py-2.5 text-sm font-bold disabled:opacity-50">
+                {loading ? "Yükleniyor…" : "Daha fazla"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <DriveReader file={open} onClose={() => setOpen(null)} />
+    </div>
+  );
+}
+
+/** Basit CSV ayrıştırıcı (tırnaklı alanlar dahil) — E-Tablolar önizlemesi için. */
+function parseCsv(text: string, maxRows = 300) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < text.length && rows.length < maxRows; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') (cell += '"'), i++;
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") row.push(cell), (cell = "");
+    else if (c === "\n") row.push(cell), rows.push(row), (row = []), (cell = "");
+    else if (c !== "\r") cell += c;
+  }
+  if (cell || row.length) row.push(cell), rows.push(row);
+  return rows.filter((r) => r.some((x) => x.trim()));
+}
+
+function DriveReader({ file, onClose }: { file: GFile | null; onClose: () => void }) {
+  const { ask } = useAssistant();
+  const [data, setData] = useState<{ text: string | null; textError?: string; live: boolean } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [preview, setPreview] = useState(false);
+  useEffect(() => {
+    if (!file) return;
+    setData(null);
+    setErr(null);
+    setPreview(false);
+    fetch(`/api/google/drive?id=${encodeURIComponent(file.id)}`, { cache: "no-store" })
+      .then(async (r) => {
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error ?? "Dosya açılamadı");
+        setData(j);
+      })
+      .catch((e) => setErr(e.message));
+  }, [file]);
+
+  const csv = useMemo(() => (file && data?.text && /spreadsheet|csv/.test(file.mime) && !/spreadsheetml/.test(file.mime) ? parseCsv(data.text) : null), [file, data]);
+  const visual = !!file && /pdf$|^image\/|^video\//.test(file.mime);
+
+  return (
+    <Sheet open={!!file} onClose={onClose} wide title={<span className="line-clamp-2 text-lg">{file?.name}</span>}>
+      {file && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-3">
+            <span className="font-bold">
+              {iconOf(file.mime)[1]} {kindLabel(file.mime)}
+            </span>
+            <span>{new Date(file.modified).toLocaleString("tr-TR", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+            {file.modifiedBy && <span>son düzenleyen {file.modifiedBy}</span>}
+            {file.owner && <span>sahibi {file.owner}</span>}
+            {file.size ? <span>{sizeLabel(file.size)}</span> : null}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <a href={file.link} target="_blank" rel="noreferrer" className="clay-dark flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold">
+              <Icon name="external" size={15} /> Drive'da aç
+            </a>
+            <button
+              onClick={() => {
+                onClose();
+                ask(`Drive'daki "${file.name}" dosyasını oku (arşivde source=drive, id=${file.id}) ve özetle: amacı, önemli rakamlar/kararlar, benim için aksiyon gerektiren noktalar.`);
+              }}
+              className="flex items-center gap-1.5 rounded-full bg-blue px-4 py-2 text-sm font-bold text-white"
+            >
+              ✨ Asistana özetlet
+            </button>
+            {(visual || (data && !data.text)) && (
+              <button onClick={() => setPreview((v) => !v)} className="clay-sm rounded-full px-4 py-2 text-sm font-bold">
+                {preview ? "Önizlemeyi kapat" : "👁 Önizle"}
+              </button>
+            )}
+            <TaskButtonWide make={() => newTodo({ title: `Drive: ${file.name}`, due: iso(new Date()), tags: ["drive"] })} />
+          </div>
+
+          {preview && (
+            <div className="overflow-hidden rounded-2xl bg-card">
+              <iframe src={`https://drive.google.com/file/d/${encodeURIComponent(file.id)}/preview`} className="h-[70vh] w-full" allow="autoplay" title={file.name} />
+              <div className="px-3 py-2 text-[11px] text-ink-3">Önizleme bu tarayıcıda Google hesabınla oturum açıksa görünür.</div>
+            </div>
+          )}
+
+          {err ? (
+            <div className="rounded-2xl bg-tint-fail px-4 py-3 text-sm">⚠️ {err}</div>
+          ) : !data ? (
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-3/4 rounded" />
+              <Skeleton className="h-4 w-full rounded" />
+              <Skeleton className="h-40 w-full rounded-2xl" />
+            </div>
+          ) : csv ? (
+            <div className="max-h-[60vh] overflow-auto rounded-2xl bg-card">
+              <table className="min-w-full text-left text-xs">
+                <tbody>
+                  {csv.map((r, i) => (
+                    <tr key={i} className={i === 0 ? "sticky top-0 bg-track font-bold" : "border-t border-line"}>
+                      {r.map((c, k) => (
+                        <td key={k} className="max-w-[260px] truncate px-2.5 py-1.5" title={c}>
+                          {c}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : data.text ? (
+            <div className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-card p-4 text-[14px] leading-relaxed" style={{ tabSize: 4 }}>
+              {data.text.slice(0, 120_000)}
+            </div>
+          ) : (
+            !preview && (
+              <div className="rounded-2xl bg-track px-4 py-3 text-sm text-ink-2">
+                {data.textError ?? "Bu dosya türünün metni uygulama içinde okunamıyor."} “Önizle” ya da “Drive'da aç” ile görebilirsin.
+              </div>
+            )
+          )}
+          {data && !data.live && <div className="text-xs text-ink-3">Drive'a şu an ulaşılamadığı için arşivdeki metin gösteriliyor.</div>}
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
 // ------------------------------------------------------------------ Arşiv (geriye dönük hafıza)
-const allDone = (a: ArchiveProgress) => (["gmail", "chat", "meet", "calendar"] as const).every((k) => a.done[k]);
+const allDone = (a: ArchiveProgress) => (["gmail", "chat", "meet", "calendar", "drive"] as const).every((k) => a.done[k] || a.needsScope?.includes(k));
 const SRC: Record<ArchiveSource, { icon: string; label: string; unit: string }> = {
   gmail: { icon: "✉️", label: "Gmail", unit: "e-posta" },
   chat: { icon: "💬", label: "Chat", unit: "mesaj" },
   meet: { icon: "🎥", label: "Meet", unit: "toplantı" },
   calendar: { icon: "📅", label: "Takvim", unit: "etkinlik" },
+  drive: { icon: "📁", label: "Drive", unit: "dosya" },
 };
 const monthYear = (s: string) => new Date(s).toLocaleDateString("tr-TR", { month: "long", year: "numeric" });
 
@@ -1378,13 +1707,13 @@ function ArchiveTab() {
           <div className="min-w-0 flex-1">
             <div className="text-lg font-extrabold">Hafıza</div>
             <div className="text-sm text-ink-2">
-              Geçmiş tüm e-postalar, Chat mesajları, toplantı transkriptleri ve takvim kalıcı olarak saklanır; asistan geçmişe dönük sorularda burada arar.
+              Geçmiş tüm e-postalar, Chat mesajları, toplantı transkriptleri, takvim ve Drive dosyalarının içeriği kalıcı olarak saklanır; asistan geçmişe dönük sorularda burada arar.
             </div>
           </div>
         </div>
         {archive ? (
           <>
-            <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
               {(Object.keys(SRC) as ArchiveSource[]).map((k) => {
                 const s = archive.stats.bySource[k];
                 const done = archive.done[k];
@@ -1394,7 +1723,7 @@ function ArchiveTab() {
                       <span>
                         {SRC[k].icon} {SRC[k].label}
                       </span>
-                      {done ? <span className="text-ok">✓ tamam</span> : <span className="text-blue">indiriliyor</span>}
+                      {archive.needsScope?.includes(k) ? <span className="text-warn">izin gerekli</span> : done ? <span className="text-ok">✓ tamam</span> : <span className="text-blue">indiriliyor</span>}
                     </div>
                     <div className="mt-1 text-xl font-extrabold tabular-nums">{(s?.count ?? 0).toLocaleString("tr-TR")}</div>
                     <div className="text-[11px] text-ink-3">{s ? `${SRC[k].unit} · ${monthYear(s.oldest)}'den beri` : SRC[k].unit}</div>

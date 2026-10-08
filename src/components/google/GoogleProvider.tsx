@@ -46,7 +46,8 @@ export function GoogleProvider({ children }: { children: React.ReactNode }) {
       const j = (await r.json().catch(() => null)) as ArchiveProgress | null;
       if (r.ok && j?.stats) {
         setArchive(j);
-        const allDone = Object.values(j.done).every(Boolean) && Object.keys(j.done).length === 4;
+        // izni verilmemiş kaynak (ör. Drive) beklenmez
+        const allDone = (Object.keys(j.done) as (keyof typeof j.done)[]).every((k) => j.done[k] || j.needsScope?.includes(k)) && Object.keys(j.done).length >= 5;
         again = allDone ? 0 : j.running ? 20000 : 1500;
       } else again = 60000;
     } catch {

@@ -290,7 +290,7 @@ function normalizeHistory(list: Msg[]) {
 }
 
 // ------------------------------------------------------------------ araçlar (Google arşivi)
-const SOURCE_ENUM = ["gmail", "chat", "meet", "calendar"];
+const SOURCE_ENUM = ["gmail", "chat", "meet", "calendar", "drive"];
 const MEMORY_TOOL: Anthropic.Tool = {
   name: "remember",
   description:
@@ -311,7 +311,8 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_archive",
     description:
-      "Batuhan'ın Google Workspace arşivinde (geçmiş tüm e-postalar, Google Chat mesajları, Meet toplantı transkriptleri, takvim etkinlikleri) arama yapar. " +
+      "Batuhan'ın Google Workspace arşivinde (geçmiş tüm e-postalar, Google Chat mesajları, Meet toplantı transkriptleri, takvim etkinlikleri, Google Drive dosyaları ve içerikleri — Dokümanlar, E-Tablolar, Slaytlar, Word, Excel, PowerPoint) arama yapar. " +
+      "Bir dosya, rapor, tablo, prosedür ya da şablon sorulduğunda source=drive ile ara. " +
       "Geçmişe dönük her soruda (kim ne dedi, ne zaman konuşuldu, hangi e-posta geldi, toplantıda ne kararlaştırıldı) kullan. " +
       "query boş bırakılıp tarih aralığı verilirse o aralıktaki kayıtları en yeniden eskiye listeler. Gerekirse farklı kelimelerle birden çok kez ara.",
     input_schema: {
@@ -327,7 +328,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "get_archive_item",
-    description: "search_archive sonucundaki bir kaydın tam metnini getirir (uzun e-posta gövdesi veya toplantı transkriptinin tamamı için).",
+    description: "search_archive sonucundaki bir kaydın tam metnini getirir (uzun e-posta gövdesi, toplantı transkriptinin tamamı ya da Drive dosyasının içeriği için).",
     input_schema: {
       type: "object",
       properties: {
@@ -345,7 +346,7 @@ function statusOf(fc: { name: string; input: unknown }) {
   const a = (fc.input ?? {}) as Record<string, unknown>;
   if (fc.name === "get_archive_item") return "📄 Kayıt okunuyor…";
   if (fc.name === "remember") return `🧠 Belleğe yazılıyor: ${String(a.topic ?? "").slice(0, 60)}`;
-  const src = { gmail: "e-postalarda", chat: "Chat'te", meet: "toplantılarda", calendar: "takvimde" }[String(a.source)] ?? "arşivde";
+  const src = { gmail: "e-postalarda", chat: "Chat'te", meet: "toplantılarda", calendar: "takvimde", drive: "Drive'da" }[String(a.source)] ?? "arşivde";
   const range = a.after || a.before ? ` (${a.after ?? "…"} – ${a.before ?? "…"})` : "";
   return a.query ? `🔎 ${src[0].toUpperCase() + src.slice(1)} aranıyor: “${String(a.query).slice(0, 60)}”${range}` : `🔎 ${src[0].toUpperCase() + src.slice(1)} kayıtlar listeleniyor${range}`;
 }

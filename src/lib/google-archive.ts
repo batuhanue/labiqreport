@@ -1,8 +1,9 @@
 import "server-only";
 import { existingIds, stats, upsertItems } from "./archive";
 import { store } from "./db";
-import { authed, decode, explain, getSnapshot, mapEvent, parseFrom, pool, resolveNames, type Get } from "./google";
-import type { ArchiveItem, ArchiveProgress, ArchiveSource, GEvent } from "./google-types";
+import { fileText, kindOf, listFiles, readable } from "./drive";
+import { authed, decode, DRIVE_SCOPE, status as googleStatus, explain, getSnapshot, mapEvent, parseFrom, pool, resolveNames, type Get } from "./google";
+import type { ArchiveItem, ArchiveProgress, ArchiveSource, GEvent, GFile } from "./google-types";
 
 /**
  * Geriye dönük arşiv senkronu. Her çağrı bir zaman bütçesi içinde çalışır:
@@ -30,17 +31,19 @@ interface State {
   chat: { spaces: Record<string, SpaceState>; listedAt?: string };
   meet: { back?: string | null; done?: boolean; recentAt?: string };
   calendar: { back?: string | null; done?: boolean };
+  drive: { newest?: string; back?: string | null; done?: boolean };
   errors: Partial<Record<ArchiveSource, string>>;
   /** arşive en son işlenen anlık görüntü (takvim değişiklikleri için) */
   snapAt?: string;
   updatedAt?: string;
 }
 
-const fresh = (): State => ({ startedAt: new Date().toISOString(), gmail: {}, chat: { spaces: {} }, meet: {}, calendar: {}, errors: {} });
+const fresh = (): State => ({ startedAt: new Date().toISOString(), gmail: {}, chat: { spaces: {} }, meet: {}, calendar: {}, drive: {}, errors: {} });
 
 export async function progress(): Promise<ArchiveProgress> {
   const st = await store().getKV<State>(STATE_KEY);
   const lock = await store().getKV<{ until: number }>(LOCK_KEY);
+  const g = await googleStatus("", false).catch(() => null);
   const spaces = Object.values(st?.chat.spaces ?? {});
   const errs = Object.values(st?.errors ?? {}).filter(Boolean);
   return {
@@ -50,7 +53,9 @@ export async function progress(): Promise<ArchiveProgress> {
       chat: !!st?.chat.listedAt && spaces.every((s) => s.done),
       meet: !!st?.meet.done,
       calendar: !!st?.calendar.done,
+      drive: !!st?.drive?.done,
     },
+    needsScope: g?.connected && !g.scopes?.includes(DRIVE_SCOPE) ? ["drive"] : undefined,
     running: !!lock && lock.until > Date.now(),
     lastError: errs.length ? errs.join(" | ") : undefined,
     updatedAt: st?.updatedAt,
@@ -398,6 +403,78 @@ async function calendarStep(get: Get, st: State, left: () => number) {
   }
 }
 
+// ------------------------------------------------------------------ Drive
+async function driveItem(token: string, f: GFile): Promise<ArchiveItem> {
+  let text: string | null = null;
+  let note = "";
+  try {
+    text = await fileText(token, f, 60_000);
+  } catch (e) {
+    note = `(içerik okunamadı: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)})`;
+  }
+  return {
+    source: "drive",
+    id: f.id,
+    ts: f.modified,
+    title: f.name,
+    who: [f.owner, f.modifiedBy && f.modifiedBy !== f.owner ? `son düzenleyen ${f.modifiedBy}` : ""].filter(Boolean).join(" · "),
+    body: [`Tür: ${kindOf(f.mime)}`, text?.trim() || note || (readable(f) ? "(boş)" : "(içerik metin olarak okunamıyor; yalnızca dosya bilgisi)")].join("\n\n"),
+    link: f.link,
+    meta: { mime: f.mime, size: f.size, owner: f.owner, modifiedBy: f.modifiedBy, drive: f.drive },
+  };
+}
+
+/** Dosyaları metinleriyle arşive yazar; süre biterse false (sayfaya sonra devam edilir). */
+async function driveFiles(token: string, files: GFile[], left: () => number, skipExisting: boolean) {
+  let list = files.filter((f) => !f.folder);
+  if (skipExisting && list.length) {
+    const have = await existingIds("drive", list.map((f) => f.id));
+    list = list.filter((f) => !have.has(f.id));
+  }
+  let done = 0;
+  for (let i = 0; i < list.length && left() > 6000; i += 12) {
+    const batch = list.slice(i, i + 12);
+    await upsertItems(await pool(batch, 6, (f) => driveItem(token, f)));
+    done += batch.length;
+  }
+  return done >= list.length;
+}
+
+async function driveStep(get: Get, token: string, st: State, left: () => number) {
+  // ileri: son çalıştırmadan beri değişen dosyalar (içerik yeniden okunur)
+  if (st.drive.newest) {
+    const startedAt = new Date().toISOString();
+    const after = new Date(Date.parse(st.drive.newest) - 3600_000).toISOString();
+    let pageToken: string | undefined;
+    let complete = true;
+    for (let page = 0; page < 5 && left() > 8000; page++) {
+      const l = await listFiles(get, { view: "recent", modifiedAfter: after, pageToken, pageSize: 100 });
+      complete = await driveFiles(token, l.files, left, false);
+      if (!complete || !l.next) break;
+      pageToken = l.next;
+    }
+    if (complete) st.drive.newest = startedAt;
+  } else {
+    st.drive.newest = new Date().toISOString();
+  }
+  // geri: en son değişenden en eskiye
+  while (!st.drive.done && left() > 8000) {
+    let l: Awaited<ReturnType<typeof listFiles>>;
+    try {
+      l = await listFiles(get, { view: "recent", pageToken: st.drive.back ?? undefined, pageSize: 100 });
+    } catch (e) {
+      if (st.drive.back && /token|invalid/i.test(String(e))) {
+        st.drive.back = null;
+        continue;
+      }
+      throw e;
+    }
+    if (!(await driveFiles(token, l.files, left, true))) break;
+    st.drive.back = l.next;
+    if (!l.next) st.drive.done = true;
+  }
+}
+
 // ------------------------------------------------------------------ adım
 export async function archiveStep(opts: { budgetMs?: number } = {}): Promise<ArchiveProgress> {
   const budget = opts.budgetMs ?? 40000;
@@ -409,7 +486,7 @@ export async function archiveStep(opts: { budgetMs?: number } = {}): Promise<Arc
   const st: State = { ...fresh(), ...((await store().getKV<State>(STATE_KEY)) ?? {}) };
   st.errors ??= {};
   try {
-    const { auth, get } = await authed();
+    const { auth, get, token } = await authed();
     // anlık görüntüdeki yakın takvim (değişen/yeni etkinlikler) arşive
     const snap = await getSnapshot().catch(() => null);
     if (snap && snap.syncedAt !== st.snapAt) {
@@ -418,7 +495,8 @@ export async function archiveStep(opts: { budgetMs?: number } = {}): Promise<Arc
       st.snapAt = snap.syncedAt;
     }
     // Süre kaynaklar arasında paylaştırılır: her kaynak kalan sürenin payını alır; erken biten kaynağın süresi sonrakilere kalır.
-    const order: ArchiveSource[] = ["calendar", "meet", "chat", "gmail"];
+    const hasDrive = !!auth.scopes?.includes(DRIVE_SCOPE);
+    const order: ArchiveSource[] = ["calendar", "meet", "chat", "gmail", ...(hasDrive ? (["drive"] as const) : [])];
     const run = async (src: ArchiveSource, fn: (sub: () => number) => Promise<void>) => {
       if (left() < 8000) return;
       const share = Math.max(10000, (left() - 8000) / (order.length - order.indexOf(src)));
@@ -428,7 +506,7 @@ export async function archiveStep(opts: { budgetMs?: number } = {}): Promise<Arc
         await fn(sub);
         delete st.errors[src];
       } catch (e) {
-        st.errors[src] = explain({ gmail: "Gmail", chat: "Chat", meet: "Meet", calendar: "Takvim" }[src], e);
+        st.errors[src] = explain({ gmail: "Gmail", chat: "Chat", meet: "Meet", calendar: "Takvim", drive: "Drive" }[src], e);
       }
     };
     // takvim önce (Meet başlıkları için), sonra diğerleri; geri kalan süre sırayla paylaşılır
@@ -436,6 +514,7 @@ export async function archiveStep(opts: { budgetMs?: number } = {}): Promise<Arc
     await run("meet", (sub) => meetStep(get, st, sub));
     await run("chat", (sub) => chatStep(get, st, auth.sub, sub));
     await run("gmail", (sub) => gmailStep(get, st, auth.account.email, sub));
+    if (hasDrive) await run("drive", (sub) => driveStep(get, token, st, sub));
   } finally {
     st.updatedAt = new Date().toISOString();
     await store().setKV(STATE_KEY, st);

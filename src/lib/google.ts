@@ -1,9 +1,10 @@
 import "server-only";
 import { store } from "./db";
-import type { GAccount, GChatMsg, GChatSpace, GEvent, GMail, GMeeting, GoogleSnapshot, GoogleStatus } from "./google-types";
+import { listFiles } from "./drive";
+import { DRIVE_SCOPE, type GAccount, type GChatMsg, type GChatSpace, type GEvent, type GFile, type GMail, type GMeeting, type GoogleSnapshot, type GoogleStatus } from "./google-types";
 
 /**
- * Google Workspace entegrasyonu (salt okunur): Takvim, Gmail, Chat, Meet.
+ * Google Workspace entegrasyonu (salt okunur): Takvim, Gmail, Chat, Meet, Drive.
  * OAuth 2.0 yetkilendirme kodu akışı; yenileme belirteci şifrelenip KV'de ("google-auth") tutulur,
  * son senkron görüntüsü KV'de ("google-data") saklanır.
  */
@@ -19,7 +20,9 @@ export const SCOPES = [
   "https://www.googleapis.com/auth/chat.memberships.readonly",
   "https://www.googleapis.com/auth/meetings.space.readonly",
   "https://www.googleapis.com/auth/directory.readonly",
+  DRIVE_SCOPE,
 ];
+export { DRIVE_SCOPE };
 
 const CLIENT_ID = () => process.env.GOOGLE_CLIENT_ID?.trim() ?? "";
 const CLIENT_SECRET = () => process.env.GOOGLE_CLIENT_SECRET?.trim() ?? "";
@@ -162,11 +165,12 @@ export const getSnapshot = () => store().getKV<GoogleSnapshot>(DATA_KEY);
 export async function authed() {
   const auth = await store().getKV<StoredAuth>(AUTH_KEY);
   if (!auth?.refresh) throw new Error("Google hesabı bağlı değil");
-  return { auth, get: api(await accessToken(auth)) };
+  const token = await accessToken(auth);
+  return { auth, token, get: api(token) };
 }
 
 // ------------------------------------------------------------------ API yardımcıları
-class GErr extends Error {
+export class GErr extends Error {
   constructor(
     msg: string,
     public status: number,
@@ -463,10 +467,14 @@ export async function sync(opts: { force?: boolean } = {}): Promise<GoogleSnapsh
       }
     };
     const cal = await settle("Takvim", syncCalendar(get));
-    const [gm, ch, mt] = await Promise.all([
+    const hasDrive = auth.scopes?.includes(DRIVE_SCOPE);
+    const [gm, ch, mt, dr] = await Promise.all([
       settle("Gmail", syncGmail(get, auth.account.email)),
       settle("Chat", syncChat(get, auth.sub)),
       settle("Meet", syncMeet(get, cal.v ?? [])),
+      hasDrive
+        ? settle("Drive", listFiles(get, { view: "recent", pageSize: 30 }).then((x): GFile[] => x.files))
+        : Promise.resolve({ v: undefined, error: "Drive izni yok: Google sayfasından hesabı yeniden bağla (Drive kutusunu işaretle)." }),
     ]);
     const snap: GoogleSnapshot = {
       syncedAt: new Date().toISOString(),
@@ -476,6 +484,7 @@ export async function sync(opts: { force?: boolean } = {}): Promise<GoogleSnapsh
       gmail: { items: gm.v?.items ?? [], unread: gm.v?.unread, error: gm.error },
       chat: { items: ch.v ?? [], error: ch.error },
       meet: { items: mt.v ?? [], error: mt.error },
+      drive: { items: dr.v ?? [], error: dr.error },
     };
     await store().setKV(DATA_KEY, snap);
     return snap;
@@ -524,7 +533,11 @@ export function googleSection(s: GoogleSnapshot) {
       if (i === 0 && m.transcriptText) L.push(`  Transkript (başı): ${one(m.transcriptText, 1200)}`);
     });
   }
-  const errs = (["calendar", "gmail", "chat", "meet"] as const).filter((k) => s[k].error);
-  if (errs.length) L.push("", `(Senkron edilemeyen kaynaklar: ${errs.map((k) => one(s[k].error!, 120)).join(" | ")})`);
+  if (s.drive?.items.length) {
+    L.push("", "#### Google Drive (son değişen dosyalar; içerik için arşivde source=drive ara)");
+    for (const f of s.drive.items.slice(0, 10)) L.push(`- ${trTime(f.modified)} · ${f.name}${f.modifiedBy ? ` · ${f.modifiedBy}` : ""}`);
+  }
+  const errs = (["calendar", "gmail", "chat", "meet", "drive"] as const).filter((k) => s[k]?.error);
+  if (errs.length) L.push("", `(Senkron edilemeyen kaynaklar: ${errs.map((k) => one(s[k]!.error!, 120)).join(" | ")})`);
   return L.join("\n");
 }
