@@ -202,3 +202,31 @@ export function RoundTable({ x, z, rad = 1.2, pal, chairs = 4, chairColor }: { x
     </group>
   );
 }
+
+/** Masada oturan çalışan (voxel tarzı). active: çalışırken yazıyor gibi kıpırdar. */
+export function Person({ x, z, r = 0, shirt, active = false, phase = 0, skin = "#f2c9a0", hair = "#3b2a20" }: { x: number; z: number; r?: number; shirt: string; active?: boolean; phase?: number; skin?: string; hair?: string }) {
+  const g = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!g.current) return;
+    const t = clock.elapsedTime * (active ? 9 : 1.4) + phase;
+    g.current.position.y = active ? Math.abs(Math.sin(t)) * 0.035 : Math.sin(t) * 0.012;
+    g.current.rotation.y = active ? Math.sin(t * 0.25) * 0.08 : 0;
+  });
+  return (
+    <group position={[x, 0, z]} rotation={[0, r, 0]}>
+      <group ref={g}>
+        {/* bacaklar (oturur) */}
+        <Box p={[-0.1, 0.56, -0.12]} s={[0.14, 0.12, 0.4]} c="#2f3446" cast={false} />
+        <Box p={[0.1, 0.56, -0.12]} s={[0.14, 0.12, 0.4]} c="#2f3446" cast={false} />
+        {/* gövde */}
+        <Box p={[0, 0.86, 0.05]} s={[0.42, 0.5, 0.26]} c={shirt} />
+        {/* kollar masaya uzanır */}
+        <Box p={[-0.25, 0.86, -0.12]} s={[0.1, 0.12, 0.38]} c={shirt} cast={false} />
+        <Box p={[0.25, 0.86, -0.12]} s={[0.1, 0.12, 0.38]} c={shirt} cast={false} />
+        {/* baş */}
+        <Box p={[0, 1.27, 0.04]} s={[0.3, 0.3, 0.3]} c={skin} />
+        <Box p={[0, 1.43, 0.07]} s={[0.32, 0.1, 0.32]} c={hair} cast={false} />
+      </group>
+    </group>
+  );
+}

@@ -54,7 +54,13 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   yaklaşan/geçen rapor alanı terminleri, termini gelen/geciken aksiyonlar, Cuma 12:00 toplantı özeti ve ay başı
   hatırlatması. Zil menüsü aynı hatırlatmaları uygulama içinde de gösterir; hangi bildirimlerin geleceği oradan seçilir.
   iPhone/iPad'de önce Safari → Paylaş → **Ana Ekrana Ekle** (iOS 16.4+), sonra uygulamayı oradan açıp bildirimi aç.
-- **Beyin (Görevler sayfası):** İşini anlayan merkez ve ona bağlı yan ajanlar. Beyin seni bilgi dosyalarından ve
+- **Beyin (Görevler sayfası):** İşini anlayan merkez ve ona bağlı yan ajanlar — asıl çalışma ekibi. Tablet/masaüstünde
+  **Beyin ofisi** (3B, Agents Office düzeni): ortada not ağıyla Beyin, çevresinde her ajan bir departman pod'u; masalarda
+  lider (★) ve alt görevler oturur, ajan çalışırken çalışanlar ve ekranlar hareketlenir. Pod kartlarında açık iş, iki
+  departman göstergesi (fareyle) ve YAP · SIRA · BİTTİ; üstte bağlı servisler ve departmanlara kablolar (çalışan
+  departmanınki ışır); sağda görev çubuğu (departman seç, Hemen yap, Ekip), Beyin kartı + Bugün odak ve yüzdeli GÖREV
+  DURUMU. Departmana tıklayınca kamera uçar, masa adları görünür, panel o ajanın talimatı/kuralları/kurulum görüşmesi ve
+  işlerine döner. "Ofis / Liste" ile 2B görünüme geçilir; telefonda liste. Beyin seni bilgi dosyalarından ve
   `gelistirme.md` belleğinden tanır; ajanlar kendi kaynaklarını okur: 📨 Posta (yeni e-postalar), 💬 Sohbet (sana
   yazılanlar), 📅 Takvim (7 günlük toplantı hazırlıkları, yanıt bekleyen davetler), 🎥 Toplantı (transkriptlerden
   kararlar/aksiyonlar), ✅ Denetim (termin baskısı, aksiyonu açılmamış ✗ bulgular), 📁 Dosya (her işe arşivden/Drive'dan

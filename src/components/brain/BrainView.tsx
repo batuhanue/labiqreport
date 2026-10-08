@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/fx";
 import { Icon, Sheet } from "@/components/ui";
 import { AGENTS, KIND_LABEL, STATUS_META, agentById, type AgentId, type BrainItem, type BrainRun, type BrainState, type ItemStatus } from "@/lib/brain-types";
 import { renderMd } from "@/lib/markdown";
+import { useBrainState } from "./useBrain";
 import { dueLabel, newTodo, PRIORITY, uid } from "@/lib/todo";
 
 type Col = Exclude<ItemStatus, "dismissed">;
@@ -21,7 +22,7 @@ function ago(s?: string) {
 }
 
 /** **kalın** ve satır başı madde işaretleri için küçük, güvenli işleyici. */
-function Brief({ text }: { text: string }) {
+export function Brief({ text }: { text: string }) {
   return (
     <div className="space-y-1 text-[15px] leading-relaxed">
       {text.split("\n").filter((l) => l.trim()).map((l, i) => {
@@ -41,103 +42,10 @@ function Brief({ text }: { text: string }) {
 /** Beyin sayfası: merkez + yan ajanlar, beyne yaz, bugün odak, iş panosu. */
 export default function BrainView() {
   const { toast } = usePeriod();
-  const [st, setSt] = useState<BrainState | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [thinking, setThinking] = useState(false);
-  const [open, setOpen] = useState<BrainItem | null>(null);
+  const { st, err, thinking, think, patch, runWork, approveWork, setSt, open, setOpen } = useBrainState();
   const [agent, setAgent] = useState<AgentId | null>(null);
   const [mobileCol, setMobileCol] = useState<Col>("inbox");
   const [seed, setSeed] = useState<{ text: string; agent: AgentId; n: number } | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/brain", { cache: "no-store" });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-      setSt(j);
-      setErr(null);
-    } catch (e) {
-      setErr((e as Error).message);
-    }
-  }, []);
-  useEffect(() => {
-    load();
-    // açılışta (son düşünmeden 30 dk geçtiyse) arka planda düşünmeyi tetikle
-    fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "auto" }) })
-      .then((r) => r.json())
-      .then((j) => j.started && setSt((s) => (s ? { ...s, running: true } : s)))
-      .catch(() => {});
-  }, [load]);
-  // düşünürken durumu izle
-  useEffect(() => {
-    if (!st?.running || thinking) return;
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, [st?.running, thinking, load]);
-
-  const think = async () => {
-    setThinking(true);
-    try {
-      const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "think" }) });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-      setSt(j.state);
-      const run = j.run as BrainRun;
-      const created = run.agents.reduce((s, a) => s + a.created, 0);
-      toast(run.error ? `Düşünme hatası: ${run.error}` : created ? `${created} yeni iş önerildi` : "Yeni bir iş çıkmadı");
-    } catch (e) {
-      toast((e as Error).message);
-    } finally {
-      setThinking(false);
-    }
-  };
-
-  const patch = async (id: string, p: Partial<BrainItem>) => {
-    setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? { ...x, ...p } : x)) } : s));
-    setOpen((o) => (o && o.id === id ? { ...o, ...p } : o));
-    const r = await fetch("/api/brain", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, patch: p }) });
-    if (!r.ok) {
-      toast("Kaydedilemedi");
-      load();
-    }
-  };
-
-  /** ajan işi yapar (teslimat); feedback ile düzeltir */
-  const runWork = useCallback(
-    async (id: string, feedback?: string, team?: boolean) => {
-      const mark = (x: BrainItem): BrainItem => ({ ...x, status: x.status === "inbox" || x.status === "todo" ? "doing" : x.status, work: { status: "running", output: x.work?.output ?? "", used: [], revisions: x.work?.revisions ?? [], at: new Date().toISOString() } });
-      setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? mark(x) : x)) } : s));
-      setOpen((o) => (o && o.id === id ? mark(o) : o));
-      try {
-        const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "work", id, feedback, team }) });
-        const j = await r.json();
-        if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-        const item = j.item as BrainItem;
-        setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? item : x)) } : s));
-        setOpen((o) => (o && o.id === id ? item : o));
-        const last = item.work?.revisions.at(-1);
-        toast(item.work?.status === "error" ? `Ajan hata verdi: ${item.work.error}` : feedback && last?.rule ? `Kalıcı kural öğrenildi: ${last.rule}` : item.work?.status === "waiting_ok" ? "Taslak hazır — onayını bekliyor" : "Teslimat hazır");
-      } catch (e) {
-        toast((e as Error).message);
-        load();
-      }
-    },
-    [toast, load],
-  );
-  const approveWork = async (id: string) => {
-    const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "approve", id }) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j.item) return toast("Onaylanamadı");
-    setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? j.item : x)) } : s));
-    setOpen(j.item);
-    toast("Onaylandı");
-  };
-  const working = !!st?.items.some((x) => x.work?.status === "running");
-  useEffect(() => {
-    if (!working) return;
-    const t = setInterval(load, 6000);
-    return () => clearInterval(t);
-  }, [working, load]);
 
   const items = useMemo(() => (st?.items ?? []).filter((x) => !agent || x.agent === agent || x.sources.some((s) => s.agent === agent)), [st, agent]);
   const byCol = useMemo(() => {
@@ -165,12 +73,12 @@ export default function BrainView() {
       <AnimatePresence>{agent && <AgentPanel key={agent} agent={agent} onTry={(t) => setSeed((x) => ({ text: t, agent, n: (x?.n ?? 0) + 1 }))} onClose={() => setAgent(null)} />}</AnimatePresence>
       <Capture
         seed={seed}
-        onDone={(s, newId, doNow) => {
+        onDone={(s, newId, doNow, team) => {
           setSt(s);
           const it = newId ? s.items.find((x) => x.id === newId) : undefined;
           if (it && doNow) {
-            toast(`${agentById(it.agent)?.name ?? "Ajan"} işe başladı`);
-            runWork(it.id);
+            toast(`${agentById(it.agent)?.name ?? "Ajan"} ${team ? "ekibi topladı" : "işe başladı"}`);
+            runWork(it.id, undefined, team);
           } else toast(it ? "Beyin notu işe çevirdi" : "Not işlendi");
         }}
       />
@@ -366,7 +274,7 @@ function Hero({ st, busy, onThink, agent, onAgent }: { st: BrainState; busy: boo
 }
 
 // ------------------------------------------------------------------ görev çubuğu
-function Capture({ onDone, seed }: { onDone: (s: BrainState, newId: string | undefined, doNow: boolean) => void; seed: { text: string; agent: AgentId; n: number } | null }) {
+export function Capture({ onDone, seed, compact }: { onDone: (s: BrainState, newId: string | undefined, doNow: boolean, team: boolean) => void; seed: { text: string; agent: AgentId; n: number } | null; compact?: boolean }) {
   const [text, setText] = useState("");
   const [agent, setAgent] = useState<AgentId | "">("");
   const ref = useRef<HTMLFormElement>(null);
@@ -377,6 +285,7 @@ function Capture({ onDone, seed }: { onDone: (s: BrainState, newId: string | und
     ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [seed]);
   const [doNow, setDoNow] = useState(true);
+  const [team, setTeam] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const submit = async (e: React.FormEvent) => {
@@ -390,7 +299,7 @@ function Capture({ onDone, seed }: { onDone: (s: BrainState, newId: string | und
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
       setText("");
-      onDone(j.state, j.run?.createdIds?.[0], doNow);
+      onDone(j.state, j.run?.createdIds?.[0], doNow, doNow && team);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -411,7 +320,10 @@ function Capture({ onDone, seed }: { onDone: (s: BrainState, newId: string | und
         <button type="button" onClick={() => setDoNow((v) => !v)} className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${doNow ? "bg-blue text-white" : "bg-track text-ink-2"}`} title="Açık: ajan işi hemen yapıp teslimatı yazar. Kapalı: yalnızca iş olarak kaydedilir.">
           ⚡ Hemen yapsın {doNow ? "açık" : "kapalı"}
         </button>
-        <span className="hidden text-[11px] font-semibold text-ink-3 sm:inline">Okumak serbest; dışarıya bir şey gidecekse taslak hazırlar, onayını bekler.</span>
+        <button type="button" onClick={() => setTeam((v) => !v)} className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${team ? "bg-[#8b5cf6] text-white" : "bg-track text-ink-2"}`} title="Açık: departman lideri işi parçalara bölüp ekiple yapar">
+          👥 Ekip
+        </button>
+        {!compact && <span className="hidden text-[11px] font-semibold text-ink-3 sm:inline">Okumak serbest; dışarıya bir şey gidecekse taslak hazırlar, onayını bekler.</span>}
       </div>
       <div className="clay-pressed flex items-end gap-2 rounded-[22px] p-2 pl-4">
         <textarea
@@ -424,7 +336,7 @@ function Capture({ onDone, seed }: { onDone: (s: BrainState, newId: string | und
             }
           }}
           rows={1}
-          placeholder="Bir iş ver: “Ceren Hanım'a Bursa dönem sonucu için hatırlatma taslağı yaz”"
+          placeholder={compact ? "Bir iş yaz…" : "Bir iş ver: “Ceren Hanım'a Bursa dönem sonucu için hatırlatma taslağı yaz”"}
           className="max-h-40 min-h-[44px] flex-1 resize-none bg-transparent py-2.5 text-[15px] outline-none placeholder:text-ink-3"
         />
         <motion.button whileTap={{ scale: 0.92 }} disabled={busy || !text.trim()} className="clay-color grid h-11 shrink-0 place-items-center rounded-full bg-blue px-4 text-sm font-extrabold text-white disabled:opacity-50">
@@ -437,7 +349,7 @@ function Capture({ onDone, seed }: { onDone: (s: BrainState, newId: string | und
 }
 
 // ------------------------------------------------------------------ bugün odak
-function Focus({ st, onOpen }: { st: BrainState; onOpen: (x: BrainItem) => void }) {
+export function Focus({ st, onOpen }: { st: BrainState; onOpen: (x: BrainItem) => void }) {
   const { store } = useTodos();
   const f = st.focus!;
   return (
@@ -525,7 +437,7 @@ function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () =>
 }
 
 // ------------------------------------------------------------------ ayrıntı
-function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: BrainItem | null; onClose: () => void; onPatch: (id: string, p: Partial<BrainItem>) => void; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string) => void }) {
+export function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: BrainItem | null; onClose: () => void; onPatch: (id: string, p: Partial<BrainItem>) => void; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string) => void }) {
   const { add } = useTodos();
   const { toast } = usePeriod();
   const { ask } = useAssistant();
@@ -892,7 +804,7 @@ function TeamPieces({ team, full }: { team: NonNullable<NonNullable<BrainItem["w
 }
 
 // ------------------------------------------------------------------ ajan kartı + kurulum görüşmesi
-function AgentPanel({ agent, onTry, onClose }: { agent: AgentId; onTry: (task: string) => void; onClose: () => void }) {
+export function AgentPanel({ agent, onTry, onClose }: { agent: AgentId; onTry: (task: string) => void; onClose: () => void }) {
   const a = agentById(agent)!;
   const [profile, setProfile] = useState<{ guide: string; rules: string } | null>(null);
   const [talk, setTalk] = useState<{ turns: { q: string; a: string }[]; q: string | null; step: number; busy: boolean; result?: { brief: string; skill: { name: string; when: string; steps: string[]; format: string }; tryTask: string } } | null>(null);
@@ -931,12 +843,12 @@ function AgentPanel({ agent, onTry, onClose }: { agent: AgentId; onTry: (task: s
   const guideHtml = useMemo(() => (profile?.guide ? renderMd(profile.guide) : ""), [profile]);
 
   return (
-    <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="clay overflow-hidden">
-      <div className="flex items-start gap-3 p-4" style={{ background: `${a.color}14` }}>
+    <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="clay @container overflow-hidden">
+      <div className="flex flex-wrap items-start gap-3 p-4" style={{ background: `${a.color}14` }}>
         <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl text-2xl" style={{ background: `${a.color}26` }}>
           {a.emoji}
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-[55%]">
           <div className="text-lg font-extrabold leading-tight">{a.name}</div>
           <div className="text-xs text-ink-2">
             {a.source} · {a.role}
@@ -1016,7 +928,7 @@ function AgentPanel({ agent, onTry, onClose }: { agent: AgentId; onTry: (task: s
           {err && <div className="text-xs font-semibold text-fail">{err}</div>}
         </div>
       ) : (
-        <div className="grid gap-3 p-4 md:grid-cols-2">
+        <div className="grid gap-3 p-4 @xl:grid-cols-2">
           <div>
             <div className="mb-1 text-[11px] font-extrabold uppercase tracking-wider text-ink-3">Talimat ve beceri</div>
             {profile === null ? (

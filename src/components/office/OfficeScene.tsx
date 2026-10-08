@@ -76,7 +76,7 @@ function CameraRig({ focus, api, panelPx }: { focus: ZoneId | null; api: React.R
   return null;
 }
 
-function ViewOffset({ px }: { px: number }) {
+export function ViewOffset({ px }: { px: number }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const size = useThree((s) => s.size);
   useEffect(() => {
@@ -115,7 +115,7 @@ function LabelProjector({ labels, screen }: { labels: LabelRefs; screen: Screen 
 }
 
 /** Ahşap parke dokusu (tuvalde çizilir). */
-function useFloorTexture(pal: OfficePal) {
+export function useFloorTexture(pal: OfficePal) {
   return useMemo(() => {
     const c = document.createElement("canvas");
     c.width = 256;
@@ -196,7 +196,7 @@ function Walkways({ pal }: { pal: OfficePal }) {
 }
 
 /** Beyin: platform + üstünde yavaşça dönen not ağı (düğümler ve bağlar); düşünürken parlar. */
-function BrainCore({ pal, busy, onSelect }: { pal: OfficePal; busy: boolean; onSelect: () => void }) {
+export function BrainCore({ pal, busy, onSelect }: { pal: OfficePal; busy: boolean; onSelect: () => void }) {
   const g = useRef<THREE.Group>(null);
   const mat = useRef<THREE.MeshStandardMaterial>(null);
   const { nodes, lines } = useMemo(() => {
@@ -263,7 +263,7 @@ function BrainCore({ pal, busy, onSelect }: { pal: OfficePal; busy: boolean; onS
 }
 
 /** Pod'ların altındaki zemin (gölge yakalayıcı). */
-function Ground({ pal }: { pal: OfficePal }) {
+export function Ground({ pal }: { pal: OfficePal }) {
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.9, 0]} receiveShadow>
       <planeGeometry args={[400, 400]} />
