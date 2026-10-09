@@ -45,6 +45,9 @@ function SaveDot() {
   );
 }
 
+/** 3B sayfalar (kampüs, beyin ofisi, Google ofisi) büyük ekranda tüm genişliği kullanır; diğerleri okunabilir genişlikte kalır. */
+const isWide = (p: string) => p === "/" || p.startsWith("/gorevler") || p.startsWith("/google");
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { data, isHistory, activePeriod, backToActive, toastMsg, error, booting } = usePeriod();
@@ -57,7 +60,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <MotionConfig reducedMotion="user">
     <ScrollProgress />
-    <div className="mx-auto flex min-h-dvh w-full max-w-[1400px] gap-6 px-4 pt-4 sm:px-6 lg:px-8 lg:pt-6">
+    <div className={`mx-auto flex min-h-dvh w-full gap-6 px-4 pt-4 sm:px-6 lg:px-8 lg:pt-6 ${isWide(pathname) ? "max-w-[2560px]" : "max-w-[1400px] min-[1800px]:max-w-[1640px]"}`}>
       {/* Masaüstü yan menü — açılır/kapanır (kapalıyken ikon şeridi). Durum <html data-sidebar> üzerinde tutulur. */}
       <aside className="sticky top-6 hidden h-[calc(100dvh-48px)] w-64 shrink-0 flex-col gap-3 transition-[width] duration-300 ease-out lg:flex in-data-[sidebar=closed]:w-[84px]">
         <div className="clay relative flex items-center gap-3 overflow-hidden p-4 in-data-[sidebar=closed]:flex-col in-data-[sidebar=closed]:px-2">
