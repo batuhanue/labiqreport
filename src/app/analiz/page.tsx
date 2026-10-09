@@ -29,7 +29,7 @@ export default function AnalizPage() {
   if (!data)
     return (
       <EmptyState emoji="📊" title="Analiz için bir dönem seç" text="Üstteki dönem düğmesinden bir dönem aç ya da yeni dönem başlat.">
-        <Link href="/" className="clay-dark rounded-full px-5 py-3 font-bold">Denetime git</Link>
+        <Link href="/denetim" className="clay-dark rounded-full px-5 py-3 font-bold">Denetime git</Link>
       </EmptyState>
     );
   return <Analysis data={data} />;
@@ -148,7 +148,7 @@ function DrillSheet({ mode, data, onClose }: { mode: Drill | null; data: PeriodD
         ) : (
           <div className="space-y-2.5">
             {overdue.map(({ a, d, p }) => (
-              <Link key={a.code} href={`/?alan=${a.code}`} className="clay-sm flex items-center gap-3 px-4 py-3">
+              <Link key={a.code} href={`/denetim?alan=${a.code}`} className="clay-sm flex items-center gap-3 px-4 py-3">
                 <span className="text-2xl">{a.emoji}</span>
                 <div className="min-w-0 flex-1">
                   <div className="font-bold">{a.code} · {a.title}</div>
@@ -168,7 +168,7 @@ function DrillSheet({ mode, data, onClose }: { mode: Drill | null; data: PeriodD
         <div className="space-y-5">
           {groups.map(({ a, items }) => (
             <div key={a.code}>
-              <Link href={`/?alan=${a.code}`} className="mb-2 flex items-center gap-2 px-1 text-sm font-extrabold">
+              <Link href={`/denetim?alan=${a.code}`} className="mb-2 flex items-center gap-2 px-1 text-sm font-extrabold">
                 <span>{a.emoji}</span>
                 <span style={{ color: a.color }}>{a.code}</span>
                 <span className="min-w-0 truncate">{a.title}</span>
@@ -178,7 +178,7 @@ function DrillSheet({ mode, data, onClose }: { mode: Drill | null; data: PeriodD
                 {items.map((it) => {
                   const st = data.items[it.id];
                   return (
-                    <MotionLink key={it.id} href={`/?alan=${a.code}`} {...rowReveal} whileHover={{ x: 4 }} className="clay-sm flex items-center gap-3 px-4 py-3">
+                    <MotionLink key={it.id} href={`/denetim?alan=${a.code}`} {...rowReveal} whileHover={{ x: 4 }} className="clay-sm flex items-center gap-3 px-4 py-3">
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-bold leading-snug">{it.text.trim()}</div>
                         {st?.note && <div className="mt-0.5 line-clamp-2 text-xs text-ink-2">📝 {st.note}</div>}
@@ -322,7 +322,7 @@ function Analysis({ data }: { data: PeriodData }) {
                       ? { i: "⚠️", t: d.text, c: "text-warn" }
                       : { i: "🕒", t: d.text, c: "text-ink-2" };
               return (
-                <MotionLink key={a.code} href={`/?alan=${a.code}`} {...rowReveal} whileHover={{ x: 4 }} className="clay-sm flex items-center gap-3 px-3 py-2.5">
+                <MotionLink key={a.code} href={`/denetim?alan=${a.code}`} {...rowReveal} whileHover={{ x: 4 }} className="clay-sm flex items-center gap-3 px-3 py-2.5">
                   <span className="text-xl">{a.emoji}</span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-bold">{a.code} · {a.title}</div>
@@ -347,7 +347,7 @@ function Analysis({ data }: { data: PeriodData }) {
           ) : (
             <div className="space-y-2.5">
               {fails.map(({ a, it, h, note }) => (
-                <MotionLink key={it.id + h.id} href={`/?alan=${a.code}`} {...rowReveal} whileHover={{ x: 4 }} className="clay-sm block px-4 py-3">
+                <MotionLink key={it.id + h.id} href={`/denetim?alan=${a.code}`} {...rowReveal} whileHover={{ x: 4 }} className="clay-sm block px-4 py-3">
                   <div className="flex items-center gap-2 text-xs font-extrabold">
                     <span style={{ color: a.color }}>{a.code}</span>
                     <span className="rounded-full px-2 py-0.5 text-white" style={{ background: SERIES[h.id] }}>{h.label}</span>

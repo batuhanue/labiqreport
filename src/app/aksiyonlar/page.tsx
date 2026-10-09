@@ -50,7 +50,7 @@ export default function AksiyonlarPage() {
   if (!data)
     return (
       <EmptyState emoji="🚩" title="Önce bir dönem aç" text="Aksiyonlar dönem bazında tutulur.">
-        <Link href="/" className="clay-dark rounded-full px-5 py-3 font-bold">Denetime git</Link>
+        <Link href="/denetim" className="clay-dark rounded-full px-5 py-3 font-bold">Denetime git</Link>
       </EmptyState>
     );
 

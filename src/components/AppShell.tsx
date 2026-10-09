@@ -16,7 +16,8 @@ import { ScrollProgress, Skeleton, SwapText, useRippleDelegation } from "./fx";
 import { spring } from "@/lib/motion";
 
 const NAV = [
-  { href: "/", label: "Denetim", icon: "home" as const },
+  { href: "/", label: "Ada", icon: "home" as const },
+  { href: "/denetim", label: "Denetim", icon: "todo" as const },
   { href: "/gorevler", label: "Beyin", icon: "brain" as const },
   { href: "/google", label: "Google", icon: "mail" as const },
   { href: "/aksiyonlar", label: "Aksiyonlar", icon: "flag" as const },
@@ -53,6 +54,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useRippleDelegation();
 
   if (pathname === "/giris") return <>{children}</>;
+  // ana sayfa: tam ekran ada (kendi üst bilgisi ve gezinmesi var)
+  if (pathname === "/")
+    return (
+      <MotionConfig reducedMotion="user">
+        {children}
+        <Toast msg={toastMsg} />
+      </MotionConfig>
+    );
 
   return (
     <MotionConfig reducedMotion="user">
@@ -112,7 +121,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-semibold text-ink-3 sm:text-sm">Merhaba Batuhan,</div>
             <div className="truncate text-lg font-extrabold tracking-tight sm:text-2xl">
-              {pathname === "/" ? "Bugün neler var?" : NAV.find((n) => n.href !== "/" && pathname.startsWith(n.href))?.label}
+              {pathname.startsWith("/denetim") ? "Bugün neler var?" : NAV.find((n) => n.href !== "/" && pathname.startsWith(n.href))?.label}
             </div>
           </div>
           <SaveDot />
@@ -198,10 +207,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <PeriodPicker open={picker} onClose={() => setPicker(false)} />
 
+      <Toast msg={toastMsg} />
+    </div>
+    </MotionConfig>
+  );
+}
+
+function Toast({ msg }: { msg: string | null }) {
+  return (
       <AnimatePresence>
-        {toastMsg && (
+        {msg && (
           <motion.div
-            key={toastMsg}
+            key={msg}
             initial={{ y: -40, opacity: 0, scale: 0.85, x: "-50%" }}
             animate={{ y: 0, opacity: 1, scale: 1, x: "-50%" }}
             exit={{ y: -30, opacity: 0, scale: 0.9, x: "-50%" }}
@@ -209,7 +226,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className="glass-strong fixed left-1/2 top-4 z-[60] flex max-w-[92vw] items-center gap-2 rounded-full px-5 py-3 text-sm font-bold"
           >
             {(() => {
-              const bad = /amadı|emedi|amadı|verilmedi|hatalı|Yetkisiz|eksik:/i.test(toastMsg);
+              const bad = /amadı|emedi|amadı|verilmedi|hatalı|Yetkisiz|eksik:/i.test(msg);
               return (
                 <motion.span
                   initial={{ scale: 0, rotate: -90 }}
@@ -221,12 +238,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </motion.span>
               );
             })()}
-            <span className="truncate">{toastMsg}</span>
+            <span className="truncate">{msg}</span>
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
-    </MotionConfig>
   );
 }
 

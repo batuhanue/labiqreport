@@ -51,7 +51,7 @@ export function buildMessages(
         kind: "month",
         title: `${periodLabel(prev)} kapanışı başladı`,
         body: "R-02 stok sayım analizleri ay bitiş + 2 gün terminli. Dönemi başlatmak için dokun.",
-        url: "/",
+        url: "/denetim",
         tag: `month-${prev}`,
         level: "info",
       });
@@ -107,7 +107,7 @@ export function buildMessages(
         kind: "deadline",
         title: first.d.days === 0 ? `⏰ Bugün son gün: ${first.a.code}` : `🗓️ Yaklaşan termin: ${first.a.code}`,
         body: `${parts.join(" · ")}. Kalan madde: ${soon.map((x) => `${x.a.code} ${x.a.items.length * 2 - x.p.bursa - x.p.basaksehir}`).join(", ")}`,
-        url: `/?alan=${first.a.code}`,
+        url: `/denetim?alan=${first.a.code}`,
         tag: `deadline-${data.period}-${isoOf(today)}`,
         level: first.d.days === 0 ? "warn" : "info",
       });
@@ -117,7 +117,7 @@ export function buildMessages(
         kind: "overdue",
         title: `⚠️ ${overdue.length} rapor alanı termini geçti`,
         body: `${overdue.map((x) => `${x.a.code} (${-x.d.days!} gün)`).join(", ")}. Yetişmeyecekse Cuma toplantısında söylenmeli.`,
-        url: `/?alan=${overdue[0].a.code}`,
+        url: `/denetim?alan=${overdue[0].a.code}`,
         tag: `overdue-${data.period}-${isoOf(today)}`,
         level: "alert",
       });

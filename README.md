@@ -10,7 +10,17 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
 - **Animasyonlar:** [claudedesignskills](https://github.com/freshtechbro/claudedesignskills) (motion-framer, modern-web-design,
   react-spring-physics) ilkeleriyle: yay ön ayarları, kademeli girişler, kayan aktif göstergeler, ✓ çizilme + parçacık,
   ✗ sallanma, sayfa geçişleri, sayan sayılar, dalga efekti, tilt, dairesel tema geçişi. `prefers-reduced-motion` desteklenir.
-- **Denetim (ana sayfa):** Açılışta aktif dönem kaldığı yerden açılır. Her madde iki hastane için
+- **Ana sayfa — Ada (`/`):** Tam ekran, canlı bir "cozy" ada (React Three Fiber, tamamen kodla üretilmiş alçak
+  poligon sahne). Her bina bir bölüm: deniz feneri → Denetim, gözlemevi → Beyin, kırmızı çatılı ofis → Google ofis,
+  yel değirmeni → Analiz, pazar tezgâhı → Aksiyonlar, iskeledeki kayıkhane → Geçmiş. Etiketlerde canlı rozetler (kapanış
+  yüzdesi, öneri/onay, okunmamış e-posta, açık aksiyon); binaya tıklayınca kamera uçar ve sayfa açılır.
+  Sahne gerçek saate ve gerçek havaya göre değişir (Open-Meteo, anahtar gerekmez): gün doğumu/batımı ışığı, gece yanan
+  pencereler ve fenerler, dönen fener ışığı, rüzgârla hızlanan değirmen, yağmur/sağanak/fırtına (şimşek)/kar/sis,
+  mevsime göre ağaç rengi (kışın kar örtüsü). Sol üstte şehir, saat, sıcaklık, rüzgâr/yağış/nem/gün batımı ve "Bugün"
+  özeti; altta 7 günlük tahmin (güne tıklayınca sahne o günün havasına geçer, sağda saatlik grafik); sağ üstte konum
+  arama, konumum, asistan, bildirimler ve "Görünümü ayarla" (saat, hava, mevsim, kalite — cihazda saklanır); sağ altta
+  ortam sesi (dalga, yağmur, rüzgâr, kuşlar; Web Audio). Ağ yoksa örnek veriyle çalışır.
+- **Denetim (`/denetim`):** Açılışta aktif dönem kaldığı yerden açılır. Her madde iki hastane için
   ☑ Tamam / x Sorun / N/A işaretlenir, not (Excel'de DURUM kolonu) ve bulgu/aksiyon eklenir.
   Alan tamamlanınca kutlama ekranı. Termin (Ay bitiş + N gün) takibi.
 - **Dönemler:** Yeni dönem seçilirse sıfırdan başlar ve aktif olur; geçmiş dönem seçilirse kayıtlı hali gösterilir.
