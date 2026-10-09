@@ -1,16 +1,27 @@
 "use client";
 
-import { motion } from "motion/react";
-import { easeOutExpo } from "@/lib/motion";
+import { usePathname } from "next/navigation";
+import { useLayoutEffect, ViewTransition } from "react";
+import { routeCommitted } from "@/lib/vt";
 
 /**
- * Sayfa geçişi: her rota değişiminde içerik yumuşakça yukarı kayarak gelir.
- * Not: yalnızca opacity + y (bitince transform "none" olur; içerideki fixed öğeler bozulmaz).
+ * Sayfa geçişleri (React <ViewTransition> + tarayıcının View Transitions API'si):
+ * - bölümler arası: menü sırasına göre yönlü, yaylı kayma (page-fwd / page-back)
+ * - ada ↔ bölüm: tüm ekran dairesel kapı (portal / to-island, globals.css'te kök düzeyinde)
+ * - içerik: data-cascade ile bölümler sırayla yükselir
+ * Tarayıcı desteklemezse sayfa normal açılır.
  */
+const DIR = { "nav-forward": "page-fwd", "nav-back": "page-back", default: "none" };
+
 export default function Template({ children }: { children: React.ReactNode }) {
+  const path = usePathname();
+  // kök düzeyindeki geçiş (ada ↔ bölüm) yeni sayfanın işlendiğini bekliyor
+  useLayoutEffect(() => routeCommitted(), [path]);
+  // ada tam ekran: geçişi kök düzeyindeki dairesel kapı yapar
+  if (path === "/") return <>{children}</>;
   return (
-    <motion.div initial={{ opacity: 0, y: 22 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: easeOutExpo }}>
-      {children}
-    </motion.div>
+    <ViewTransition enter={DIR} exit={DIR} default="none">
+      <div data-cascade>{children}</div>
+    </ViewTransition>
   );
 }

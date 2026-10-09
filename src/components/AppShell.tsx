@@ -2,7 +2,8 @@
 
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { vtNavigate } from "@/lib/vt";
 import { useEffect, useState } from "react";
 import { periodLabel, periodShort } from "@/lib/period";
 import { NotificationBell } from "./Notifications";
@@ -24,6 +25,22 @@ const NAV = [
   { href: "/analiz", label: "Analiz", icon: "chart" as const },
   { href: "/gecmis", label: "Geçmiş", icon: "history" as const },
 ];
+
+/** menü sırasına göre geçiş yönü; adaya dönüş ayrı (sayfa tıklanan yere kapanır) */
+const navIndex = (p: string) => {
+  const i = NAV.findIndex((n) => (n.href === "/" ? p === "/" : p.startsWith(n.href)));
+  return i < 0 ? 0 : i;
+};
+export function navTypes(from: string, to: string) {
+  if (to === "/" || from === "/") return [];
+  return [navIndex(to) >= navIndex(from) ? "nav-forward" : "nav-back"];
+}
+/** dairesel geçişin merkezi: tıklanan nokta */
+export function portalOrigin(e: React.MouseEvent) {
+  const s = document.documentElement.style;
+  s.setProperty("--portal-x", `${e.clientX}px`);
+  s.setProperty("--portal-y", `${e.clientY}px`);
+}
 
 function SaveDot() {
   const { saveState } = usePeriod();
@@ -50,6 +67,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { data, isHistory, activePeriod, backToActive, toastMsg, error, booting } = usePeriod();
   const [picker, setPicker] = useState(false);
+  const router = useRouter();
+  /** adaya dönüş: sayfa tıklanan menü öğesine doğru dairesel kapanır */
+  const go = (e: React.MouseEvent, href: string) => {
+    portalOrigin(e);
+    if (href !== "/" || pathname === "/" || e.metaKey || e.ctrlKey) return;
+    e.preventDefault();
+    vtNavigate((h) => router.push(h), "/", "to-island");
+  };
 
   useRippleDelegation();
 
@@ -85,6 +110,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={n.href}
                 href={n.href}
+                transitionTypes={navTypes(pathname, n.href)}
+                onClick={(e) => go(e, n.href)}
                 title={n.label}
                 className="relative flex items-center gap-3 rounded-2xl px-4 py-3 font-bold in-data-[sidebar=closed]:justify-center in-data-[sidebar=closed]:px-0"
               >
@@ -121,7 +148,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-semibold text-ink-3 sm:text-sm">Merhaba Batuhan,</div>
             <div className="truncate text-lg font-extrabold tracking-tight sm:text-2xl">
-              {pathname.startsWith("/denetim") ? "Bugün neler var?" : NAV.find((n) => n.href !== "/" && pathname.startsWith(n.href))?.label}
+              <SwapText text={(pathname.startsWith("/denetim") ? "Bugün neler var?" : NAV.find((n) => n.href !== "/" && pathname.startsWith(n.href))?.label) ?? ""} />
             </div>
           </div>
           <SaveDot />
@@ -179,7 +206,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {NAV.map((n) => {
             const active = n.href === "/" ? pathname === "/" : pathname.startsWith(n.href);
             return (
-              <Link key={n.href} href={n.href} className="relative flex flex-1 flex-col items-center gap-0.5 rounded-[20px] py-2.5">
+              <Link key={n.href} href={n.href} transitionTypes={navTypes(pathname, n.href)} onClick={(e) => go(e, n.href)} className="relative flex flex-1 flex-col items-center gap-0.5 rounded-[20px] py-2.5">
                 {active && (
                   <motion.span
                     layoutId="bottom-nav"

@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, ViewTransition } from "react";
 import { ActionEditor, type ActionDraft } from "@/components/ActionEditor";
 import { Celebration } from "@/components/Celebration";
 import { ItemCard } from "@/components/ItemCard";
@@ -48,7 +48,7 @@ function useAuditView(): ["world" | "list", (m: "world" | "list") => void, boole
     return () => mq.removeEventListener("change", on);
   }, []);
   const setMode = (m: "world" | "list") => {
-    setModeState(m);
+    startTransition(() => setModeState(m));
     try {
       localStorage.setItem(VIEW_KEY, m);
     } catch {}
@@ -275,6 +275,8 @@ function Audit({ data }: { data: PeriodData }) {
           }}
         />
       )}
+      <ViewTransition update="swap" default="none">
+      <div className="space-y-5">
       {world ? (
         <WorldView
           data={data}
@@ -419,6 +421,8 @@ function Audit({ data }: { data: PeriodData }) {
 
       </>
       )}
+      </div>
+      </ViewTransition>
 
       {/* Excel FAB */}
       {!world && (

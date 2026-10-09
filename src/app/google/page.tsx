@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState, ViewTransition } from "react";
 import { useAssistant } from "@/components/assistant/AssistantPanel";
 import { useGoogle } from "@/components/google/GoogleProvider";
 import { usePeriod } from "@/components/PeriodProvider";
@@ -48,7 +48,7 @@ function useGoogleView(): ["office" | "list", (m: "office" | "list") => void, bo
     return () => mq.removeEventListener("change", on);
   }, []);
   const setMode = (m: "office" | "list") => {
-    setModeState(m);
+    startTransition(() => setModeState(m));
     try {
       localStorage.setItem(VIEW_KEY, m);
     } catch {}
@@ -186,6 +186,8 @@ export default function GooglePage() {
             </div>
           )}
           {wide && status.snapshot && <ViewToggle mode={mode} onChange={setMode} />}
+          <ViewTransition update="swap" default="none">
+          <div className="space-y-5">
           {wide && mode === "office" && status.snapshot ? (
             <OfficeView
               snap={status.snapshot}
@@ -243,6 +245,8 @@ export default function GooglePage() {
           )}
           </>
           )}
+          </div>
+          </ViewTransition>
           <div className="flex flex-wrap items-center justify-between gap-3 px-1 pt-2 text-xs text-ink-3">
             <span>Salt okunur bağlantı · uygulama açıkken 5 dakikada bir, ayrıca her sabah otomatik senkron.</span>
             <button

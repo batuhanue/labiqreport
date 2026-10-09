@@ -10,6 +10,7 @@ import { useGoogle } from "@/components/google/GoogleProvider";
 import { NotificationBell } from "@/components/Notifications";
 import { usePeriod } from "@/components/PeriodProvider";
 import { Icon } from "@/components/ui";
+import { AnimatedNumber } from "@/components/fx";
 import type { BrainState } from "@/lib/brain-types";
 import { AREAS } from "@/lib/checklist";
 import { areaProgress, deadlineInfo, overallProgress } from "@/lib/period";
@@ -17,6 +18,7 @@ import { DEFAULT_PLACE, TR_DAYS, TR_DAYS_SHORT, TR_MONTHS, fetchForecast, geocod
 import { TONE, type BuildingInfo } from "./Buildings";
 import { DEFAULT_VIEW, computeEnv, seasonOf, type Env, type Quality, type Season, type ViewSettings } from "./env";
 import { Ambience } from "./sound";
+import { vtNavigate } from "@/lib/vt";
 import { SPOTS, type BuildingId } from "./terrain";
 import { WxIcon } from "./WxIcon";
 
@@ -192,7 +194,16 @@ export default function IslandHome() {
     Object.values(ROUTES).forEach((r) => router.prefetch(r));
   }, [router]);
   const pick = useCallback((id: BuildingId) => setFly((f) => f ?? id), []);
-  const arrive = useCallback((id: BuildingId) => router.push(ROUTES[id]), [router]);
+  // kamera binaya varınca: sayfa ekran ortasından dairesel kapı gibi açılır
+  const arrive = useCallback(
+    (id: BuildingId) => {
+      const s = document.documentElement.style;
+      s.setProperty("--portal-x", "50%");
+      s.setProperty("--portal-y", "48%");
+      vtNavigate((h) => router.push(h), ROUTES[id], "portal");
+    },
+    [router],
+  );
 
   // ------------------------------------------------ görünüm metinleri
   const shown = preview
@@ -214,10 +225,14 @@ export default function IslandHome() {
 
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ background: night ? "#13224f" : "#dfeaf1" }}>
-      {ready && <IslandScene env={envTarget} season={season} quality={quality} info={info} hover={hover} onHover={setHover} onPick={pick} fly={fly} onArrive={arrive} labels={labels} />}
+      {ready && (
+        <motion.div className="absolute inset-0" initial={{ opacity: 0, scale: 1.04 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 1.4, ease: [0.22, 1, 0.36, 1] }}>
+          <IslandScene env={envTarget} season={season} quality={quality} info={info} hover={hover} onHover={setHover} onPick={pick} fly={fly} onArrive={arrive} labels={labels} />
+        </motion.div>
+      )}
 
       {/* bina etiketleri (sahne her karede konumlar) */}
-      <div className="pointer-events-none absolute inset-0 isolate overflow-hidden">
+      <motion.div className="pointer-events-none absolute inset-0 isolate overflow-hidden" initial={{ opacity: 0 }} animate={{ opacity: fly ? 0 : 1 }} transition={{ delay: fly ? 0 : 1.5, duration: 0.5 }}>
         {SPOTS.map((sp) => {
           const b = info[sp.id];
           const on = hover === sp.id;
@@ -243,45 +258,54 @@ export default function IslandHome() {
             </div>
           );
         })}
-      </div>
+      </motion.div>
 
       {/* -------------------------------------------- sol üst: marka + hava */}
       <div className="pointer-events-none absolute inset-0">
-        <div className={`absolute left-5 top-5 flex items-center gap-3 sm:left-8 sm:top-7 ${ink}`}>
+        <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING, delay: 0.2 }} className={`absolute left-5 top-5 flex items-center gap-3 sm:left-8 sm:top-7 ${ink}`}>
           <button onClick={() => setPanel((p) => (p === "menu" ? null : "menu"))} className={`pointer-events-auto grid h-9 w-9 place-items-center rounded-full border backdrop-blur-md ${tile}`} aria-label="Bölümler">
             <Icon name="sidebar" size={16} />
           </button>
           <div className="hidden text-[13px] font-extrabold tracking-[0.32em] sm:block">
             LABIQ <span className="font-medium opacity-60">ADA</span>
           </div>
-        </div>
+        </motion.div>
 
-        <div className={`absolute left-5 top-20 w-[min(300px,calc(100vw-40px))] sm:left-8 sm:top-28 ${ink}`}>
-          <div className={`text-[10.5px] font-extrabold tracking-[0.2em] ${sub}`}>{dateLine}</div>
-          <div className="mt-1 flex items-baseline gap-2 text-lg font-bold">
-            <span>{place.name}</span>
+        <motion.div
+          initial="hide"
+          animate="show"
+          variants={{ show: { transition: { staggerChildren: 0.07, delayChildren: 0.45 } } }}
+          className={`absolute left-5 top-20 w-[min(300px,calc(100vw-40px))] sm:left-8 sm:top-28 ${ink}`}
+        >
+          <motion.div variants={ITEM} className={`text-[10.5px] font-extrabold tracking-[0.2em] ${sub}`}>
+            <SwapLine text={dateLine} />
+          </motion.div>
+          <motion.div variants={ITEM} className="mt-1 flex items-baseline gap-2 text-lg font-bold">
+            <SwapLine text={place.name} />
             <span className={`tabular-nums ${sub}`}>· {hm(now)}</span>
-          </div>
-          <div className="mt-1 flex items-start text-[64px] font-semibold leading-[0.9] tracking-tight sm:text-[96px]">
-            {shown ? shown.temp : "–"}
+          </motion.div>
+          <motion.div variants={ITEM} className="mt-1 flex items-start text-[64px] font-semibold leading-[0.9] tracking-tight sm:text-[96px]">
+            {shown ? <AnimatedNumber value={shown.temp} /> : "–"}
             <span className="mt-1 text-[30px] font-medium sm:mt-2 sm:text-[40px]">°</span>
-          </div>
-          <div className="mt-2 text-base font-semibold sm:mt-3 sm:text-lg">{shown?.label ?? "Hava durumu yükleniyor"}</div>
+          </motion.div>
+          <motion.div variants={ITEM} className="mt-2 text-base font-semibold sm:mt-3 sm:text-lg">
+            <SwapLine text={shown?.label ?? "Hava durumu yükleniyor"} />
+          </motion.div>
           {shown && (
-            <div className={`mt-1 text-xs font-semibold ${sub}`}>
+            <motion.div variants={ITEM} className={`mt-1 text-xs font-semibold ${sub}`}>
               En yüksek <b className={ink}>{Math.round(shown.max)}°</b> · En düşük <b className={ink}>{Math.round(shown.min)}°</b>
-            </div>
+            </motion.div>
           )}
           {shown && (
-            <div className="mt-4 hidden grid-cols-2 gap-2 sm:grid">
+            <motion.div variants={ITEM} className="mt-4 hidden grid-cols-2 gap-2 sm:grid">
               <Tile cls={tile} sub={sub} k="Rüzgâr" v={`${Math.round(shown.wind)} km/s`} />
               <Tile cls={tile} sub={sub} k="Yağış" v={`${shown.rain.toFixed(1).replace(".", ",")} mm`} />
               {shown.hum != null ? <Tile cls={tile} sub={sub} k="Nem" v={`%${shown.hum}`} /> : <Tile cls={tile} sub={sub} k="Gün doğumu" v={today ? today.sunrise.slice(11, 16) : "–"} />}
               <Tile cls={tile} sub={sub} k="Gün batımı" v={today ? today.sunset.slice(11, 16) : "–"} />
-            </div>
+            </motion.div>
           )}
           {/* bugün: uygulamadan kısa özet */}
-          <div className={`pointer-events-auto mt-3 hidden overflow-hidden rounded-2xl border backdrop-blur-md sm:block ${tile}`}>
+          <motion.div variants={ITEM} className={`pointer-events-auto mt-3 hidden overflow-hidden rounded-2xl border backdrop-blur-md sm:block ${tile}`}>
             <div className={`px-3.5 pt-3 text-[10.5px] font-extrabold tracking-[0.2em] ${sub}`}>BUGÜN</div>
             {(["denetim", "beyin", "google", "aksiyonlar"] as BuildingId[]).map((id) => (
               <button key={id} onMouseEnter={() => setHover(id)} onMouseLeave={() => setHover(null)} onClick={() => pick(id)} className={`flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[13px] font-semibold ${night ? "hover:bg-white/10" : "hover:bg-white/50"}`}>
@@ -291,11 +315,11 @@ export default function IslandHome() {
               </button>
             ))}
             <div className="h-1.5" />
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
 
         {/* ---------------------------------------- sağ üst: arama + eylemler */}
-        <div className="absolute right-4 top-4 flex items-center gap-2 sm:right-8 sm:top-6">
+        <motion.div initial={{ opacity: 0, y: -14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPRING, delay: 0.35 }} className="absolute right-4 top-4 flex items-center gap-2 sm:right-8 sm:top-6">
           <Search onPick={(p) => { setPlace(p); store.set("lq:wx-place", p); setDay(null); }} night={night} />
           <div className={`pointer-events-auto flex items-center gap-1 rounded-full border p-1 shadow-sm backdrop-blur-md ${night ? "border-white/15 bg-white/10 text-white" : "border-white/70 bg-white/70 text-[#1d2433]"}`}>
             <RoundBtn label="Konumum" onClick={() => locate((p) => { setPlace(p); store.set("lq:wx-place", p); })}>
@@ -311,7 +335,7 @@ export default function IslandHome() {
           <div className="pointer-events-auto hidden sm:block">
             <NotificationBell />
           </div>
-        </div>
+        </motion.div>
 
         {/* ---------------------------------------- paneller */}
         <AnimatePresence>
@@ -347,19 +371,36 @@ export default function IslandHome() {
 
         {/* ---------------------------------------- alt: 7 günlük tahmin */}
         {fc && (
-          <div className="pointer-events-auto absolute bottom-4 left-1/2 w-[min(700px,calc(100vw-24px))] -translate-x-1/2 rounded-[22px] bg-[#172f45]/92 p-2 text-white shadow-[0_20px_60px_-20px_rgba(10,20,40,.6)] backdrop-blur-md sm:bottom-6">
+          <motion.div
+            initial={{ opacity: 0, y: 48, x: "-50%", scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, x: "-50%", scale: 1 }}
+            transition={{ ...SPRING, delay: 0.7 }}
+            className="pointer-events-auto absolute bottom-4 left-1/2 w-[min(700px,calc(100vw-24px))] rounded-[22px] bg-[#172f45]/92 p-2 text-white shadow-[0_20px_60px_-20px_rgba(10,20,40,.6)] backdrop-blur-md sm:bottom-6"
+          >
             <div className="no-scrollbar flex gap-1 overflow-x-auto">
               {fc.days.map((d, i) => {
                 const k = wmo(d.code).kind;
                 const sel = (day ?? 0) === i && day != null;
                 return (
-                  <button key={d.date} onClick={() => setDay(sel ? null : i)} className={`flex min-w-[78px] flex-1 flex-col items-center gap-1 rounded-2xl px-2 py-2 transition-colors ${sel ? "bg-[#f6dcae] text-[#1d2433]" : "hover:bg-white/10"}`}>
-                    <span className="text-[10.5px] font-extrabold tracking-[0.14em] opacity-80">{i === 0 ? "BUGÜN" : TR_DAYS_SHORT[new Date(d.date).getDay()].toLocaleUpperCase("tr")}</span>
-                    <WxIcon kind={k} size={24} />
-                    <span className="text-[13px] font-bold tabular-nums">
+                  <motion.button
+                    key={d.date}
+                    initial={{ opacity: 0, y: 14 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ ...SPRING, delay: 0.85 + i * 0.05 }}
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.94 }}
+                    onClick={() => setDay(sel ? null : i)}
+                    className={`relative flex min-w-[78px] flex-1 flex-col items-center gap-1 rounded-2xl px-2 py-2 ${sel ? "text-[#1d2433]" : "hover:bg-white/10"}`}
+                  >
+                    {sel && <motion.span layoutId="day-pill" className="absolute inset-0 -z-0 rounded-2xl bg-[#f6dcae]" transition={SPRING} />}
+                    <span className="relative text-[10.5px] font-extrabold tracking-[0.14em] opacity-80">{i === 0 ? "BUGÜN" : TR_DAYS_SHORT[new Date(d.date).getDay()].toLocaleUpperCase("tr")}</span>
+                    <motion.span className="relative" animate={sel ? { scale: 1.15, rotate: [0, -8, 6, 0] } : { scale: 1, rotate: 0 }} transition={SPRING}>
+                      <WxIcon kind={k} size={24} />
+                    </motion.span>
+                    <span className="relative text-[13px] font-bold tabular-nums">
                       {Math.round(d.max)}° <span className="font-semibold opacity-60">{Math.round(d.min)}°</span>
                     </span>
-                  </button>
+                  </motion.button>
                 );
               })}
             </div>
@@ -367,23 +408,37 @@ export default function IslandHome() {
               <span>Kaynak: Open-Meteo{fc.offline ? " · çevrimdışı örnek" : ""}</span>
               <span>Güncellendi {hm(new Date(fc.at))}</span>
             </div>
-          </div>
+          </motion.div>
         )}
 
         {/* ---------------------------------------- alt köşeler */}
         <div className={`absolute bottom-7 left-8 hidden text-[11px] font-semibold lg:block ${sub}`}>Sürükle: döndür · Tekerlek: yakınlaştır · Binaya tıkla: içeri gir</div>
-        <button
+        <motion.button
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ ...SPRING, delay: 1.05 }}
+          whileTap={{ scale: 0.92 }}
           onClick={() => setSound((s) => !s)}
           className={`pointer-events-auto absolute bottom-[136px] right-4 flex items-center gap-2 rounded-full border px-2 py-1.5 pr-3 text-xs font-bold shadow-sm backdrop-blur-md sm:bottom-7 sm:right-8 ${night ? "border-white/15 bg-white/10 text-white" : "border-white/70 bg-white/75 text-[#1d2433]"}`}
           aria-pressed={sound}
         >
           <span className="grid h-6 w-6 place-items-center rounded-full bg-[#f6dcae] text-[#1d2433]">{sound ? <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.5" y="1" width="2.4" height="8" rx="1" fill="currentColor" /><rect x="6" y="1" width="2.4" height="8" rx="1" fill="currentColor" /></svg> : <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4z" fill="currentColor" /></svg>}</span>
           Ses
-        </button>
+        </motion.button>
       </div>
 
-      {/* uçarken hafif kararma */}
-      <AnimatePresence>{fly && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.35 }} transition={{ delay: 0.5, duration: 0.4 }} className="pointer-events-none absolute inset-0 bg-white" />}</AnimatePresence>
+      {/* uçarken binanın renginde hafif ışıma (kapıya hazırlık) */}
+      <AnimatePresence>
+        {fly && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.25, duration: 0.5 }}
+            className="pointer-events-none absolute inset-0"
+            style={{ background: `radial-gradient(circle at 50% 48%, transparent 30%, ${info[fly].color}55 100%)` }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -397,6 +452,25 @@ function locate(done: (p: WxPlace) => void) {
 }
 
 /* ------------------------------------------------------------------ küçük parçalar */
+const SPRING = { type: "spring" as const, stiffness: 260, damping: 26 };
+/** sol bloktaki satırlar sırayla, bulanıktan netleşerek gelir */
+const ITEM = {
+  hide: { opacity: 0, x: -24, filter: "blur(8px)" },
+  show: { opacity: 1, x: 0, filter: "blur(0px)", transition: SPRING },
+};
+
+/** metin değişince eskisi yukarı kayıp gider, yenisi alttan gelir */
+function SwapLine({ text }: { text: string }) {
+  return (
+    <span className="relative inline-grid overflow-hidden align-bottom">
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span key={text} initial={{ y: "90%", opacity: 0, filter: "blur(4px)" }} animate={{ y: 0, opacity: 1, filter: "blur(0px)" }} exit={{ y: "-90%", opacity: 0, filter: "blur(4px)" }} transition={SPRING} className="col-start-1 row-start-1 whitespace-nowrap">
+          {text}
+        </motion.span>
+      </AnimatePresence>
+    </span>
+  );
+}
 function Tile({ k, v, cls, sub }: { k: string; v: string; cls: string; sub: string }) {
   return (
     <div className={`rounded-2xl border px-3.5 py-2.5 backdrop-blur-md ${cls}`}>

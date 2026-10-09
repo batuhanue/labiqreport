@@ -2,7 +2,7 @@
 
 import { motion } from "motion/react";
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState, ViewTransition } from "react";
 import BrainView from "@/components/brain/BrainView";
 import TodoBoard from "@/components/todos/TodoBoard";
 import { Segmented } from "@/components/ui";
@@ -39,14 +39,15 @@ export default function BeyinPage() {
     mq.addEventListener("change", on);
     return () => mq.removeEventListener("change", on);
   }, []);
+  // görünüm değişimleri geçiş içinde: <ViewTransition> çapraz geçiş yapar
   const pick = (t: "brain" | "todos") => {
-    setTab(t);
+    startTransition(() => setTab(t));
     try {
       localStorage.setItem(TAB_KEY, t);
     } catch {}
   };
   const pickView = (v: "office" | "list") => {
-    setView(v);
+    startTransition(() => setView(v));
     try {
       localStorage.setItem(VIEW_KEY, v);
     } catch {}
@@ -80,7 +81,9 @@ export default function BeyinPage() {
           </div>
         )}
       </div>
-      {tab === "todos" ? <TodoBoard /> : wide && view === "office" ? <BrainOffice /> : <BrainView />}
+      <ViewTransition update="swap" default="none">
+        <div>{tab === "todos" ? <TodoBoard /> : wide && view === "office" ? <BrainOffice /> : <BrainView />}</div>
+      </ViewTransition>
     </div>
   );
 }

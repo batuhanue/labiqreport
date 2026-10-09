@@ -20,6 +20,12 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   özeti; altta 7 günlük tahmin (güne tıklayınca sahne o günün havasına geçer, sağda saatlik grafik); sağ üstte konum
   arama, konumum, asistan, bildirimler ve "Görünümü ayarla" (saat, hava, mevsim, kalite — cihazda saklanır); sağ altta
   ortam sesi (dalga, yağmur, rüzgâr, kuşlar; Web Audio). Ağ yoksa örnek veriyle çalışır.
+- **Sayfa geçişleri:** React `<ViewTransition>` + tarayıcının View Transitions API'si, motion'ın yay fiziğinden
+  üretilmiş `linear()` eğrileriyle. Binaya tıklayınca kamera uçar, sayfa ekranın ortasından dairesel kapı gibi açılır
+  (ada içeri doğru büyüyüp bulanıklaşır); menüden "Ada"ya dönünce sayfa tıklanan noktaya kapanır ve kamera adaya
+  süzülür. Bölümler arası menü sırasına göre yönlü, yaylı kayma; içerik bölümleri sırayla bulanıktan netleşerek yükselir;
+  Ofis/Liste ve sekme değişimleri çapraz geçiş; başlık metni kayarak değişir; adada arayüz parçaları sırayla gelir,
+  sıcaklık sayarak artar, seçili gün hapı kayar. Desteklemeyen tarayıcıda sayfalar normal açılır; hareket azaltma tercihine uyulur.
 - **Denetim (`/denetim`):** Açılışta aktif dönem kaldığı yerden açılır. Her madde iki hastane için
   ☑ Tamam / x Sorun / N/A işaretlenir, not (Excel'de DURUM kolonu) ve bulgu/aksiyon eklenir.
   Alan tamamlanınca kutlama ekranı. Termin (Ay bitiş + N gün) takibi.

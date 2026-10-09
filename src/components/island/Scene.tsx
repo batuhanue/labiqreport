@@ -87,7 +87,8 @@ const HOME_DIR = new THREE.Vector3(0.1, 0.42, 1).normalize();
 /** kamera: açılışta adayı ekrana sığdırır; binaya tıklanınca oraya uçar */
 function CameraRig({ fly, onArrive, controls }: { fly: BuildingId | null; onArrive: (id: BuildingId) => void; controls: React.RefObject<OrbitImpl | null> }) {
   const { camera, size } = useThree();
-  const anim = useRef<{ id: BuildingId; t: number; fromP: THREE.Vector3; fromT: THREE.Vector3; toP: THREE.Vector3; toT: THREE.Vector3 } | null>(null);
+  const anim = useRef<{ id: BuildingId | null; t: number; dur: number; fromP: THREE.Vector3; fromT: THREE.Vector3; toP: THREE.Vector3; toT: THREE.Vector3 } | null>(null);
+  const intro = useRef(true);
   const homeDist = () => {
     const aspect = size.width / size.height;
     return aspect >= 1.5 ? 50 : aspect >= 1 ? 58 : 70 + (1 - aspect) * 40;
@@ -96,8 +97,18 @@ function CameraRig({ fly, onArrive, controls }: { fly: BuildingId | null; onArri
     const d = homeDist();
     // dikey ekranda ada biraz aşağıda dursun (üstte hava bilgisi var)
     const target = HOME_TARGET.clone().add(new THREE.Vector3(1.4, size.width < size.height ? 5 : 0, 0).multiplyScalar(size.width < size.height ? 1 : 0));
-    camera.position.copy(target).addScaledVector(HOME_DIR, d);
-    controls.current?.target.copy(target);
+    const home = target.clone().addScaledVector(HOME_DIR, d);
+    if (intro.current) {
+      // açılış: yukarıdan ve yandan süzülerek adaya iner
+      intro.current = false;
+      const from = target.clone().add(HOME_DIR.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.9).multiplyScalar(d * 1.7)).add(new THREE.Vector3(0, 26, 0));
+      camera.position.copy(from);
+      controls.current?.target.copy(target).add(new THREE.Vector3(0, -2, 0));
+      anim.current = { id: null, t: 0, dur: 2.6, fromP: from, fromT: target.clone().add(new THREE.Vector3(0, -2, 0)), toP: home, toT: target.clone() };
+    } else {
+      camera.position.copy(home);
+      controls.current?.target.copy(target);
+    }
     controls.current?.update();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.width, size.height]);
@@ -107,19 +118,20 @@ function CameraRig({ fly, onArrive, controls }: { fly: BuildingId | null; onArri
     const y = fly === "gecmis" ? 0.5 : heightAt(sp.x, sp.z);
     const toT = new THREE.Vector3(sp.x, y + sp.top * 0.45, sp.z);
     const dir = camera.position.clone().sub(controls.current.target).normalize();
-    anim.current = { id: fly, t: 0, fromP: camera.position.clone(), fromT: controls.current.target.clone(), toP: toT.clone().addScaledVector(dir, 11), toT };
+    anim.current = { id: fly, t: 0, dur: 0.75, fromP: camera.position.clone(), fromT: controls.current.target.clone(), toP: toT.clone().addScaledVector(dir, 11), toT };
   }, [fly, camera, controls]);
   useFrame((_, dt) => {
     const a = anim.current;
     if (!a || !controls.current) return;
-    a.t = Math.min(1, a.t + dt / 0.9);
-    const k = 1 - Math.pow(1 - a.t, 3);
+    a.t = Math.min(1, a.t + dt / a.dur);
+    // varış: kübik yavaşlama; açılış: daha uzun, yumuşak (quint)
+    const k = a.id ? 1 - Math.pow(1 - a.t, 3) : 1 - Math.pow(1 - a.t, 5);
     camera.position.lerpVectors(a.fromP, a.toP, k);
     controls.current.target.lerpVectors(a.fromT, a.toT, k);
     controls.current.update();
     if (a.t >= 1) {
       anim.current = null;
-      onArrive(a.id);
+      if (a.id) onArrive(a.id);
     }
   });
   return null;

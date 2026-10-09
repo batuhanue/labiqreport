@@ -309,6 +309,177 @@ body {
   mix-blend-mode: normal;
 }
 
+/* ---------- Sayfa geçişleri (React <ViewTransition> + View Transitions API) ----------
+   Yay eğrileri motion'ın spring() fizik modelinden üretildi (linear() ile CSS'e taşındı). */
+:root {
+  --spring-soft: linear(0, 0.0378, 0.1304, 0.2523, 0.3847, 0.5147, 0.6339, 0.7376, 0.8239, 0.8927, 0.9453, 0.9835, 1.0096, 1.026, 1.0349, 1.0382, 1.0377, 1.0347, 1.0303, 1.0253, 1.0202, 1.0155, 1.0113, 1.0078, 1.0049, 1.0027, 1.0011, 0.9999, 0.9992, 1);
+  --spring-snappy: linear(0, 0.0668, 0.2132, 0.3826, 0.5434, 0.6806, 0.7891, 0.8699, 0.9269, 0.9648, 0.9884, 1.0019, 1.0085, 1.0109, 1.0108, 1.0095, 1.0076, 1.0058, 1.0041, 1.0028, 1.0018, 1.001, 1.0005, 1, 1);
+  --spring-portal: linear(0, 0.0242, 0.0842, 0.1653, 0.2565, 0.3504, 0.4418, 0.5274, 0.6054, 0.6747, 0.7352, 0.7871, 0.831, 0.8677, 0.8979, 0.9225, 0.9422, 0.9579, 0.9701, 0.9795, 0.9867, 0.992, 0.9959, 0.9987, 1.0005, 1.0018, 1.0025, 1);
+  --spring-out: linear(0, 0.0507, 0.1614, 0.2915, 0.4192, 0.5342, 0.6326, 0.714, 0.7796, 0.8317, 0.8723, 0.9038, 0.9279, 0.9462, 0.96, 0.9704, 0.9781, 0.9839, 0.9882, 0.9913, 0.9937, 0.9954, 0.9966, 0.9975, 0.9982, 0.9987, 1);
+  --portal-x: 50%;
+  --portal-y: 50%;
+}
+/* geçiş sırasında tıklamalar sayfaya geçsin */
+::view-transition {
+  pointer-events: none;
+}
+
+/* 1) Adadan bölüme: yeni sayfa binanın olduğu yerden dairesel kapı gibi açılır, ada içeri doğru büyüyüp bulanıklaşır */
+:root:active-view-transition-type(portal)::view-transition-old(root) {
+  animation: 700ms cubic-bezier(0.5, 0, 0.75, 0) both portal-dive;
+}
+:root:active-view-transition-type(portal)::view-transition-new(root) {
+  animation: 850ms var(--spring-portal) both portal-open;
+}
+@keyframes portal-dive {
+  to {
+    transform: scale(1.18);
+    filter: blur(10px) saturate(1.2);
+    opacity: 0.6;
+  }
+}
+@keyframes portal-open {
+  from {
+    clip-path: circle(0% at var(--portal-x) var(--portal-y));
+    filter: brightness(1.15);
+  }
+  to {
+    clip-path: circle(150% at var(--portal-x) var(--portal-y));
+    filter: brightness(1);
+  }
+}
+
+/* 2) Bölümden adaya: sayfa bir noktaya kapanır, ada açılır */
+:root:active-view-transition-type(to-island)::view-transition-old(root) {
+  z-index: 2;
+  animation: 650ms cubic-bezier(0.65, 0, 0.35, 1) both island-close;
+}
+:root:active-view-transition-type(to-island)::view-transition-new(root) {
+  animation: 900ms var(--spring-out) both island-rise;
+}
+@keyframes island-close {
+  0% {
+    clip-path: circle(150% at var(--portal-x) var(--portal-y));
+  }
+  100% {
+    clip-path: circle(0% at var(--portal-x) var(--portal-y));
+    filter: blur(2px);
+  }
+}
+@keyframes island-rise {
+  from {
+    transform: scale(0.92);
+    filter: blur(6px);
+  }
+}
+
+/* 3) Bölümler arası: menüde aşağı → içerik aşağıdan; yukarı → yukarıdan (yaylı, bulanıktan netleşerek) */
+::view-transition-old(.page-fwd),
+::view-transition-old(.page-back) {
+  animation: 220ms cubic-bezier(0.4, 0, 1, 1) both page-leave;
+}
+::view-transition-old(.page-fwd) {
+  --page-to: -18px;
+}
+::view-transition-old(.page-back) {
+  --page-to: 18px;
+}
+::view-transition-new(.page-fwd),
+::view-transition-new(.page-back) {
+  animation:
+    260ms ease-out 90ms both page-fade,
+    900ms var(--spring-soft) both page-arrive;
+}
+::view-transition-new(.page-fwd) {
+  --page-from: 44px;
+}
+::view-transition-new(.page-back) {
+  --page-from: -44px;
+}
+::view-transition-group(.page-fwd),
+::view-transition-group(.page-back) {
+  animation-duration: 450ms;
+}
+@keyframes page-leave {
+  to {
+    opacity: 0;
+    translate: 0 var(--page-to);
+    scale: 0.985;
+    filter: blur(6px);
+  }
+}
+@keyframes page-fade {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+  }
+}
+@keyframes page-arrive {
+  from {
+    translate: 0 var(--page-from);
+    scale: 0.992;
+  }
+}
+
+/* 4) Aynı sayfada görünüm/sekme değişimi: çapraz geçiş + hafif ölçek */
+::view-transition-old(.swap) {
+  animation: 180ms ease-in both swap-out;
+}
+::view-transition-new(.swap) {
+  animation:
+    240ms ease-out 80ms both page-fade,
+    700ms var(--spring-snappy) both swap-in;
+}
+@keyframes swap-out {
+  to {
+    opacity: 0;
+    scale: 0.98;
+    filter: blur(4px);
+  }
+}
+@keyframes swap-in {
+  from {
+    scale: 1.02;
+  }
+}
+
+/* 5) Kademeli giriş: sayfanın bölümleri sırayla yükselir (bitince transform kalmaz) */
+[data-cascade] > * > * {
+  animation: cascade-in 900ms var(--spring-soft) both;
+  animation-delay: calc(var(--cascade-i, 0) * 55ms + 60ms);
+}
+[data-cascade] > * > :nth-child(2) { --cascade-i: 1; }
+[data-cascade] > * > :nth-child(3) { --cascade-i: 2; }
+[data-cascade] > * > :nth-child(4) { --cascade-i: 3; }
+[data-cascade] > * > :nth-child(5) { --cascade-i: 4; }
+[data-cascade] > * > :nth-child(6) { --cascade-i: 5; }
+[data-cascade] > * > :nth-child(7) { --cascade-i: 6; }
+[data-cascade] > * > :nth-child(n + 8) { --cascade-i: 7; }
+@keyframes cascade-in {
+  from {
+    opacity: 0;
+    translate: 0 22px;
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    translate: none;
+    filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
+  [data-cascade] > * > * {
+    animation: none;
+  }
+}
+
 /* ---------- Asistan yanıtları (Markdown) ---------- */
 .md > * + * {
   margin-top: 0.6em;
