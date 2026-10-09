@@ -4,7 +4,10 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/ui";
-import { AGENTS, agentById, STATUS_META, type BrainItem, type BrainState } from "@/lib/brain-types";
+import { AGENTS, agentById } from "@/lib/brain-types";
+import { ItemSheet } from "@/components/brain/BrainView";
+import { TaskListView } from "@/components/brain/TaskRow";
+import { useBrainState } from "@/components/brain/useBrain";
 import type { ArchiveProgress, GoogleSnapshot } from "@/lib/google-types";
 import { OFFICE_DARK, OFFICE_LIGHT, type OfficePal } from "./Furniture";
 import { STATUS_COLOR, STATUS_LABEL, ZONE_AGENT, ZONES, zoneById, zoneStats, type ZoneId, type ZoneStat } from "./layout";
@@ -59,7 +62,12 @@ export default function OfficeView({
   const api = useRef<CameraApi | null>(null);
   const labels = useRef<Record<string, HTMLDivElement | null>>({});
   const screen: Screen = useRef({});
-  const brain = useBrain();
+  const brain = useBrainState();
+  // ofis açıkken beyin durumu yarım dakikada bir tazelenir (ajanlar arka planda çalışabilir)
+  useEffect(() => {
+    const t = setInterval(brain.load, 30000);
+    return () => clearInterval(t);
+  }, [brain.load]);
   const wiresRef = useRef<SVGSVGElement>(null);
   const chips = useRef<Record<string, HTMLElement | null>>({});
   // servis şeridinden pod kartlarına kablolar (her karede, kart konumları sahneden gelir)
@@ -295,27 +303,34 @@ export default function OfficeView({
           >
             {zone ? (
               <>
-                <div className="mb-4 flex items-start gap-3">
-                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-2xl" style={{ background: `${zone.color}26` }}>
+                <div className="mb-4 flex items-center gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-xl" style={{ background: `${zone.color}1f` }}>
                     {zone.emoji}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="text-lg font-extrabold leading-tight">{zone.title}</div>
-                    <div className="text-xs font-bold" style={{ color: STATUS_COLOR[stats[zone.id].status] }}>
-                      {zone.role} · {STATUS_LABEL[stats[zone.id].status]}
-                      {ZONE_AGENT[zone.id] && <span className="text-ink-3"> · {agentById(ZONE_AGENT[zone.id]!)?.name}</span>}
+                    <div className="text-[17px] font-extrabold leading-tight">{zone.title}</div>
+                    <div className="truncate text-xs text-ink-3">
+                      {zone.role}
+                      {stats[zone.id].sub ? ` · ${stats[zone.id].sub}` : ""}
                     </div>
-                    {stats[zone.id].sub && <div className="mt-0.5 line-clamp-2 text-xs text-ink-3">{stats[zone.id].sub}</div>}
                   </div>
-                  <button onClick={() => onSelect(null)} className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-black/5 dark:hover:bg-white/10" aria-label="Kapat">
+                  <button onClick={() => onSelect(null)} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink-2 hover:bg-black/5 dark:hover:bg-white/10" aria-label="Kapat">
                     <Icon name="close" size={16} />
                   </button>
                 </div>
-                {ZONE_AGENT[zone.id] && <TaskList items={(brain.st?.items ?? []).filter((x) => x.agent === ZONE_AGENT[zone.id])} compact onPick={() => {}} />}
+                {ZONE_AGENT[zone.id] && (() => {
+                  const mine = (brain.st?.items ?? []).filter((x) => x.agent === ZONE_AGENT[zone.id] && x.status !== "done" && x.status !== "dismissed");
+                  return mine.length ? (
+                    <section className="mb-4">
+                      <div className="mb-1 px-1 text-xs font-bold text-ink-3">Beyindeki işler</div>
+                      <TaskListView items={mine} onOpen={brain.setOpen} filters={false} showAgent={false} limit={3} />
+                    </section>
+                  ) : null;
+                })()}
                 <div className="@container">{renderZone(zone.id)}</div>
               </>
             ) : (
-              <TaskStatus brain={brain} onPick={(x) => onSelect(zoneOfAgent(x.agent))} />
+              <TaskStatus brain={brain} />
             )}
           </motion.div>
         </AnimatePresence>
@@ -336,6 +351,7 @@ export default function OfficeView({
         )}
         <span className="hidden text-ink-3 lg:inline">· sürükle: döndür · tekerlek: yakınlaştır · pod'a tıkla</span>
       </div>
+      <ItemSheet x={brain.open} onClose={() => brain.setOpen(null)} onPatch={brain.patch} onWork={brain.runWork} onApprove={brain.approveWork} />
     </div>
   );
 }
@@ -350,128 +366,31 @@ const CONNECTORS: { id: string; label: string; icon: string; color: string; to: 
   { id: "claude", label: "Claude (Anthropic)", icon: "✳️", color: "#d97757", to: "hub" },
 ];
 
-const zoneOfAgent = (a: string): ZoneId | null => (Object.keys(ZONE_AGENT) as ZoneId[]).find((z) => ZONE_AGENT[z] === a) ?? null;
 
 /* ------------------------------------------------------------------ beyin durumu */
-function useBrain() {
-  const [st, setSt] = useState<BrainState | null>(null);
-  const [thinking, setThinking] = useState(false);
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/brain", { cache: "no-store" });
-      if (r.ok) setSt(await r.json());
-    } catch {}
-  }, []);
-  useEffect(() => {
-    load();
-    const busy = st?.running || st?.items.some((x) => x.work?.status === "running");
-    const t = setInterval(load, busy ? 5000 : 30000);
-    return () => clearInterval(t);
-  }, [load, st?.running, st?.items]);
-  const think = async () => {
-    setThinking(true);
-    try {
-      const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "think" }) });
-      const j = await r.json().catch(() => null);
-      if (r.ok && j?.state) setSt(j.state);
-    } finally {
-      setThinking(false);
-    }
-  };
-  return { st, thinking, think };
-}
-type BrainHook = ReturnType<typeof useBrain>;
+type BrainHook = ReturnType<typeof useBrainState>;
 
-/** iş ilerlemesi: adımlar + ajan teslimatı */
-function progress(x: BrainItem) {
-  if (x.status === "done" || x.work?.status === "approved") return 100;
-  const steps = x.steps.length ? x.steps.filter((s) => s.done).length / x.steps.length : 0;
-  const work = x.work?.status === "waiting_ok" ? 0.85 : x.work?.status === "ready" ? 0.7 : x.work?.status === "running" ? 0.35 : 0;
-  const base = x.status === "inbox" ? 0.05 : x.status === "todo" ? 0.1 : 0.2;
-  return Math.round(Math.max(base, steps * 0.9, work) * 100);
-}
-
-type Filter = "all" | "inbox" | "doing" | "waiting" | "done";
-function TaskStatus({ brain, onPick }: { brain: BrainHook; onPick: (x: BrainItem) => void }) {
-  const [f, setF] = useState<Filter>("all");
+/** Genel bakış: beynin kısa durumu ve tüm ofisin işleri. */
+function TaskStatus({ brain }: { brain: BrainHook }) {
   const st = brain.st;
-  const items = (st?.items ?? []).filter((x) => x.status !== "dismissed");
-  const by = (k: Filter) => (k === "all" ? items.filter((x) => x.status !== "done") : k === "doing" ? items.filter((x) => x.status === "doing" || x.status === "todo") : items.filter((x) => x.status === k));
   const busy = brain.thinking || !!st?.running;
   return (
-    <div>
-      {/* beyin özeti */}
-      <div className="mb-4 flex items-center gap-3 rounded-2xl bg-white/60 p-3 dark:bg-white/5">
-        <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-2xl" style={{ background: "radial-gradient(circle at 35% 30%, #c4b5fd, #8b5cf6 60%, #5b21b6)" }}>
-          🧠
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.16em]">Beyin · {AGENTS.length} ajan</div>
-          <div className="truncate text-xs text-ink-3">
-            Son düşünme {st?.lastRun ? ago(st.lastRun) : "—"}
-            {st?.focus?.order.length ? ` · bugün ${st.focus.order.length} odak` : ""}
-          </div>
-          <Link href="/gorevler" className="text-xs font-extrabold text-blue">
-            Beyni aç →
-          </Link>
-        </div>
-        <motion.button whileTap={{ scale: 0.92 }} onClick={brain.think} disabled={busy} className="shrink-0 rounded-full bg-[#8b5cf6] px-3 py-2 text-xs font-extrabold text-white disabled:opacity-70">
-          {busy ? "Düşünüyor…" : "Düşün"}
-        </motion.button>
-      </div>
-
-      <div className="mb-2 flex items-baseline justify-between">
-        <div className="font-serif text-xl font-bold tracking-wide">GÖREV DURUMU</div>
-        <span className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-ink-3">tüm ofis</span>
-      </div>
-      <div className="mb-3 flex flex-wrap gap-1.5">
-        {(
-          [
-            ["all", "Tümü"],
-            ["inbox", "Öneri"],
-            ["doing", "Devam"],
-            ["waiting", "Bekliyor"],
-            ["done", "Bitti"],
-          ] as [Filter, string][]
-        ).map(([k, l]) => (
-          <button key={k} onClick={() => setF(k)} className={`rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider ${f === k ? "bg-ink text-white dark:bg-white dark:text-[#1b1e27]" : "border border-black/10 text-ink-2 dark:border-white/15"}`}>
-            {l} <span className="opacity-60">{by(k).length}</span>
-          </button>
-        ))}
-      </div>
-      {!st ? <div className="py-6 text-center text-xs text-ink-3">Yükleniyor…</div> : <TaskList items={by(f)} onPick={onPick} />}
-    </div>
-  );
-}
-
-function TaskList({ items, onPick, compact }: { items: BrainItem[]; onPick: (x: BrainItem) => void; compact?: boolean }) {
-  const list = [...items].sort((a, b) => Number(b.work?.status === "running") - Number(a.work?.status === "running") || a.priority - b.priority || b.updatedAt.localeCompare(a.updatedAt));
-  if (!list.length) return compact ? null : <div className="py-6 text-center text-xs font-semibold text-ink-3">Bu durumda iş yok.</div>;
-  return (
-    <div className={`space-y-2 ${compact ? "mb-4" : ""}`}>
-      {compact && <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-ink-3">Ajanın işleri</div>}
-      {list.slice(0, compact ? 4 : 40).map((x) => {
-        const a = agentById(x.agent)!;
-        const p = progress(x);
-        const running = x.work?.status === "running";
-        return (
-          <button key={x.id} onClick={() => onPick(x)} className="block w-full rounded-2xl border border-black/5 bg-white/70 p-3 text-left hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10">
-            <div className="flex items-start gap-2.5">
-              <span className="mt-0.5 shrink-0 rounded-full border border-black/15 px-1.5 text-[10px] font-extrabold tabular-nums dark:border-white/20">{p}%</span>
-              <div className="min-w-0 flex-1">
-                <div className="line-clamp-2 text-[13px] font-bold leading-snug">{x.title}</div>
-                <div className="mt-0.5 truncate text-[10px] font-extrabold uppercase tracking-wider text-ink-3">
-                  {a.emoji} {a.name} · {running ? "çalışıyor" : x.work?.status === "waiting_ok" ? "onay bekliyor" : STATUS_META[x.status === "dismissed" ? "done" : x.status].label}
-                </div>
-              </div>
-              <span className="shrink-0 text-[10px] text-ink-3">{ago(x.updatedAt)}</span>
-            </div>
-            <div className="mt-2 h-1 overflow-hidden rounded-full bg-black/5 dark:bg-white/10">
-              <div className={`h-full rounded-full ${running ? "animate-pulse" : "bg-ink"}`} style={{ width: `${p}%`, background: running ? a.color : undefined }} />
-            </div>
-          </button>
-        );
-      })}
+    <div className="space-y-4">
+      <section className="flex items-center gap-2 px-1">
+        <span className="text-sm font-extrabold">Beyin</span>
+        <span className="truncate text-xs text-ink-3">{st?.lastRun ? `düşünme ${ago(st.lastRun)}` : "henüz düşünmedi"}</span>
+        <button onClick={brain.think} disabled={busy} className="ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold text-ink-2 hover:bg-black/5 disabled:opacity-60 dark:hover:bg-white/10">
+          <Icon name="refresh" size={13} className={busy ? "animate-spin" : ""} />
+          {busy ? "Düşünüyor" : "Düşün"}
+        </button>
+        <Link href="/gorevler" className="rounded-full px-2.5 py-1 text-xs font-bold text-blue hover:bg-black/5 dark:hover:bg-white/10">
+          Aç
+        </Link>
+      </section>
+      <section>
+        <div className="mb-2 px-1 text-sm font-extrabold">İşler</div>
+        {st ? <TaskListView items={st.items} onOpen={brain.setOpen} /> : <div className="py-6 text-center text-xs text-ink-3">Yükleniyor…</div>}
+      </section>
     </div>
   );
 }

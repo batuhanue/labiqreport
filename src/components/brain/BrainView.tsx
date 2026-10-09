@@ -6,7 +6,8 @@ import { useAssistant } from "@/components/assistant/AssistantPanel";
 import { usePeriod } from "@/components/PeriodProvider";
 import { useTodos } from "@/components/todos/TodoProvider";
 import { Skeleton } from "@/components/fx";
-import { Icon, Sheet } from "@/components/ui";
+import { Icon, Menu, Sheet, Tabs } from "@/components/ui";
+import { itemState } from "./TaskRow";
 import { AGENTS, KIND_LABEL, REJECT_REASONS, STATUS_META, TRUST_META, agentById, type AgentTrustView, type Lesson, type LearningState, type TrustLevel, type AgentId, type BrainItem, type BrainRun, type BrainState, type ItemStatus } from "@/lib/brain-types";
 import { renderMd } from "@/lib/markdown";
 import { lessonToast } from "@/lib/learn-client";
@@ -309,26 +310,10 @@ export function Capture({ onDone, seed, compact }: { onDone: (s: BrainState, new
       setBusy(false);
     }
   };
+  const showOpts = !!text.trim() || !!agent;
   return (
-    <form ref={ref} onSubmit={submit} className="clay p-2.5">
-      <div className="flex flex-wrap items-center gap-2 px-1 pb-2">
-        <select value={agent} onChange={(e) => setAgent(e.target.value as AgentId | "")} className="clay-sm rounded-full bg-transparent px-3 py-1.5 text-xs font-extrabold outline-none" aria-label="Ajan">
-          <option value="">🧠 Beyin seçsin</option>
-          {AGENTS.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.emoji} {a.name}
-            </option>
-          ))}
-        </select>
-        <button type="button" onClick={() => setDoNow((v) => !v)} className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${doNow ? "bg-blue text-white" : "bg-track text-ink-2"}`} title="Açık: ajan işi hemen yapıp teslimatı yazar. Kapalı: yalnızca iş olarak kaydedilir.">
-          ⚡ Hemen yapsın {doNow ? "açık" : "kapalı"}
-        </button>
-        <button type="button" onClick={() => setTeam((v) => !v)} className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${team ? "bg-[#8b5cf6] text-white" : "bg-track text-ink-2"}`} title="Açık: departman lideri işi parçalara bölüp ekiple yapar">
-          👥 Ekip
-        </button>
-        {!compact && <span className="hidden text-[11px] font-semibold text-ink-3 sm:inline">Okumak serbest; dışarıya bir şey gidecekse taslak hazırlar, onayını bekler.</span>}
-      </div>
-      <div className="clay-pressed flex items-end gap-2 rounded-[22px] p-2 pl-4">
+    <form ref={ref} onSubmit={submit} className={compact ? "" : "clay p-2.5"}>
+      <div className="flex items-end gap-2 rounded-[22px] border border-line bg-card p-1.5 pl-4 focus-within:border-ink-3">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -339,13 +324,40 @@ export function Capture({ onDone, seed, compact }: { onDone: (s: BrainState, new
             }
           }}
           rows={1}
-          placeholder={compact ? "Bir iş yaz…" : "Bir iş ver: “Ceren Hanım'a Bursa dönem sonucu için hatırlatma taslağı yaz”"}
-          className="max-h-40 min-h-[44px] flex-1 resize-none bg-transparent py-2.5 text-[15px] outline-none placeholder:text-ink-3"
+          placeholder={compact ? "Beyne bir iş ver…" : "Bir iş ver: “Ceren Hanım'a Bursa dönem sonucu için hatırlatma taslağı yaz”"}
+          className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent py-2 text-[15px] outline-none placeholder:text-ink-3"
         />
-        <motion.button whileTap={{ scale: 0.92 }} disabled={busy || !text.trim()} className="clay-color grid h-11 shrink-0 place-items-center rounded-full bg-blue px-4 text-sm font-extrabold text-white disabled:opacity-50">
-          {busy ? "Anlıyor…" : "Ver"}
+        <motion.button whileTap={{ scale: 0.92 }} disabled={busy || !text.trim()} aria-label="Ver" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-paper disabled:opacity-30 dark:bg-white dark:text-[#1b1e27]">
+          {busy ? <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="h-4 w-4 rounded-full border-2 border-current border-t-transparent" /> : <Icon name="send" size={16} />}
         </motion.button>
       </div>
+      <AnimatePresence initial={false}>
+        {showOpts && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 pt-2 text-xs font-semibold text-ink-3">
+              <label className="flex items-center gap-1.5">
+                Kime
+                <select value={agent} onChange={(e) => setAgent(e.target.value as AgentId | "")} className="rounded-md bg-transparent font-bold text-ink-2 outline-none" aria-label="Ajan">
+                  <option value="">Beyin seçsin</option>
+                  {AGENTS.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input type="checkbox" checked={doNow} onChange={(e) => setDoNow(e.target.checked)} className="h-3.5 w-3.5 accent-[#5b7cff]" />
+                Hemen yapsın
+              </label>
+              <label className={`flex cursor-pointer items-center gap-1.5 ${doNow ? "" : "opacity-40"}`}>
+                <input type="checkbox" checked={team} disabled={!doNow} onChange={(e) => setTeam(e.target.checked)} className="h-3.5 w-3.5 accent-[#8b5cf6]" />
+                Ekiple
+              </label>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {err && <div className="mt-1 px-3 text-xs font-semibold text-fail">{err}</div>}
     </form>
   );
@@ -430,11 +442,11 @@ function Card({ x, onOpen, onApprove, onDismiss }: { x: BrainItem; onOpen: () =>
       </button>
       {x.status === "inbox" && !asking && (
         <div className="flex border-t border-line text-xs font-extrabold">
-          <button onClick={onApprove} className="flex-1 py-2 text-ok hover:bg-ok/10">
-            ✓ Onayla
+          <button onClick={onApprove} className="flex-1 py-2 text-ink hover:bg-track">
+            Üstlen
           </button>
           <button onClick={() => setAsking(true)} className="flex-1 border-l border-line py-2 text-ink-3 hover:bg-track">
-            ✕ Gerek yok
+            Gerek yok
           </button>
         </div>
       )}
@@ -453,10 +465,21 @@ export function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: Brain
   const { toast } = usePeriod();
   const { ask } = useAssistant();
   const a = x ? agentById(x.agent) : null;
-  const [asking, setAsking] = useState(false);
-  useEffect(() => setAsking(false), [x?.id]);
+  const [rejecting, setRejecting] = useState(false);
+  const [details, setDetails] = useState(false);
+  useEffect(() => {
+    setRejecting(false);
+    setDetails(false);
+  }, [x?.id]);
+  if (!x || !a)
+    return (
+      <Sheet open={false} onClose={onClose}>
+        {null}
+      </Sheet>
+    );
+
+  const open = x.status !== "done" && x.status !== "dismissed";
   const toTodo = () => {
-    if (!x) return;
     const id = uid();
     add(
       newTodo({
@@ -475,148 +498,356 @@ export function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: Brain
     onPatch(x.id, { todoId: id, status: x.status === "inbox" ? "todo" : x.status });
     toast("Görevlerine eklendi");
   };
+  const reject = (r?: string) => {
+    onPatch(x.id, { status: "dismissed" }, r);
+    onClose();
+  };
+  const src = x.sources[0];
+  const meta = [a.name, KIND_LABEL[x.kind], x.due && dueLabel(x.due)].filter(Boolean).join(" · ");
+
   return (
-    <Sheet open={!!x} onClose={onClose} wide title={<span className="line-clamp-2 text-lg">{x?.title}</span>}>
-      {x && a && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
-            <span className="rounded-full px-2.5 py-1" style={{ background: `${a.color}22`, color: a.color }}>
-              {a.emoji} {a.name}
-            </span>
-            <span className="rounded-full bg-track px-2.5 py-1">{KIND_LABEL[x.kind]}</span>
-            <span className="rounded-full px-2.5 py-1 text-white" style={{ background: PRIORITY[x.priority].color }}>
-              {PRIORITY[x.priority].label}
-            </span>
-            {x.due && <span className="rounded-full bg-track px-2.5 py-1">📅 {dueLabel(x.due)}</span>}
-            {x.person && <span className="rounded-full bg-track px-2.5 py-1">👤 {x.person}</span>}
-            {x.area && <span className="rounded-full bg-track px-2.5 py-1">{x.area}</span>}
+    <Sheet
+      open
+      onClose={onClose}
+      wide
+      title={
+        <div>
+          <div className="flex items-center gap-2 text-xs font-semibold text-ink-3">
+            <span className="h-2 w-2 rounded-full" style={{ background: a.color }} />
+            <span className="truncate">{meta}</span>
+            {x.priority <= 2 && open && <span className="font-bold" style={{ color: PRIORITY[x.priority].color }}>· {PRIORITY[x.priority].label}</span>}
           </div>
-
-          <div className="rounded-2xl bg-card p-4">
-            <div className="text-[15px] leading-relaxed">{x.summary}</div>
-            {x.why && <div className="mt-2 text-sm text-ink-2">💡 {x.why}</div>}
-          </div>
-
-          {x.auto && x.status !== "dismissed" && (
-            <div className="rounded-2xl bg-[#8b5cf6]/10 px-4 py-2.5 text-xs font-semibold text-ink-2">
-              🤖 {a.name} bunu güven seviyesiyle (“{TRUST_META[x.auto.level].label}”) <b>kendisi onayladı</b>
-              {x.auto.level === 2 ? " ve işi kendisi yapıyor" : ""}. Yanlışsa “Gerek yok” de; 14 günde 2 yanlışta seviyesi bir düşer.
-            </div>
-          )}
-
-          <WorkSection x={x} onWork={onWork} onApprove={onApprove} />
-
-          {/* durum */}
-          <div className="flex flex-wrap gap-1.5">
-            {(Object.keys(STATUS_META) as Col[]).map((s) => (
-              <button key={s} onClick={() => onPatch(x.id, { status: s })} className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${x.status === s ? "text-white" : "bg-track text-ink-2"}`} style={x.status === s ? { background: STATUS_META[s].color } : undefined}>
-                {STATUS_META[s].label}
-              </button>
-            ))}
-          </div>
-
-          {x.steps.length > 0 && (
-            <div>
-              <div className="mb-1.5 text-sm font-extrabold">Adımlar</div>
-              <div className="space-y-1">
-                {x.steps.map((s, i) => (
-                  <label key={i} className="flex cursor-pointer items-start gap-2.5 rounded-xl px-2 py-1.5 hover:bg-track/60">
-                    <input
-                      type="checkbox"
-                      checked={s.done}
-                      onChange={() => onPatch(x.id, { steps: x.steps.map((y, k) => (k === i ? { ...y, done: !y.done } : y)) })}
-                      className="mt-1 h-4 w-4 accent-[#5b7cff]"
-                    />
-                    <span className={`text-sm ${s.done ? "text-ink-3 line-through" : ""}`}>{s.title}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {x.files.length > 0 && (
-            <div>
-              <div className="mb-1.5 text-sm font-extrabold">📁 Dosya ajanının bulduğu dosyalar</div>
-              <div className="space-y-1.5">
-                {x.files.map((f) => (
-                  <a key={f.id} href={f.link} target="_blank" rel="noreferrer" className="block rounded-xl bg-track/60 px-3 py-2 hover:bg-track">
-                    <div className="truncate text-sm font-bold">{f.name}</div>
-                    {f.excerpt && <div className="line-clamp-2 text-xs text-ink-3">{f.excerpt}</div>}
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div>
-            <div className="mb-1.5 text-sm font-extrabold">Kaynaklar</div>
-            <div className="space-y-1.5">
-              {x.sources.map((s) => {
-                const sa = agentById(s.agent);
-                const inner = (
-                  <>
-                    <span>{sa?.emoji}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-bold">{s.title}</span>
-                      <span className="block truncate text-xs text-ink-3">
-                        {s.who ? `${s.who} · ` : ""}
-                        {new Date(s.ts).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                    </span>
-                    {s.link && <Icon name="external" size={14} className="shrink-0 text-ink-3" />}
-                  </>
-                );
-                return s.link ? (
-                  <a key={s.signalId} href={s.link} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 rounded-xl bg-track/60 px-3 py-2 hover:bg-track">
-                    {inner}
-                  </a>
-                ) : (
-                  <div key={s.signalId} className="flex items-center gap-2.5 rounded-xl bg-track/60 px-3 py-2">
-                    {inner}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2 pt-1">
-            {x.status === "inbox" && (
-              <button onClick={() => onPatch(x.id, { status: "todo" })} className="rounded-full bg-ok px-4 py-2 text-sm font-extrabold text-white">
-                ✓ Onayla
-              </button>
-            )}
-            {!x.todoId && (
-              <button onClick={toTodo} className="clay-dark rounded-full px-4 py-2 text-sm font-extrabold">
-                ✅ Görevlerime ekle
-              </button>
-            )}
-            <button
-              onClick={() => {
+          <div className="mt-1 text-[22px] font-extrabold leading-snug">{x.title}</div>
+        </div>
+      }
+      actions={
+        <Menu
+          items={[
+            { label: "Görevlerime ekle", icon: "todo", onClick: toTodo, hidden: !!x.todoId },
+            {
+              label: "Asistanla konuş",
+              icon: "spark",
+              onClick: () => {
                 onClose();
                 ask(`Beyindeki şu işi birlikte planlayalım: "${x.title}". Özet: ${x.summary} Adımlar: ${x.steps.map((s) => s.title).join("; ")}. Kaynaklar: ${x.sources.map((s) => s.title).join("; ")}. Gerekirse arşivde ilgili e-posta/dosyaları bul, ilk adımı benimle netleştir.`);
-              }}
-              className="rounded-full bg-blue px-4 py-2 text-sm font-extrabold text-white"
-            >
-              ✨ Asistanla planla
-            </button>
-            {x.status !== "dismissed" && x.status !== "done" && (
-              <button onClick={() => setAsking((v) => !v)} className="rounded-full bg-track px-4 py-2 text-sm font-bold text-ink-2">
-                Gerek yok
+              },
+            },
+            { label: "Tamamlandı say", icon: "check", onClick: () => onPatch(x.id, { status: "done" }), hidden: !open || x.status === "inbox" },
+            { label: "Gerek yok", icon: "x", onClick: () => setRejecting(true), hidden: !open, danger: true },
+          ]}
+        />
+      }
+    >
+      <div className="space-y-5">
+        {/* ne isteniyor */}
+        <div>
+          <p className="text-[15px] leading-relaxed text-ink-2">{x.summary}</p>
+          {src && (
+            <a href={src.link} target="_blank" rel="noreferrer" className={`mt-2 inline-flex max-w-full items-center gap-2 text-xs font-semibold text-ink-3 ${src.link ? "hover:text-ink" : "pointer-events-none"}`}>
+              <Icon name={src.agent === "posta" ? "mail" : src.agent === "sohbet" ? "chat" : src.agent === "takvim" ? "calendar" : src.agent === "toplanti" ? "video" : "note"} size={14} />
+              <span className="truncate">
+                {src.who ? `${src.who.replace(/\s*<[^>]+>/, "")} · ` : ""}
+                {src.title}
+              </span>
+              {src.link && <Icon name="external" size={12} />}
+            </a>
+          )}
+          {x.auto && open && (
+            <div className="mt-2 text-xs text-ink-3">
+              {a.name} bunu kendisi onayladı.{" "}
+              <button onClick={() => setRejecting(true)} className="font-bold text-ink-2 underline-offset-2 hover:underline">
+                Yanlış mı?
               </button>
+            </div>
+          )}
+        </div>
+
+        {rejecting ? (
+          <RejectReasons onPick={reject} onCancel={() => setRejecting(false)} />
+        ) : (
+          <NextStep x={x} onPatch={onPatch} onWork={onWork} onApprove={onApprove} onReject={() => setRejecting(true)} />
+        )}
+
+        {/* ayrıntılar */}
+        <div className="border-t border-line pt-3">
+          <button onClick={() => setDetails((v) => !v)} className="flex w-full items-center gap-2 text-sm font-bold text-ink-2 hover:text-ink">
+            Ayrıntılar
+            <span className="text-xs font-semibold text-ink-3">
+              {[x.steps.length && `${x.steps.filter((s) => s.done).length}/${x.steps.length} adım`, x.files.length && `${x.files.length} dosya`, `${x.sources.length} kaynak`].filter(Boolean).join(" · ")}
+            </span>
+            <Icon name="chevron" size={14} className={`ml-auto transition-transform ${details ? "rotate-90" : ""}`} />
+          </button>
+          <AnimatePresence initial={false}>
+            {details && (
+              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                <Details x={x} onPatch={onPatch} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+/** İşin ayrıntıları: neden, adımlar, dosyalar, kaynaklar, durum. */
+function Details({ x, onPatch }: { x: BrainItem; onPatch: (id: string, p: Partial<BrainItem>) => void }) {
+  const label = "mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink-3";
+  return (
+    <div className="space-y-4 pt-3">
+      {x.why && (
+        <div>
+          <div className={label}>Neden senin işin</div>
+          <div className="text-sm text-ink-2">{x.why}</div>
+        </div>
+      )}
+      {x.steps.length > 0 && (
+        <div>
+          <div className={label}>Adımlar</div>
+          {x.steps.map((s, i) => (
+            <label key={i} className="flex cursor-pointer items-start gap-2.5 rounded-lg py-1">
+              <input
+                type="checkbox"
+                checked={s.done}
+                onChange={() => onPatch(x.id, { steps: x.steps.map((y, k) => (k === i ? { ...y, done: !y.done } : y)) })}
+                className="mt-0.5 h-4 w-4 accent-[#5b7cff]"
+              />
+              <span className={`text-sm ${s.done ? "text-ink-3 line-through" : ""}`}>{s.title}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {x.files.length > 0 && (
+        <div>
+          <div className={label}>Dosyalar</div>
+          {x.files.map((f) => (
+            <a key={f.id} href={f.link} target="_blank" rel="noreferrer" className="flex items-center gap-2 py-1 text-sm hover:text-blue">
+              <Icon name="folder" size={15} className="shrink-0 text-ink-3" />
+              <span className="truncate">{f.name}</span>
+            </a>
+          ))}
+        </div>
+      )}
+      <div>
+        <div className={label}>Kaynaklar</div>
+        {x.sources.map((s) => (
+          <a key={s.signalId} href={s.link} target="_blank" rel="noreferrer" className={`flex items-center gap-2 py-1 text-sm ${s.link ? "hover:text-blue" : "pointer-events-none"}`}>
+            <span className="min-w-0 flex-1 truncate">{s.title}</span>
+            <span className="shrink-0 text-xs text-ink-3">
+              {s.who ? `${s.who.replace(/\s*<[^>]+>/, "")} · ` : ""}
+              {new Date(s.ts).toLocaleDateString("tr-TR", { day: "numeric", month: "short" })}
+            </span>
+          </a>
+        ))}
+      </div>
+      {x.status !== "dismissed" && (
+        <div>
+          <div className={label}>Durum</div>
+          <Tabs value={x.status as Col} onChange={(s) => onPatch(x.id, { status: s })} options={COLS.map((c) => ({ value: c, label: STATUS_META[c].label }))} />
+        </div>
+      )}
+      {x.work && x.work.status !== "running" && x.work.status !== "queued" && (x.work.used.length > 0 || x.work.ms) ? (
+        <div className="text-xs text-ink-3">
+          Ajan çalışması: {x.work.ms ? `${Math.round(x.work.ms / 1000)} sn` : ""}
+          {x.work.cost != null ? ` · $${x.work.cost.toFixed(3)}` : ""}
+          {x.work.used.length ? ` · ${x.work.used.length} arama` : ""}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Teslimat metnini e-posta parçalarına ayırır: başlık, Kime, Konu, gövde, kaynak satırı. */
+function splitDeliverable(md: string) {
+  let body = md.trim();
+  let to: string | undefined;
+  let subject: string | undefined;
+  let source: string | undefined;
+  body = body.replace(/^#{1,3}\s+.*\n+/, "");
+  body = body.replace(/^\s*\*{0,2}Kime:?\*{0,2}:?\s*(.+)$/im, (_, v: string) => ((to = v.replace(/\*/g, "").trim()), ""));
+  body = body.replace(/^\s*\*{0,2}Konu:?\*{0,2}:?\s*(.+)$/im, (_, v: string) => ((subject = v.replace(/\*/g, "").trim()), ""));
+  body = body.replace(/\n*\s*Kaynak:\s*(.+)\s*$/i, (_, v: string) => ((source = v.trim()), ""));
+  return { to, subject, body: body.trim(), source };
+}
+
+/** İşin sıradaki adımı: her durumda tek ana eylem. */
+function NextStep({ x, onPatch, onWork, onApprove, onReject }: { x: BrainItem; onPatch: (id: string, p: Partial<BrainItem>) => void; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string, mail?: boolean) => Promise<{ error: string; code?: string } | null>; onReject: () => void }) {
+  const { toast } = usePeriod();
+  const a = agentById(x.agent)!;
+  const w = x.work;
+  const [fixing, setFixing] = useState(false);
+  const [fb, setFb] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<{ error: string; code?: string } | null>(null);
+  const parts = useMemo(() => (w?.output ? splitDeliverable(w.output) : null), [w?.output]);
+  const html = useMemo(() => (parts ? renderMd(parts.body) : ""), [parts]);
+  const primary = "inline-flex items-center gap-2 rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-paper hover:opacity-90 disabled:opacity-50 dark:bg-white dark:text-[#1b1e27]";
+  const secondary = "inline-flex items-center gap-2 rounded-full bg-track px-4 py-2.5 text-sm font-bold text-ink-2 hover:text-ink";
+
+  // 1) öneri: senin işin mi?
+  if (x.status === "inbox" && !w) {
+    return (
+      <div className="rounded-3xl bg-track/60 p-4">
+        <div className="text-sm font-bold">Bu iş senin mi?</div>
+        <div className="mt-0.5 text-xs text-ink-3">Cevabından öğrenirim; benzer işleri buna göre öneririm.</div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button onClick={() => onPatch(x.id, { status: "todo" })} className={primary}>
+            <Icon name="check" size={16} stroke={2.6} /> Evet, üstlen
+          </button>
+          <button onClick={onReject} className={secondary}>
+            Hayır
+          </button>
+        </div>
+      </div>
+    );
+  }
+  // 2) henüz yapılmadı
+  if (!w) {
+    if (x.status === "done") return <div className="text-sm text-ink-3">Bu iş tamamlandı.</div>;
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <button onClick={() => onWork(x.id)} className={primary}>
+          <Icon name="play" size={14} /> {a.name.replace(" ajanı", "")} ajanına yaptır
+        </button>
+        <button onClick={() => onWork(x.id, undefined, true)} className="text-sm font-bold text-ink-3 hover:text-ink">
+          Ekiple yaptır
+        </button>
+      </div>
+    );
+  }
+  if (w.status === "queued" || w.status === "running") {
+    return (
+      <div className="rounded-3xl bg-track/60 p-4">
+        <div className="flex items-center gap-2.5 text-sm font-bold">
+          {w.status === "running" ? <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="inline-block h-4 w-4 rounded-full border-2 border-blue border-t-transparent" /> : <span className="h-2 w-2 rounded-full bg-blue" />}
+          {w.status === "running" ? (w.team ? `Ekip çalışıyor — lider ${a.name}` : `${a.name} çalışıyor…`) : `Sırada — ${a.name} kendisi yapacak`}
+          {w.status === "queued" && (
+            <button onClick={() => onWork(x.id)} className="ml-auto text-xs font-bold text-blue">
+              Şimdi yap
+            </button>
+          )}
+        </div>
+        {w.team && <TeamPieces team={w.team} />}
+      </div>
+    );
+  }
+  if (w.status === "error") {
+    return (
+      <div className="flex flex-wrap items-center gap-3 rounded-3xl bg-tint-fail p-4 text-sm">
+        <span className="min-w-0 flex-1">{w.error ?? "Ajan bir hata verdi."}</span>
+        <button onClick={() => onWork(x.id)} className={secondary}>
+          Tekrar dene
+        </button>
+      </div>
+    );
+  }
+
+  // 3) teslimat
+  const toGmail = async () => {
+    setBusy(true);
+    setErr(await onApprove(x.id, true));
+    setBusy(false);
+  };
+  const mailish = !!w.outbound;
+  const lastRule = w.revisions.at(-1)?.rule;
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-ink-3">
+        <span>{mailish ? "Hazırlanan e-posta" : "Teslimat"}</span>
+        <span style={{ color: itemState(x).color }}>· {itemState(x).label}</span>
+        <Menu
+          className="ml-auto"
+          items={[
+            {
+              label: "Kopyala",
+              icon: "copy",
+              onClick: async () => {
+                await navigator.clipboard.writeText(w.output).catch(() => {});
+                toast("Kopyalandı");
+              },
+            },
+            { label: "Yeniden yaz", icon: "refresh", onClick: () => onWork(x.id) },
+            { label: "Kendim gönderdim, onayla", icon: "check", onClick: () => onApprove(x.id), hidden: w.status !== "waiting_ok" },
+          ]}
+        />
+      </div>
+      <div className="overflow-hidden rounded-3xl border border-line bg-card">
+        {(parts?.to || parts?.subject) && (
+          <div className="space-y-1 border-b border-line px-5 py-3 text-sm">
+            {parts.to && (
+              <div className="flex gap-3">
+                <span className="w-10 shrink-0 text-ink-3">Kime</span>
+                <span className="font-semibold">{w.draft ? w.draft.to.join(", ") : parts.to}</span>
+              </div>
+            )}
+            {parts.subject && (
+              <div className="flex gap-3">
+                <span className="w-10 shrink-0 text-ink-3">Konu</span>
+                <span className="font-semibold">{w.draft?.subject ?? parts.subject}</span>
+              </div>
             )}
           </div>
-          {asking && (
-            <RejectReasons
-              onPick={(r) => {
-                onPatch(x.id, { status: "dismissed" }, r);
-                onClose();
-              }}
-              onCancel={() => setAsking(false)}
-            />
+        )}
+        <div className="md max-h-[42vh] overflow-y-auto px-5 py-4 text-[14.5px] leading-relaxed" dangerouslySetInnerHTML={{ __html: html }} />
+      </div>
+      {lastRule && <div className="mt-2 text-xs text-ink-3">Öğrendim: {lastRule}</div>}
+
+      {w.draft ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-3xl bg-ok/10 p-4">
+          <Icon name="check" size={18} stroke={2.6} className="text-ok" />
+          <span className="min-w-0 flex-1 text-sm font-semibold">Gmail'de taslak olarak duruyor{w.draft.reply ? " (yazışmaya yanıt)" : ""}.</span>
+          <a href={w.draft.link} target="_blank" rel="noreferrer" className={primary}>
+            Aç ve gönder <Icon name="external" size={14} />
+          </a>
+        </div>
+      ) : w.status === "approved" ? (
+        <div className="mt-3 text-sm text-ink-3">Onaylandı.</div>
+      ) : fixing ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!fb.trim()) return;
+            onWork(x.id, fb.trim());
+            setFb("");
+            setFixing(false);
+          }}
+          className="mt-3 flex gap-2"
+        >
+          <input autoFocus value={fb} onChange={(e) => setFb(e.target.value)} placeholder="Neyi değiştireyim? (ör. daha kısa, resmi hitap)" className="field min-w-0 flex-1 py-2.5 text-sm" />
+          <button disabled={!fb.trim()} className={primary}>
+            Gönder
+          </button>
+          <button type="button" onClick={() => setFixing(false)} className="px-2 text-sm font-bold text-ink-3 hover:text-ink">
+            Vazgeç
+          </button>
+        </form>
+      ) : (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {mailish && w.status === "waiting_ok" ? (
+            <button onClick={toGmail} disabled={busy} className={primary}>
+              <Icon name="mail" size={16} /> {busy ? "Kaydediliyor…" : "Gmail'e taslak olarak kaydet"}
+            </button>
+          ) : (
+            <button onClick={() => onApprove(x.id)} className={primary}>
+              <Icon name="check" size={16} stroke={2.6} /> Onayla
+            </button>
+          )}
+          <button onClick={() => setFixing(true)} className={secondary}>
+            <Icon name="edit" size={15} /> Düzelt
+          </button>
+        </div>
+      )}
+      {err && (
+        <div className="mt-2 text-xs font-semibold text-fail">
+          {err.error}{" "}
+          {err.code === "scope" && (
+            <a href="/api/google/auth" className="text-blue underline">
+              Google'ı yeniden bağla
+            </a>
           )}
         </div>
       )}
-    </Sheet>
+    </div>
   );
 }
 
@@ -625,33 +856,28 @@ export function ItemSheet({ x, onClose, onPatch, onWork, onApprove }: { x: Brain
 export function RejectReasons({ onPick, onCancel, compact }: { onPick: (reason?: string) => void; onCancel: () => void; compact?: boolean }) {
   const [other, setOther] = useState("");
   return (
-    <div className={compact ? "" : "clay-sm rounded-2xl p-3"}>
-      <div className="mb-1.5 text-[11px] font-extrabold text-ink-3">Neden? Bundan öğreneceğim</div>
+    <div className={compact ? "" : "rounded-3xl bg-track/60 p-4"}>
+      <div className={`flex items-center ${compact ? "mb-1.5 text-[11px]" : "mb-2.5 text-sm"} font-bold`}>
+        Neden gerek yok?
+        <button onClick={onCancel} className="ml-auto text-xs font-semibold text-ink-3 hover:text-ink">
+          Vazgeç
+        </button>
+      </div>
       <div className="flex flex-wrap gap-1.5">
         {REJECT_REASONS.map((r) => (
-          <button key={r} onClick={() => onPick(r)} className="rounded-full bg-track px-2.5 py-1 text-[11px] font-extrabold text-ink-2 hover:bg-blue hover:text-white">
+          <button key={r} onClick={() => onPick(r)} className={`rounded-full border border-line bg-card font-semibold text-ink-2 hover:border-ink hover:text-ink ${compact ? "px-2.5 py-1 text-[11px]" : "px-3.5 py-1.5 text-sm"}`}>
             {r}
           </button>
         ))}
       </div>
       <form
-        className="mt-1.5 flex gap-1.5"
+        className="mt-2"
         onSubmit={(e) => {
           e.preventDefault();
-          if (other.trim()) onPick(other.trim());
+          onPick(other.trim() || undefined);
         }}
       >
-        <input value={other} onChange={(e) => setOther(e.target.value)} placeholder={compact ? "Başka sebep…" : "Başka bir sebep… (ör. bu Tuğrul'un işi)"} className="field min-w-0 flex-1 py-1.5 text-xs" />
-        {other.trim() ? (
-          <button className="rounded-full bg-blue px-3 text-[11px] font-extrabold text-white">Gönder</button>
-        ) : (
-          <button type="button" onClick={() => onPick()} className="rounded-full px-2 text-[11px] font-bold text-ink-3 hover:text-ink">
-            Sebepsiz
-          </button>
-        )}
-        <button type="button" onClick={onCancel} className="px-1 text-[11px] font-bold text-ink-3 hover:text-ink" aria-label="Vazgeç">
-          ✕
-        </button>
+        <input value={other} onChange={(e) => setOther(e.target.value)} placeholder={compact ? "Başka bir sebep…" : "Başka bir sebep yaz, Enter'a bas"} className={`w-full bg-transparent text-ink-2 outline-none placeholder:text-ink-3 ${compact ? "py-1 text-xs" : "py-1.5 text-sm"}`} />
       </form>
     </div>
   );
@@ -661,24 +887,15 @@ export function RejectReasons({ onPick, onCancel, compact }: { onPick: (reason?:
 export function Learning({ learning, onLearned, compact }: { learning?: LearningState; onLearned?: () => void; compact?: boolean }) {
   const { toast } = usePeriod();
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(false);
-  if (!learning || (!learning.total && !learning.log.length)) {
-    return (
-      <div className={`clay-sm rounded-2xl ${compact ? "p-3 text-xs" : "p-4 text-sm"} text-ink-3`}>
-        🎓 <b className="text-ink-2">Seni tanıyorum</b> — önerilere verdiğin her evet/hayır, öncelik ve ajan değişikliği, teslimat düzeltmesi buraya düşer; bunlardan
-        tercihlerini öğrenip belleğe yazarım.
-      </div>
-    );
-  }
-  const lessons = learning.log.flatMap((g) => g.lessons.map((l) => ({ ...l, at: g.at })));
-  const shown = open ? lessons.slice(0, 12) : lessons.slice(0, compact ? 2 : 3);
+  const [open, setOpen] = useState(!compact);
+  const lessons = (learning?.log ?? []).flatMap((g) => g.lessons.map((l) => ({ ...l, at: g.at })));
   const now = async () => {
     setBusy(true);
     try {
       const r = await fetch("/api/learning", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "learn" }) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-      toast(lessonToast(j.learned as Lesson[]) ?? "Seçimleri inceledim; yeni bir kalıcı tercih çıkmadı");
+      toast(lessonToast(j.learned as Lesson[]) ?? "Seçimlerini inceledim; yeni bir tercih çıkmadı");
       onLearned?.();
     } catch (e) {
       toast((e as Error).message);
@@ -686,41 +903,35 @@ export function Learning({ learning, onLearned, compact }: { learning?: Learning
       setBusy(false);
     }
   };
+  const summary = !learning?.total ? "seçimlerinden öğrenir" : `${lessons.length} tercih öğrendi${learning.pending ? ` · ${learning.pending} seçim sırada` : ""}`;
   return (
-    <div className={`clay-sm rounded-2xl ${compact ? "p-3" : "p-4"}`}>
-      <div className="flex items-center gap-2">
-        <span className={compact ? "text-lg" : "text-xl"}>🎓</span>
-        <div className="min-w-0 flex-1">
-          <div className={`${compact ? "text-[11px] uppercase tracking-[0.16em]" : "text-sm"} font-extrabold`}>Seni tanıyorum</div>
-          <div className="text-[11px] font-semibold text-ink-3">
-            {learning.total} seçim · {lessons.length} tercih öğrenildi{learning.pending ? ` · ${learning.pending} seçim sırada` : ""}
-          </div>
+    <section className={compact ? "" : "clay p-5"}>
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-1 text-left">
+        <span className={`${compact ? "text-sm" : "text-lg"} font-extrabold`}>Seni tanıyorum</span>
+        <span className="truncate text-xs text-ink-3">{summary}</span>
+        <Icon name="chevron" size={13} className={`ml-auto shrink-0 text-ink-3 transition-transform ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open && (
+        <div className="mt-2 px-1">
+          {lessons.length ? (
+            <ul className="space-y-1.5">
+              {lessons.slice(0, compact ? 6 : 12).map((l, i) => (
+                <li key={i} className="text-[13px] leading-snug text-ink-2">
+                  {l.entry}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-xs text-ink-3">Önerilere verdiğin evet/hayır, öncelik ve düzeltmelerden tercihlerini çıkarıp belleğe yazarım.</div>
+          )}
+          {!!learning?.pending && (
+            <button onClick={now} disabled={busy} className="mt-2 text-xs font-bold text-blue disabled:opacity-60">
+              {busy ? "Öğreniyor…" : "Şimdi öğren"}
+            </button>
+          )}
         </div>
-        {learning.pending > 0 && (
-          <button onClick={now} disabled={busy} className="shrink-0 rounded-full bg-blue px-3 py-1 text-[11px] font-extrabold text-white disabled:opacity-60">
-            {busy ? "Öğreniyor…" : "Şimdi öğren"}
-          </button>
-        )}
-      </div>
-      {shown.length > 0 && (
-        <ul className="mt-2 space-y-1">
-          {shown.map((l, i) => (
-            <li key={i} className="flex gap-1.5 text-xs leading-snug text-ink-2">
-              <span className="shrink-0 text-ink-3">•</span>
-              <span>
-                {l.entry} <span className="text-[10px] font-bold text-ink-3">· {l.topic}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
       )}
-      {lessons.length > shown.length || open ? (
-        <button onClick={() => setOpen((v) => !v)} className="mt-1.5 text-[11px] font-extrabold text-blue">
-          {open ? "Daha az" : `Tümü (${lessons.length})`}
-        </button>
-      ) : null}
-      {!compact && <div className="mt-1.5 text-[10px] font-semibold text-ink-3">Belleğe (gelistirme.md) yazılır; asistanın bilgi dosyalarından düzenleyip silebilirsin.</div>}
-    </div>
+    </section>
   );
 }
 
@@ -732,36 +943,55 @@ export function TrustControl({ trust, onTrust }: { trust: AgentTrustView; onTrus
   const s = trust.stats;
   const decided = s.accepted + s.rejected;
   return (
-    <div className="border-b border-line px-4 py-3">
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="text-[11px] font-extrabold uppercase tracking-wider text-ink-3">Güven seviyesi</span>
-        <span className="text-[11px] font-semibold text-ink-3">
-          {decided ? `${decided} karar · %${pct(s.accepted, s.rejected)} onay` : "henüz karar yok"}
-          {s.delivered + s.fixed ? ` · teslimat ${s.delivered}✓ ${s.fixed}✎` : ""}
-        </span>
+    <div className="px-4 pb-4">
+      <div className="mb-1.5 flex items-baseline justify-between text-xs">
+        <span className="font-bold text-ink-2">Ne kadar kendi başına?</span>
+        {decided > 0 && <span className="text-ink-3">{decided} kararın %{pct(s.accepted, s.rejected)}'ini onayladın</span>}
       </div>
-      <div className="grid grid-cols-3 gap-1 rounded-2xl bg-track p-1">
-        {TRUST_META.map((m, i) => (
-          <button
-            key={m.label}
-            onClick={() => i !== trust.level && onTrust(i as TrustLevel)}
-            title={m.hint}
-            className={`rounded-xl px-1.5 py-1.5 text-[11px] font-extrabold leading-tight ${trust.level === i ? "bg-card text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}
-          >
-            {["🙋", "✅", "🤖"][i]} {m.label}
-          </button>
-        ))}
+      <Tabs value={String(trust.level) as "0" | "1" | "2"} onChange={(v) => onTrust(Number(v) as TrustLevel)} options={TRUST_META.map((m, i) => ({ value: String(i) as "0" | "1" | "2", label: m.short }))} />
+      <div className="mt-1.5 text-xs text-ink-3">
+        {TRUST_META[trust.level].hint}.
+        {trust.suggest != null && (
+          <>
+            {" "}
+            <button onClick={() => onTrust(trust.suggest!)} className="font-bold text-[#8b5cf6] hover:underline">
+              “{TRUST_META[trust.suggest].short}” seviyesine hazır →
+            </button>
+          </>
+        )}
       </div>
-      <div className="mt-1.5 text-[11px] text-ink-3">
-        {TRUST_META[trust.level].hint}
-        {trust.level > 0 && trust.askKinds.length > 0 && <> · yine de sorar: {trust.askKinds.map((k) => KIND_LABEL[k]).join(", ")}</>}. Dışarıya giden hiçbir şey otomatik gitmez.
-      </div>
-      {trust.suggest != null && (
-        <button onClick={() => onTrust(trust.suggest!)} className="mt-2 w-full rounded-xl bg-[#8b5cf6]/12 px-3 py-2 text-left text-xs font-bold text-[#8b5cf6] hover:bg-[#8b5cf6]/20">
-          ⬆ Güveni hak etti — “{TRUST_META[trust.suggest].label}” seviyesine geçir
+      {trust.note && <div className="mt-1.5 text-xs font-semibold text-warn">{trust.note}</div>}
+    </div>
+  );
+}
+
+/** Ajanın bildikleri: talimat/beceri ve düzeltmelerden öğrendiği kurallar (katlanır). */
+function AgentKnows({ profile, guideHtml, onIntro }: { profile: { guide: string; rules: string } | null; guideHtml: string; onIntro: () => void }) {
+  const [open, setOpen] = useState(false);
+  if (profile === null) return null;
+  const rules = profile.rules ? profile.rules.split("\n").filter((l) => l.trim().startsWith("-")).length : 0;
+  if (!profile.guide && !rules)
+    return (
+      <div className="flex items-center gap-3 border-t border-line px-4 py-3">
+        <span className="min-w-0 flex-1 text-xs text-ink-3">Henüz seni tanımıyor. 5 kısa soruyla nasıl çalıştığını öğrensin.</span>
+        <button onClick={onIntro} className="shrink-0 rounded-full bg-track px-3 py-1.5 text-xs font-bold text-ink-2 hover:text-ink">
+          Tanıştır
         </button>
+      </div>
+    );
+  return (
+    <div className="border-t border-line px-4 py-3">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 text-xs font-bold text-ink-2 hover:text-ink">
+        Ne biliyor
+        <span className="font-semibold text-ink-3">{[profile.guide && "talimat", rules && `${rules} kural`].filter(Boolean).join(" · ")}</span>
+        <Icon name="chevron" size={13} className={`ml-auto transition-transform ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open && (
+        <div className="mt-2 space-y-3">
+          {profile.guide && <div className="md max-h-64 overflow-y-auto text-[13px] leading-relaxed" dangerouslySetInnerHTML={{ __html: guideHtml }} />}
+          {profile.rules && <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink-2">{profile.rules}</div>}
+        </div>
       )}
-      {trust.note && <div className="mt-2 rounded-xl bg-tint-warn px-3 py-2 text-[11px] font-semibold">⬇ {trust.note}</div>}
     </div>
   );
 }
@@ -784,26 +1014,23 @@ export function TrustSuggest({ trust, onTrust, compact }: { trust?: Record<Agent
   const list = AGENTS.map((a) => ({ a, t: trust?.[a.id] })).filter(({ a, t }) => t?.suggest != null && !hidden.includes(`${a.id}:${t.suggest}`));
   if (!list.length) return null;
   return (
-    <div className={`space-y-2 ${compact ? "" : ""}`}>
+    <div className="space-y-2">
       {list.map(({ a, t }) => (
-        <motion.div key={a.id} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className={`flex flex-wrap items-center gap-2 rounded-2xl border border-[#8b5cf6]/30 bg-[#8b5cf6]/8 ${compact ? "p-2.5" : "p-3"}`}>
-          <span className="text-xl">{a.emoji}</span>
-          <div className="min-w-0 flex-1 basis-40 text-xs">
-            <div className="font-extrabold">
-              {a.name} güveni hak etti → “{TRUST_META[t!.suggest!].label}”
-            </div>
-            <div className="text-ink-3">
-              {t!.suggest === 1
-                ? `${t!.stats.accepted + t!.stats.rejected} kararın %${pct(t!.stats.accepted, t!.stats.rejected)}'ini onayladın. Yeni işleri sormadan Yapılacak'a alsın mı?`
-                : `${t!.stats.delivered} teslimatını onayladın, ${t!.stats.fixed} kez düzelttin. Onayladığı işi kendisi yapsın mı?`}
-            </div>
+        <motion.div key={a.id} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className={`rounded-3xl bg-[#8b5cf6]/[0.08] ${compact ? "p-3" : "p-4"}`}>
+          <div className="text-[13px] leading-snug">
+            <b>{a.name}</b> daha fazla yetkiyi hak etti.{" "}
+            <span className="text-ink-3">
+              {t!.suggest === 1 ? `Önerilerinin %${pct(t!.stats.accepted, t!.stats.rejected)}'ini onayladın; yeni işleri sormadan üstlensin mi?` : `${t!.stats.delivered} teslimatını onayladın; işleri kendisi yapsın mı?`}
+            </span>
           </div>
-          <button onClick={() => onTrust(a.id, t!.suggest!)} className="rounded-full bg-[#8b5cf6] px-3 py-1.5 text-[11px] font-extrabold text-white">
-            Yükselt
-          </button>
-          <button onClick={() => later(`${a.id}:${t!.suggest}`)} className="rounded-full px-2 py-1.5 text-[11px] font-bold text-ink-3 hover:text-ink">
-            Sonra
-          </button>
+          <div className="mt-2 flex gap-2">
+            <button onClick={() => onTrust(a.id, t!.suggest!)} className="rounded-full bg-[#8b5cf6] px-3.5 py-1.5 text-xs font-bold text-white">
+              Evet
+            </button>
+            <button onClick={() => later(`${a.id}:${t!.suggest}`)} className="rounded-full px-3 py-1.5 text-xs font-bold text-ink-3 hover:text-ink">
+              Sonra
+            </button>
+          </div>
         </motion.div>
       ))}
     </div>
@@ -856,180 +1083,6 @@ function Runs({ runs }: { runs: BrainRun[] }) {
 }
 
 // ------------------------------------------------------------------ teslimat
-function WorkSection({ x, onWork, onApprove }: { x: BrainItem; onWork: (id: string, feedback?: string, team?: boolean) => void; onApprove: (id: string, mail?: boolean) => Promise<{ error: string; code?: string } | null> }) {
-  const { toast } = usePeriod();
-  const [fb, setFb] = useState("");
-  const [sending, setSending] = useState(false);
-  const [mailErr, setMailErr] = useState<{ error: string; code?: string } | null>(null);
-  const a = agentById(x.agent)!;
-  const w = x.work;
-  const toGmail = async () => {
-    setSending(true);
-    setMailErr(null);
-    setMailErr(await onApprove(x.id, true));
-    setSending(false);
-  };
-  const html = useMemo(() => (w?.output ? renderMd(w.output) : ""), [w?.output]);
-  const mailLink = x.sources.find((s) => s.ref?.source === "gmail" && s.link)?.link;
-  if (!w) {
-    return (
-      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-        <button onClick={() => onWork(x.id)} className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed px-4 py-3 text-left hover:bg-track/50" style={{ borderColor: `${a.color}66` }}>
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-xl" style={{ background: `${a.color}22` }}>
-            {a.emoji}
-          </span>
-          <span>
-            <span className="block font-extrabold">🤖 {a.name} bu işi yapsın</span>
-            <span className="block text-xs text-ink-3">Kaynakları ve arşivi okuyup teslimatı yazar (taslak, özet, hazırlık notu). Dışarıya bir şey göndermez.</span>
-          </span>
-        </button>
-        <button onClick={() => onWork(x.id, undefined, true)} className="flex items-center gap-2 rounded-2xl border-2 border-dashed border-[#8b5cf6]/50 px-4 py-3 text-left hover:bg-track/50" title="Lider işi 2-4 parçaya böler, ajanlar aynı anda çalışır, lider birleştirir">
-          <span className="text-xl">👥</span>
-          <span>
-            <span className="block whitespace-nowrap font-extrabold">Ekip olarak yap</span>
-            <span className="block text-xs text-ink-3">2–4 ajan aynı anda</span>
-          </span>
-        </button>
-      </div>
-    );
-  }
-  if (w.status === "queued") {
-    return (
-      <div className="rounded-2xl p-4" style={{ background: `${a.color}14` }}>
-        <div className="font-extrabold">⏳ Sırada — {a.name} bu işi kendisi yapacak</div>
-        <div className="mt-1 text-xs text-ink-3">Güven seviyesi “{TRUST_META[2].label}”. Sıradaki işler sayfa açıkken (ya da arka planda) tek tek yapılır; gidecek bir şey olursa onayını bekler.</div>
-        <button onClick={() => onWork(x.id)} className="mt-2 rounded-full bg-track px-3 py-1.5 text-xs font-extrabold">
-          ▶ Şimdi yap
-        </button>
-      </div>
-    );
-  }
-  if (w.status === "running") {
-    return (
-      <div className="rounded-2xl p-4" style={{ background: `${a.color}14` }}>
-        <div className="flex items-center gap-2 font-extrabold">
-          <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="inline-block h-4 w-4 rounded-full border-2 border-blue border-t-transparent" />
-          {w.team ? `Ekip çalışıyor — lider ${a.name}` : `${a.name} çalışıyor…`}
-        </div>
-        {w.team ? <TeamPieces team={w.team} /> : <div className="mt-1 text-xs text-ink-3">Kaynakları okuyor, gerekirse arşivde arıyor. 15–40 sn sürebilir.</div>}
-      </div>
-    );
-  }
-  const lastRule = w.revisions.at(-1)?.rule;
-  return (
-    <div className="overflow-hidden rounded-2xl ring-1 ring-black/5 dark:ring-white/10">
-      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 text-xs font-extrabold" style={{ background: `${a.color}18` }}>
-        <span>
-          {a.emoji} {a.name} teslimatı
-        </span>
-        <span className={w.status === "waiting_ok" ? "text-warn" : w.status === "approved" ? "text-ok" : w.status === "error" ? "text-fail" : "text-ink-3"}>
-          · {w.status === "waiting_ok" ? "onayını bekliyor" : w.status === "approved" ? "onaylandı" : w.status === "error" ? "hata" : "hazır"}
-        </span>
-        <span className="ml-auto font-semibold text-ink-3">
-          {w.ms ? `${Math.round(w.ms / 1000)} sn` : ""}
-          {w.cost != null ? ` · $${w.cost.toFixed(4)}` : ""}
-        </span>
-      </div>
-      {w.status === "error" ? (
-        <div className="px-4 py-3 text-sm text-fail">⚠ {w.error}</div>
-      ) : (
-        <div className="md max-h-[50vh] overflow-y-auto bg-card px-4 py-3 text-[14.5px] leading-relaxed" dangerouslySetInnerHTML={{ __html: html }} />
-      )}
-      {w.team && (
-        <details className="border-t border-line bg-card px-4 py-2 text-xs">
-          <summary className="cursor-pointer font-bold text-ink-2">👥 Ekip: {w.team.pieces.map((p) => agentById(p.agent)?.emoji).join(" ")} — parçalar ve notlar</summary>
-          <TeamPieces team={w.team} full />
-        </details>
-      )}
-      {w.used.length > 0 && (
-        <details className="border-t border-line bg-card px-4 py-2 text-xs text-ink-3">
-          <summary className="cursor-pointer font-bold">🔎 {w.used.length} araç kullanıldı</summary>
-          <ul className="mt-1 space-y-0.5">
-            {w.used.map((u, i) => (
-              <li key={i}>{u}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-      {w.outbound && w.status === "waiting_ok" && (
-        <div className="border-t border-line bg-tint-warn px-4 py-3 text-sm">
-          <div className="font-extrabold">✋ Onaylanınca gidecek</div>
-          <div className="mt-0.5">{w.outbound}</div>
-          <div className="mt-1 text-xs text-ink-3">“Onayla → Gmail taslağı” e-postayı Gmail taslaklarına yazar (kaynak bir e-postaysa aynı yazışmaya yanıt olarak); göndermek sende: Gmail'de açıp “Gönder”.</div>
-          {mailErr && (
-            <div className="mt-2 rounded-xl bg-card px-3 py-2 text-xs font-semibold text-fail">
-              ⚠ {mailErr.error}{" "}
-              {mailErr.code === "scope" && (
-                <a href="/api/google/auth" className="font-extrabold text-blue underline">
-                  Google'ı yeniden bağla
-                </a>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-      {w.draft && (
-        <div className="border-t border-line bg-ok/10 px-4 py-3 text-sm">
-          <div className="font-extrabold">✉️ Gmail'de taslak hazır{w.draft.reply ? " (yazışmaya yanıt)" : ""}</div>
-          <div className="mt-0.5 text-xs text-ink-2">
-            Kime: {w.draft.to.join(", ")}
-            {w.draft.cc.length ? ` · Bilgi: ${w.draft.cc.join(", ")}` : ""} · Konu: {w.draft.subject}
-          </div>
-          <a href={w.draft.link} target="_blank" rel="noreferrer" className="mt-2 inline-block rounded-full bg-ok px-3 py-1.5 text-xs font-extrabold text-white">
-            Gmail'de aç ve gönder ↗
-          </a>
-        </div>
-      )}
-      {lastRule && <div className="border-t border-line bg-tint-info px-4 py-2 text-xs font-semibold">📏 Kalıcı kural öğrenildi: {lastRule}</div>}
-      <div className="flex flex-wrap gap-2 border-t border-line bg-card px-4 py-3">
-        {w.output && (
-          <button
-            onClick={async () => {
-              await navigator.clipboard.writeText(w.output).catch(() => {});
-              toast("Kopyalandı");
-            }}
-            className="rounded-full bg-track px-3 py-1.5 text-xs font-extrabold"
-          >
-            📋 Kopyala
-          </button>
-        )}
-        {mailLink && (
-          <a href={mailLink} target="_blank" rel="noreferrer" className="rounded-full bg-track px-3 py-1.5 text-xs font-extrabold">
-            ✉️ Gmail'de aç
-          </a>
-        )}
-        {w.status === "waiting_ok" && (
-          <>
-            <button onClick={toGmail} disabled={sending} className="rounded-full bg-ok px-3 py-1.5 text-xs font-extrabold text-white disabled:opacity-60">
-              {sending ? "Taslak yazılıyor…" : "✉️ Onayla → Gmail taslağı"}
-            </button>
-            <button onClick={() => onApprove(x.id)} className="rounded-full bg-track px-3 py-1.5 text-xs font-extrabold">
-              ✓ Gönderdim, onayla
-            </button>
-          </>
-        )}
-        <button onClick={() => onWork(x.id)} className="rounded-full bg-track px-3 py-1.5 text-xs font-extrabold">
-          ↻ Yeniden yap
-        </button>
-      </div>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!fb.trim()) return;
-          onWork(x.id, fb.trim());
-          setFb("");
-        }}
-        className="flex gap-2 border-t border-line bg-card px-3 py-2.5"
-      >
-        <input value={fb} onChange={(e) => setFb(e.target.value)} placeholder="Düzelt: “daha kısa yaz, resmi hitap kullan” — kalıcıysa ajan öğrenir" className="min-w-0 flex-1 rounded-full bg-track px-4 py-2 text-sm outline-none placeholder:text-ink-3" />
-        <button disabled={!fb.trim()} className="rounded-full bg-blue px-4 py-2 text-xs font-extrabold text-white disabled:opacity-40">
-          Düzelt
-        </button>
-      </form>
-    </div>
-  );
-}
-
 // ------------------------------------------------------------------ ekip parçaları
 function TeamPieces({ team, full }: { team: NonNullable<NonNullable<BrainItem["work"]>["team"]>; full?: boolean }) {
   return (
@@ -1065,7 +1118,7 @@ function TeamPieces({ team, full }: { team: NonNullable<NonNullable<BrainItem["w
 }
 
 // ------------------------------------------------------------------ ajan kartı + kurulum görüşmesi
-export function AgentPanel({ agent, onTry, onClose, trust, onTrust }: { agent: AgentId; onTry: (task: string) => void; onClose: () => void; trust?: AgentTrustView; onTrust?: (level: TrustLevel) => void }) {
+export function AgentPanel({ agent, onTry, onClose, trust, onTrust, flat }: { agent: AgentId; onTry: (task: string) => void; onClose: () => void; trust?: AgentTrustView; onTrust?: (level: TrustLevel) => void; flat?: boolean }) {
   const a = agentById(agent)!;
   const [profile, setProfile] = useState<{ guide: string; rules: string } | null>(null);
   const [talk, setTalk] = useState<{ turns: { q: string; a: string }[]; q: string | null; step: number; busy: boolean; result?: { brief: string; skill: { name: string; when: string; steps: string[]; format: string }; tryTask: string } } | null>(null);
@@ -1104,23 +1157,17 @@ export function AgentPanel({ agent, onTry, onClose, trust, onTrust }: { agent: A
   const guideHtml = useMemo(() => (profile?.guide ? renderMd(profile.guide) : ""), [profile]);
 
   return (
-    <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="clay @container overflow-hidden">
-      <div className="flex flex-wrap items-start gap-3 p-4" style={{ background: `${a.color}14` }}>
-        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl text-2xl" style={{ background: `${a.color}26` }}>
+    <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className={`@container ${flat ? "-mx-1 rounded-3xl bg-white/50 dark:bg-white/[0.04]" : "clay"}`}>
+      <div className="flex items-start gap-3 p-4 pb-3">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-xl" style={{ background: `${a.color}1f` }}>
           {a.emoji}
         </span>
-        <div className="min-w-0 flex-1 basis-[55%]">
-          <div className="text-lg font-extrabold leading-tight">{a.name}</div>
-          <div className="text-xs text-ink-2">
-            {a.source} · {a.role}
-          </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[17px] font-extrabold leading-tight">{a.name}</div>
+          <div className="mt-0.5 line-clamp-2 text-xs text-ink-3">{a.role}</div>
         </div>
-        {!talk && (
-          <button onClick={() => ask([])} className="shrink-0 rounded-full bg-blue px-4 py-2 text-xs font-extrabold text-white">
-            🎤 {profile?.guide ? "Yeniden görüş" : "Kurulum görüşmesi"}
-          </button>
-        )}
-        <button onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-black/5 dark:hover:bg-white/10" aria-label="Kapat">
+        <Menu items={[{ label: profile?.guide ? "Yeniden tanıştır" : "Ajanı tanıt (5 soru)", icon: "chat", onClick: () => ask([]), hidden: !!talk }]} />
+        <button onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink-2 hover:bg-track" aria-label="Kapat">
           <Icon name="close" size={16} />
         </button>
       </div>
@@ -1190,22 +1237,7 @@ export function AgentPanel({ agent, onTry, onClose, trust, onTrust }: { agent: A
           {err && <div className="text-xs font-semibold text-fail">{err}</div>}
         </div>
       ) : (
-        <div className="grid gap-3 p-4 @xl:grid-cols-2">
-          <div>
-            <div className="mb-1 text-[11px] font-extrabold uppercase tracking-wider text-ink-3">Talimat ve beceri</div>
-            {profile === null ? (
-              <div className="text-xs text-ink-3">Yükleniyor…</div>
-            ) : profile.guide ? (
-              <div className="md max-h-64 overflow-y-auto text-[13px] leading-relaxed" dangerouslySetInnerHTML={{ __html: guideHtml }} />
-            ) : (
-              <div className="text-xs text-ink-2">Henüz yok. “Kurulum görüşmesi” ile 5 kısa soruya cevap ver; ajan senin işini nasıl yaptığını öğrenip kendi talimatını ve becerisini yazar.</div>
-            )}
-          </div>
-          <div>
-            <div className="mb-1 text-[11px] font-extrabold uppercase tracking-wider text-ink-3">Düzeltmelerinden öğrendikleri</div>
-            {profile?.rules ? <div className="whitespace-pre-wrap text-[13px] leading-relaxed">{profile.rules}</div> : <div className="text-xs text-ink-2">Henüz kural yok. Teslimatlarını “Düzelt: …” ile geri gönderdiğinde kalıcı tercihler burada birikir.</div>}
-          </div>
-        </div>
+        <AgentKnows profile={profile} guideHtml={guideHtml} onIntro={() => ask([])} />
       )}
     </motion.div>
   );

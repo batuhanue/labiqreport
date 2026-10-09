@@ -11,6 +11,7 @@ import { AREAS } from "@/lib/checklist";
 import { areaProgress, deadlineInfo } from "@/lib/period";
 import { OFFICE_DARK, OFFICE_LIGHT, type OfficePal } from "../office/Furniture";
 import { AgentPanel, Brief, Capture, ItemSheet, Learning, TrustSuggest } from "./BrainView";
+import { TaskListView } from "./TaskRow";
 import { BrainScene, type CameraApi, type Screen } from "./BrainScene";
 import { DEPTS, deptById } from "./layout";
 import { useBrainState } from "./useBrain";
@@ -37,14 +38,6 @@ function ago(s?: string) {
   return m < 1 ? "şimdi" : m < 60 ? `${m} dk` : m < 1440 ? `${Math.round(m / 60)} sa` : `${Math.round(m / 1440)} g`;
 }
 
-/** iş ilerlemesi: adımlar + ajan teslimatı */
-function progress(x: BrainItem) {
-  if (x.status === "done" || x.work?.status === "approved") return 100;
-  const steps = x.steps.length ? x.steps.filter((s) => s.done).length / x.steps.length : 0;
-  const work = x.work?.status === "waiting_ok" ? 0.85 : x.work?.status === "ready" ? 0.7 : x.work?.status === "running" ? 0.35 : 0;
-  const base = x.status === "inbox" ? 0.05 : x.status === "todo" ? 0.1 : 0.2;
-  return Math.round(Math.max(base, steps * 0.9, work) * 100);
-}
 
 /* bağlı servisler: kaynak → departman */
 const CONNECTORS: { id: string; label: string; icon: string; color: string; to: AgentId | "hub"; source?: "gmail" | "chat" | "calendar" | "meet" | "drive" }[] = [
@@ -378,15 +371,21 @@ export default function BrainOffice() {
               />
               {dept ? (
                 <>
-                  <AgentPanel key={dept.id} agent={dept.id} trust={st?.trust?.[dept.id]} onTrust={(l) => brain.setTrust(dept.id, l)} onTry={(t) => setSeed((x) => ({ text: t, agent: dept.id, n: (x?.n ?? 0) + 1 }))} onClose={() => onSelect(null)} />
-                  <TaskList title={`${dept.name} işleri`} items={(st?.items ?? []).filter((x) => x.agent === dept.id || x.work?.team?.pieces.some((p) => p.agent === dept.id))} onPick={setOpen} />
+                  <AgentPanel flat key={dept.id} agent={dept.id} trust={st?.trust?.[dept.id]} onTrust={(l) => brain.setTrust(dept.id, l)} onTry={(t) => setSeed((x) => ({ text: t, agent: dept.id, n: (x?.n ?? 0) + 1 }))} onClose={() => onSelect(null)} />
+                  <section>
+                    <div className="mb-2 px-1 text-sm font-extrabold">İşleri</div>
+                    <TaskListView items={(st?.items ?? []).filter((x) => x.agent === dept.id || x.work?.team?.pieces.some((p) => p.agent === dept.id))} onOpen={setOpen} showAgent={false} empty="Bu departmanda iş yok." />
+                  </section>
                 </>
               ) : (
                 <>
                   <BrainCard brain={brain} />
                   <TrustSuggest compact trust={st?.trust} onTrust={brain.setTrust} />
+                  <section>
+                    <div className="mb-2 px-1 text-sm font-extrabold">İşler</div>
+                    {st ? <TaskListView items={st.items} onOpen={setOpen} /> : <div className="py-6 text-center text-xs text-ink-3">Yükleniyor…</div>}
+                  </section>
                   <Learning compact learning={st?.learning} onLearned={brain.load} />
-                  <TaskList title="Görev durumu" items={st?.items ?? []} onPick={setOpen} filters />
                 </>
               )}
             </motion.div>
@@ -404,102 +403,27 @@ function BrainCard({ brain }: { brain: ReturnType<typeof useBrainState> }) {
   const { st } = brain;
   const [showFocus, setShowFocus] = useState(true);
   const busy = brain.thinking || !!st?.running;
-  const last = st?.runs[0];
   return (
-    <div className="rounded-2xl border border-black/5 bg-white/70 p-3 dark:border-white/10 dark:bg-white/5">
-      <div className="flex items-center gap-3">
-        <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-2xl" style={{ background: "radial-gradient(circle at 35% 30%, #c4b5fd, #8b5cf6 60%, #5b21b6)" }}>
-          🧠
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.16em]">
-            Beyin <span className={`${serif} text-sm normal-case tracking-normal`}>{AGENTS.length} departman</span>
-          </div>
-          <div className="truncate text-xs text-ink-3">
-            Son düşünme {ago(st?.lastRun)} önce{last ? ` · ${last.agents.reduce((s, a) => s + a.signals, 0)} sinyal okudu` : ""}
-          </div>
-        </div>
-        <motion.button whileTap={{ scale: 0.92 }} onClick={brain.think} disabled={busy} className="shrink-0 rounded-full bg-[#8b5cf6] px-3.5 py-2 text-xs font-extrabold text-white disabled:opacity-70">
-          {busy ? "Düşünüyor…" : "Şimdi düşün"}
-        </motion.button>
-      </div>
-      {st?.focus && (
-        <div className="mt-3 border-t border-black/5 pt-2 dark:border-white/10">
-          <button onClick={() => setShowFocus((v) => !v)} className="flex w-full items-center justify-between text-left text-[11px] font-extrabold uppercase tracking-[0.16em]">
-            🎯 Bugün odak <span className="text-ink-3">{showFocus ? "▴" : "▾"}</span>
+    <section>
+      <div className="flex items-center gap-2 px-1">
+        <div className="text-sm font-extrabold">Bugün</div>
+        <span className="text-xs text-ink-3">{st?.lastRun ? `düşünme ${ago(st.lastRun)} önce` : "henüz düşünmedi"}</span>
+        <button onClick={brain.think} disabled={busy} className="ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold text-ink-2 hover:bg-black/5 disabled:opacity-60 dark:hover:bg-white/10" title="Kaynakları şimdi oku">
+          <Icon name="refresh" size={13} className={busy ? "animate-spin" : ""} />
+          {busy ? "Düşünüyor" : "Düşün"}
+        </button>
+        {st?.focus && (
+          <button onClick={() => setShowFocus((v) => !v)} className="grid h-7 w-7 place-items-center rounded-full text-ink-3 hover:bg-black/5 dark:hover:bg-white/10" aria-label="Brifingi aç/kapat">
+            <Icon name="chevron" size={13} className={`transition-transform ${showFocus ? "-rotate-90" : "rotate-90"}`} />
           </button>
-          {showFocus && (
-            <div className="mt-1.5 text-[13px]">
-              <Brief text={st.focus.brief} />
-            </div>
-          )}
+        )}
+      </div>
+      {st?.focus && showFocus && (
+        <div className="mt-1.5 px-1 text-[13.5px] leading-relaxed text-ink-2">
+          <Brief text={st.focus.brief} />
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
-/* ------------------------------------------------------------------ görev durumu */
-type Filter = "all" | "inbox" | "doing" | "waiting" | "done";
-function TaskList({ title, items, onPick, filters }: { title: string; items: BrainItem[]; onPick: (x: BrainItem) => void; filters?: boolean }) {
-  const [f, setF] = useState<Filter>("all");
-  const live = items.filter((x) => x.status !== "dismissed");
-  const by = (k: Filter) => (k === "all" ? live.filter((x) => x.status !== "done") : k === "doing" ? live.filter((x) => x.status === "doing" || x.status === "todo") : live.filter((x) => x.status === k));
-  const list = [...(filters ? by(f) : live.filter((x) => x.status !== "done"))].sort(
-    (a, b) => Number(b.work?.status === "running") - Number(a.work?.status === "running") || a.priority - b.priority || b.updatedAt.localeCompare(a.updatedAt),
-  );
-  return (
-    <div>
-      <div className="mb-2 flex items-baseline justify-between border-b-2 border-ink pb-1 dark:border-white">
-        <div className={`${serif} text-xl font-bold uppercase`}>{title}</div>
-        <span className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-ink-3">{filters ? "tüm ofis" : `${list.length} açık`}</span>
-      </div>
-      {filters && (
-        <div className="mb-3 flex flex-wrap gap-1.5">
-          {(
-            [
-              ["all", "Tümü"],
-              ["inbox", "Öneri"],
-              ["doing", "Devam"],
-              ["waiting", "Bekliyor"],
-              ["done", "Bitti"],
-            ] as [Filter, string][]
-          ).map(([k, l]) => (
-            <button key={k} onClick={() => setF(k)} className={`rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider ${f === k ? "bg-ink text-white dark:bg-white dark:text-[#1b1e27]" : k === "waiting" ? "border border-[#ffa53d] text-[#c27a12]" : "border border-black/10 text-ink-2 dark:border-white/15"}`}>
-              {l} <span className="opacity-60">{by(k).length}</span>
-            </button>
-          ))}
-        </div>
-      )}
-      {!list.length ? (
-        <div className="py-6 text-center text-xs font-semibold text-ink-3">Bu durumda iş yok.</div>
-      ) : (
-        <div className="space-y-2">
-          {list.slice(0, 60).map((x) => {
-            const a = agentById(x.agent)!;
-            const p = progress(x);
-            const running = x.work?.status === "running";
-            return (
-              <button key={x.id} onClick={() => onPick(x)} className="block w-full rounded-2xl border border-black/5 bg-white/75 p-3 text-left hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10">
-                <div className="flex items-start gap-2.5">
-                  <span className="mt-0.5 shrink-0 rounded-full border border-black/15 px-1.5 text-[10px] font-extrabold tabular-nums dark:border-white/20">{p}%</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="line-clamp-2 text-[13px] font-bold leading-snug">{x.title}</div>
-                    <div className="mt-0.5 truncate text-[10px] font-extrabold uppercase tracking-wider text-ink-3">
-                      {a.emoji} {a.name}
-                      {x.work?.team ? " · ekip" : ""}{x.auto ? " · 🤖 kendisi onayladı" : ""} · {running ? "çalışıyor" : x.work?.status === "queued" ? "sırada" : x.work?.status === "waiting_ok" ? "onay bekliyor" : STATUS_META[x.status === "dismissed" ? "done" : x.status].label}
-                    </div>
-                  </div>
-                  <span className="shrink-0 text-[10px] text-ink-3">{ago(x.updatedAt)}</span>
-                </div>
-                <div className="mt-2 h-1 overflow-hidden rounded-full bg-black/5 dark:bg-white/10">
-                  <div className={`h-full rounded-full ${running ? "animate-pulse" : "bg-ink"}`} style={{ width: `${p}%`, background: running ? a.color : undefined }} />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}

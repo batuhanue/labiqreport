@@ -1,14 +1,14 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 type IconName =
   | "home" | "chart" | "history" | "flag" | "check" | "x" | "minus" | "note" | "plus" | "download"
   | "upload" | "back" | "close" | "chevron" | "calendar" | "info" | "trash" | "cloud" | "alert"
   | "flame" | "user" | "clock" | "share" | "play" | "edit" | "spark" | "bell" | "sidebar" | "todo"
-  | "mail" | "chat" | "video" | "refresh" | "external" | "link" | "folder" | "brain";
+  | "mail" | "chat" | "video" | "refresh" | "external" | "link" | "folder" | "brain" | "more" | "copy" | "send";
 
 const P: Record<IconName, React.ReactNode> = {
   home: <path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z" />,
@@ -48,6 +48,9 @@ const P: Record<IconName, React.ReactNode> = {
   brain: <><path d="M9 4.5a3 3 0 0 0-3 3v.2A3 3 0 0 0 4 10.5a3 3 0 0 0 1 2.2A3 3 0 0 0 6.5 18 3 3 0 0 0 12 19V5.5a3 3 0 0 0-3-1z" /><path d="M15 4.5a3 3 0 0 1 3 3v.2a3 3 0 0 1 2 2.8 3 3 0 0 1-1 2.2 3 3 0 0 1-1.5 5.3A3 3 0 0 1 12 19" /><path d="M9 9.5h1.5M14.5 12H13M9 14.5h1.5" /></>,
   folder: <path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />,
   link: <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" />,
+  more: <path d="M5.5 12h.01M12 12h.01M18.5 12h.01" strokeWidth={3.2} />,
+  copy: <><rect x="8.5" y="8.5" width="12" height="12" rx="3" /><path d="M15.5 8.5V6a2.5 2.5 0 0 0-2.5-2.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5" /></>,
+  send: <path d="M4 12 20 4l-6 16-3-7z" />,
 };
 
 export function Icon({ name, size = 22, stroke = 2.2, className }: { name: IconName; size?: number; stroke?: number; className?: string }) {
@@ -143,12 +146,15 @@ export function Sheet({
   title,
   children,
   wide,
+  actions,
 }: {
   open: boolean;
   onClose: () => void;
   title?: React.ReactNode;
   children: React.ReactNode;
   wide?: boolean;
+  /** başlık satırında kapat düğmesinin yanındaki eylemler (ör. ⋯ menüsü) */
+  actions?: React.ReactNode;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -184,7 +190,8 @@ export function Sheet({
             <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-line-strong sm:hidden" />
             {title && (
               <div className="mb-4 flex items-center justify-between gap-3">
-                <div className="text-xl font-extrabold tracking-tight">{title}</div>
+                <div className="min-w-0 flex-1 text-xl font-extrabold tracking-tight">{title}</div>
+                {actions}
                 <button onClick={onClose} className="clay-sm grid h-10 w-10 shrink-0 place-items-center rounded-full" aria-label="Kapat">
                   <Icon name="close" size={18} />
                 </button>
@@ -267,6 +274,82 @@ export function Segmented<T extends string>({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/** Sade sekme seçici (filtreler için; Segmented'ın küçük, sakin hâli). */
+export function Tabs<T extends string>({ value, onChange, options, className = "" }: { value: T; onChange: (v: T) => void; options: { value: T; label: React.ReactNode; n?: number }[]; className?: string }) {
+  return (
+    <div className={`flex gap-0.5 rounded-full bg-track p-0.5 ${className}`}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          onClick={() => onChange(o.value)}
+          className={`flex-1 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold transition-colors ${o.value === value ? "bg-card text-ink shadow-sm" : "text-ink-3 hover:text-ink-2"}`}
+        >
+          {o.label}
+          {o.n != null && o.n > 0 && <span className="ml-1 tabular-nums text-ink-3">{o.n}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  icon?: IconName;
+  onClick: () => void;
+  danger?: boolean;
+  hidden?: boolean;
+}
+/** "⋯" menüsü: ikincil eylemler burada durur, ekranda tek ana eylem kalır. */
+export function Menu({ items, label = "Diğer", className = "" }: { items: MenuItem[]; label?: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && (e.stopPropagation(), setOpen(false));
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", esc, true);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", esc, true);
+    };
+  }, [open]);
+  const list = items.filter((i) => !i.hidden);
+  if (!list.length) return null;
+  return (
+    <div ref={ref} className={`relative ${className}`}>
+      <button onClick={() => setOpen((v) => !v)} aria-label={label} title={label} className="grid h-9 w-9 place-items-center rounded-full text-ink-2 hover:bg-track">
+        <Icon name="more" size={20} />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.97 }}
+            transition={{ duration: 0.14 }}
+            className="absolute right-0 top-10 z-50 min-w-52 origin-top-right rounded-2xl border border-line bg-card p-1.5 shadow-xl"
+          >
+            {list.map((i) => (
+              <button
+                key={i.label}
+                onClick={() => {
+                  setOpen(false);
+                  i.onClick();
+                }}
+                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-track ${i.danger ? "text-fail" : "text-ink"}`}
+              >
+                {i.icon && <Icon name={i.icon} size={16} className={i.danger ? "" : "text-ink-3"} />}
+                {i.label}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

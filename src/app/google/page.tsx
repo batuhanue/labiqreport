@@ -9,7 +9,7 @@ import { usePeriod } from "@/components/PeriodProvider";
 import { TiltCard } from "@/components/TiltCard";
 import { useTodos } from "@/components/todos/TodoProvider";
 import { Skeleton } from "@/components/fx";
-import { Icon, Segmented, Sheet } from "@/components/ui";
+import { Icon, Segmented, Sheet, Tabs } from "@/components/ui";
 import { spring } from "@/lib/motion";
 import { iso, newTodo } from "@/lib/todo";
 
@@ -922,31 +922,27 @@ function GmailTab({ snap }: { snap: GoogleSnapshot }) {
   return (
     <div>
       <SourceError text={snap.gmail.error} />
-      {/* ay seçici */}
-      <div className="no-scrollbar -mx-4 mb-3 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
-        {[{ month: "recent", count: snap.gmail.items.length }, ...monthList].map((m) => (
-          <button
-            key={m.month}
-            onClick={() => setMonth(m.month)}
-            className={`clay-sm shrink-0 rounded-full px-4 py-2 text-xs font-bold ${month === m.month ? "bg-blue text-white" : "text-ink-2"}`}
-          >
-            {m.month === "recent" ? "Son gelenler" : monthLabel(m.month)}
-            <span className={`ml-1.5 ${month === m.month ? "text-white/75" : "text-ink-3"}`}>{m.count.toLocaleString("tr-TR")}</span>
-          </button>
-        ))}
-      </div>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        {(
-          [
-            ["all", "Tümü"],
-            ["unread", "Okunmamış"],
-            ["important", "Önemli"],
-          ] as const
-        ).map(([v, l]) => (
-          <button key={v} onClick={() => setF(v)} className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${f === v ? "bg-ink text-paper" : "bg-track text-ink-2"}`}>
-            {l}
-          </button>
-        ))}
+      <div className="mb-3 flex items-center gap-2">
+        <Tabs
+          className="min-w-0 flex-1"
+          value={f}
+          onChange={setF}
+          options={[
+            { value: "all", label: "Tümü" },
+            { value: "unread", label: "Okunmamış", n: base?.filter((m) => m.unread).length },
+            { value: "important", label: "Önemli" },
+          ]}
+        />
+        {monthList.length > 0 && (
+          <select value={month} onChange={(e) => setMonth(e.target.value)} className="shrink-0 rounded-full bg-track px-3 py-1.5 text-xs font-bold text-ink-2 outline-none" aria-label="Dönem">
+            <option value="recent">Son gelenler</option>
+            {monthList.map((m) => (
+              <option key={m.month} value={m.month}>
+                {monthLabel(m.month)} · {m.count.toLocaleString("tr-TR")}
+              </option>
+            ))}
+          </select>
+        )}
         <button
           onClick={() =>
             ask(
@@ -955,14 +951,13 @@ function GmailTab({ snap }: { snap: GoogleSnapshot }) {
                 : `${monthLabel(month)} ayındaki e-postalarımı arşivden incele: önemli konular, kimden ne geldi, açık kalan işler neler?`,
             )
           }
-          className="ml-auto rounded-full bg-track px-3.5 py-1.5 text-xs font-bold text-ink-2"
+          title="Asistana özetlet"
+          aria-label="Asistana özetlet"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-track text-ink-2 hover:text-blue"
         >
-          ✨ Asistana özetlet
+          <Icon name="spark" size={15} />
         </button>
       </div>
-      {!monthList.length && month === "recent" && (
-        <div className="mb-3 px-1 text-xs text-ink-3">Geçmiş e-postalar arşive indikçe burada ay ay listelenir (Arşiv sekmesinden ilerlemeyi görebilirsin).</div>
-      )}
       {!list ? (
         <div className="space-y-2">
           {[0, 1, 2, 3].map((i) => (
@@ -992,31 +987,24 @@ function GmailTab({ snap }: { snap: GoogleSnapshot }) {
 
 function MailRow({ m, i, onOpen }: { m: MailLite; i: number; onOpen: () => void }) {
   return (
-    <motion.div
-      role="button"
-      tabIndex={0}
+    <motion.button
       onClick={onOpen}
-      onKeyDown={(e) => e.key === "Enter" && onOpen()}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ delay: Math.min(i, 12) * 0.02 }}
-      className="flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-track/50"
+      className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-track/50"
     >
       <Avatar name={m.from} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className={`truncate ${m.unread ? "font-extrabold" : "font-semibold text-ink-2"}`}>{m.from}</span>
-          {m.important && <span className="text-xs text-warn" title="Önemli">●</span>}
           <span className="ml-auto shrink-0 text-xs text-ink-3">{hm(m.date)}</span>
+          {m.unread && <span className="h-2 w-2 shrink-0 self-center rounded-full bg-blue" aria-label="Okunmadı" />}
         </div>
-        <div className={`truncate text-sm ${m.unread ? "font-bold" : "text-ink-2"}`}>
-          {m.unread && <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-blue align-middle" />}
-          {m.subject}
-        </div>
+        <div className={`truncate text-sm ${m.unread ? "font-semibold" : "text-ink-2"}`}>{m.subject}</div>
         <div className="line-clamp-1 text-xs text-ink-3">{m.snippet}</div>
       </div>
-      <TaskButton make={() => newTodo({ title: `E-posta: ${m.subject} (${m.from})`, due: iso(new Date()), tags: ["eposta"] })} />
-    </motion.div>
+    </motion.button>
   );
 }
 
@@ -1072,8 +1060,8 @@ function MailReader({ mail, onClose }: { mail: MailLite | null; onClose: () => v
           {!!full?.files.length && (
             <div className="flex flex-wrap gap-2">
               {full.files.map((f, i) => (
-                <span key={i} className="rounded-full bg-track px-3 py-1.5 text-xs font-bold text-ink-2">
-                  📎 {f.name} {f.size ? `· ${Math.max(1, Math.round(f.size / 1024))} KB` : ""}
+                <span key={i} className="inline-flex items-center gap-1.5 rounded-full bg-track px-3 py-1.5 text-xs font-semibold text-ink-2">
+                  <Icon name="link" size={12} /> {f.name} {f.size ? <span className="text-ink-3">{Math.max(1, Math.round(f.size / 1024))} KB</span> : null}
                 </span>
               ))}
             </div>
@@ -1093,20 +1081,20 @@ function MailReader({ mail, onClose }: { mail: MailLite | null; onClose: () => v
             <div className="whitespace-pre-wrap break-words rounded-2xl bg-card p-4 text-[15px] leading-relaxed">{full.text || "(boş)"}</div>
           )}
           {full && !full.live && <div className="text-xs text-ink-3">Gmail'e şu an ulaşılamadığı için arşivdeki metin gösteriliyor.</div>}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
             <button
               onClick={() => {
                 onClose();
                 ask(`"${mail.subject}" konulu, ${mail.from} kaynaklı e-postayı (arşiv kimliği gmail/${mail.id}) oku ve özetle: benden ne bekleniyor, nasıl yanıt vermeliyim?`);
               }}
-              className="clay-color rounded-full bg-blue px-4 py-2.5 text-sm font-bold text-white"
+              className="inline-flex items-center gap-2 rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-paper hover:opacity-90 dark:bg-white dark:text-[#1b1e27]"
             >
-              ✨ Asistana özetlet
+              <Icon name="spark" size={15} /> Ne istiyor, nasıl yanıtlamalıyım?
             </button>
             <TaskButtonWide make={() => newTodo({ title: `E-posta: ${mail.subject} (${mail.from})`, due: iso(new Date()), tags: ["eposta"], notes: full?.link ?? "" })} />
             {full?.link && (
-              <a href={full.link} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 rounded-full bg-track px-4 py-2.5 text-sm font-bold text-ink-2">
-                Gmail'de aç <Icon name="external" size={14} />
+              <a href={full.link} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1.5 px-2 text-sm font-bold text-ink-3 hover:text-ink">
+                Gmail'de aç <Icon name="external" size={13} />
               </a>
             )}
           </div>
@@ -1157,9 +1145,9 @@ function TaskButtonWide({ make }: { make: () => ReturnType<typeof newTodo> }) {
         add(make());
         toast("Görevlere eklendi");
       }}
-      className="flex items-center gap-1.5 rounded-full bg-track px-4 py-2.5 text-sm font-bold text-ink-2"
+      className="inline-flex items-center gap-1.5 rounded-full bg-track px-4 py-2.5 text-sm font-bold text-ink-2 hover:text-ink"
     >
-      <Icon name="todo" size={16} /> Görev yap
+      <Icon name="todo" size={16} /> Görevlere ekle
     </button>
   );
 }
