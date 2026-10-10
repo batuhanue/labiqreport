@@ -119,6 +119,16 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   sabah düşünmesi (`/api/cron/brain`), 08:00'de önden hazırlık + sabah brifingi bildirimi (`/api/cron/notify`); gün
   içinde yeni acil karar çıkarsa bildirim (2 saatte en fazla bir). Ada ya da Beyin açıkken 10 dakikada bir arka planda
   düşünür ve sıradaki taslağı hazırlar.
+  **Ajan ağı (🕸 Ağ görünümü, Beyin'in varsayılanı):** uygulamanın her işlevi bir ajan olarak 6 departmanda (Strateji,
+  İletişim, Takvim & Toplantı, Denetim & Kapanış, Analiz, Görev & Dosya; 35 ajan) çalışır: Claude ile düşünenler
+  (şef yardımcısı, yanıt yazarı, öğrenme…), ölçüp uyaranlar (R-01…R-10 analistleri, tahminci, risk analisti…) ve iş
+  yapanlar (Gmail taslakçısı, arşivci…). Ortada Bilgi Çekirdeği (bilgi dosyaları, bellek, arşiv); parçacıklar arşiv ve
+  bellekle çoğalır, çalışan ajana akış darbeleri gider, dikkat isteyen ajanda sarı üçgen yanar. Her ajanın durumu canlı
+  veriden ölçülür (`/api/org`; ek yapay zekâ çağrısı yok); yan panelde sistem sağlığı, departman sağlığı ve ajan başına
+  durum noktası, ajana tıklayınca görevi/durumu/göstergeleri. **Süreç analitiği:** kapanış hunisi (kontrol → bulgu →
+  aksiyon → onay), son 7 günün hızına göre tahmini bitiş ve son terminle farkı ("günde N kontrol gerekiyor"), gelen iş
+  akışı (öneri → kabul → teslimat → onay → yanıt), yanıt takibi, toplantı hazırlığı ve kişisel görevler; her birinde
+  darboğaz. Şef yardımcısı bu analizi her düşünmede okur ve süreç risklerini karara çevirir.
   **Kazanılan güven:** her ajanın bir güven seviyesi var (ajan kartında): 🙋 Öner (her işi sorar) · ✅ Kendisi onaylasın
   (yeni işleri sormadan Yapılacak'a alır; onay oranı düşük türleri yine sorar) · 🤖 Teslimatı da hazırlasın (onayladığı işi
   kendisi yapar; işler sayfa açıkken ya da arka planda sırayla yapılır). Seviyeyi sen seçersin; seçimlerinden onay oranı

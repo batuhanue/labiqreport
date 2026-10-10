@@ -15,6 +15,7 @@ import { brainSystem } from "./brain-prompt";
 import { learn, learningState, readChoices, recentChoices, recordChoices } from "./learning";
 import { createDraft } from "./gmail-draft";
 import { pushConfigured, sendToAll } from "./push";
+import { buildOrg, orgDigest, type BrainRaw } from "./org";
 import type { NotifyMessage } from "./notify";
 import { applyTrust, reviewTrust, trustView } from "./trust";
 import { AGENTS, agentById, KIND_LABEL, type AgentId, type Choice, type AgentRun, type BrainFocus, type BrainItem, type Decision, type BrainRun, type BrainState, type ItemSource, type ItemWork, type Signal, type TeamPiece, type TeamRun } from "./brain-types";
@@ -437,7 +438,7 @@ interface StrategyOut {
 const WORK_LABEL: Record<string, string> = { queued: "hazırlanıyor", running: "hazırlanıyor", ready: "teslimat hazır", waiting_ok: "taslak hazır, onay bekliyor", approved: "onaylandı", error: "hata" };
 const STATUS_TR: Record<string, string> = { inbox: "öneri", todo: "yapılacak", doing: "sürüyor", waiting: "bekliyor" };
 
-async function strategyContext(items: BrainItem[], overdueIds: Set<string>, now: Date) {
+async function strategyContext(items: BrainItem[], overdueIds: Set<string>, now: Date, brain: BrainRaw) {
   const today = trDay(now);
   const tomorrow = trDay(new Date(+now + 86400_000));
   const snap = await getSnapshot().catch(() => null);
@@ -471,6 +472,10 @@ Açık aksiyonlar: ${openActs.length}${lateActs.length ? ` (termini geçen ${lat
   const waitingReplies = open.filter((x) => x.followUp && !x.followUp.replied && x.status === "waiting");
   const work = open.filter((x) => !(x.followUp && x.status === "waiting"));
   const todos = ((await store().getKV<TodoStore>("todos")) ?? emptyStore()).todos.filter((t) => !t.done && !t.source?.startsWith("brain:"));
+  // ajan ağının ölçümleri: süreç tahminleri, darboğazlar, alan analistleri ve diğer ajanların uyarıları
+  const analysis = await buildOrg(brain)
+    .then(orgDigest)
+    .catch(() => "(ölçülemedi)");
   return {
     events,
     text: `ŞU AN: Stratejistsin — Batuhan'ın şef yardımcısı. Onun yerine düşün: bütün kaynakları birlikte değerlendir, bugün vermesi gereken kararları çıkar, her biri için tek cümlelik net bir öneri yaz ve gününü planla. Batuhan her karara tek dokunuşla cevap verebilmeli; gerekli taslağı/notu ajanlar senin "prepare" işaretinle önden hazırlar.
@@ -497,6 +502,9 @@ ${work
 KİŞİSEL GÖREVLERİ:
 ${todos.slice(0, 40).map((t) => `- (P${t.priority}${t.due ? `, ${t.due}` : ""}) ${t.title}`).join("\n") || "(yok)"}
 
+AJAN AĞININ ANALİZİ (ölçümler; kararlarını buna dayandır):
+${analysis}
+
 SON SEÇİMLERİ (neye evet/hayır dediği):
 ${(await recentChoices({ limit: 20 }).catch(() => "")) || "(henüz yok)"}
 
@@ -507,15 +515,16 @@ KURALLAR:
 4. prepare=true: yanıt e-postası, hatırlatma, veri talebi, toplantı hazırlık notu ya da özet gerekiyorsa ve işin teslimatı henüz yoksa. Teslimatı hazır olan işte false.
 5. type: reply (yanıt verilecek), accept (öneriyi üstlenmeli mi), follow_up (yanıt gelmeyen gönderim), risk (termin/çakışma), prep (toplantı hazırlığı), do (yapılacak iş).
 6. Hatırlatma zamanı gelen gönderimleri follow_up kararı yap. Taslağı hazır işleri (onay bekliyor) mutlaka karar olarak sun.
+   Süreç analizinde RİSK görünen yerleri (kapanış tahmini terminden geç, termini geçen alan, aksiyonsuz bulgu, notu olmayan yakın toplantı) mutlaka bir karara bağla; darboğazı çözen somut adımı öner.
 7. Belleğe ve son seçimlerine uy: reddettiği türde işleri önerme; değiştirdiği önceliği esas al.
 8. plan: bugünkü boş saatlere en önemli işleri yerleştir (30–90 dk, boş saatlerin dışına taşma, toplantıları yazma). Boş saat yoksa boş liste.
 9. headline (en üst) tek cümle: günün en önemli konusu ve neden (karar sayısı yazma, uygulama gösteriyor). brief 2–4 madde: riskler, terminler, dikkat edilecekler.`,
   };
 }
 
-async function strategize(items: BrainItem[], overdueIds: Set<string>, system: Anthropic.TextBlockParam[], usage: Usage, timeout: number) {
+async function strategize(items: BrainItem[], overdueIds: Set<string>, system: Anthropic.TextBlockParam[], usage: Usage, timeout: number, raw: BrainRaw) {
   const now = new Date();
-  const ctx = await strategyContext(items, overdueIds, now);
+  const ctx = await strategyContext(items, overdueIds, now, raw);
   const res = await claude().messages.parse(
     { model: ASSISTANT_MODEL, max_tokens: 6000, system, output_config: { effort: "medium", format: jsonSchemaOutputFormat(STRATEGY_SCHEMA) }, messages: [{ role: "user", content: ctx.text }] },
     { timeout },
@@ -717,7 +726,8 @@ export async function think(opts: { trigger: BrainRun["trigger"]; budgetMs?: num
       let events: Parameters<typeof buildPlan>[1] = snap?.calendar.items ?? [];
       if (left() > 9000) {
         calls++;
-        const r = await strategize(keep, new Set(fu.overdue.map((x) => x.id)), system, usage, Math.max(8000, left() - 2000)).catch((e) => {
+        const raw: BrainRaw = { items: keep, focus: meta.focus, runs: meta.runs, lastRun: meta.lastRun, running: false, captures: meta.captures.length };
+        const r = await strategize(keep, new Set(fu.overdue.map((x) => x.id)), system, usage, Math.max(8000, left() - 2000), raw).catch((e) => {
           run.error = `Strateji: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}`;
           return null;
         });
@@ -794,6 +804,12 @@ export async function state(): Promise<BrainState> {
     learning,
     trust,
   };
+}
+
+/** Ajan ağı için beynin ham durumu */
+export async function brainRaw(): Promise<BrainRaw> {
+  const [items, meta] = await Promise.all([readItems(), readMeta()]);
+  return { items, focus: meta.focus, runs: meta.runs, lastRun: meta.lastRun, running: !!meta.lock && meta.lock > Date.now(), captures: meta.captures.length };
 }
 
 /** Ajanın kendisi yapacağı (güven 2) sıradaki en eski iş. */
