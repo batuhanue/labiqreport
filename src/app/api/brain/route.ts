@@ -27,7 +27,7 @@ export async function GET(req: Request) {
  * { action: "capture", text }    — beyne not yaz; görev ajanı hemen işe çevirir
  */
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => null)) as { action?: string; text?: string; id?: string; feedback?: string; agent?: string; team?: boolean; turns?: InterviewTurn[]; mail?: boolean; queued?: boolean; level?: number } | null;
+  const b = (await req.json().catch(() => null)) as { action?: string; text?: string; id?: string; feedback?: string; agent?: string; team?: boolean; turns?: InterviewTurn[]; mail?: boolean; queued?: boolean; followup?: boolean; level?: number } | null;
   if (b?.action === "capture") {
     const text = b.text?.trim();
     if (!text) return bad("Boş not");
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
     if (!b.id) return bad("İş seçilmedi");
     const id = b.id;
     return handle(async () => {
-      const item = await work(id, { feedback: b.feedback?.trim() || undefined, team: !!b.team, queued: !!b.queued });
+      const item = await work(id, { feedback: b.feedback?.trim() || undefined, team: !!b.team, queued: !!b.queued, followup: !!b.followup });
       if (!item) return bad("İş bulunamadı", 404);
       return { item };
     });

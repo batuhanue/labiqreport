@@ -152,7 +152,7 @@ Alıcı adresini yalnızca teslimatta, kaynaklarda ya da bilinen kişilerde geç
     cache: "no-store",
     signal: AbortSignal.timeout(20000),
   });
-  const j = (await r.json().catch(() => ({}))) as { id?: string; message?: { id?: string }; error?: { message?: string } };
+  const j = (await r.json().catch(() => ({}))) as { id?: string; message?: { id?: string; threadId?: string }; error?: { message?: string } };
   if (!r.ok || !j.id) {
     if (r.status === 403) throw new DraftError("Gmail'e taslak yazma izni yok: Google hesabını yeniden bağla.", "scope");
     throw new DraftError(`Gmail taslağı oluşturulamadı: ${new GErr(j.error?.message ?? `HTTP ${r.status}`, r.status).message}`, "google");
@@ -166,6 +166,7 @@ Alıcı adresini yalnızca teslimatta, kaynaklarda ya da bilinen kişilerde geç
     cc,
     subject,
     reply: !!threadId,
+    threadId: threadId ?? j.message?.threadId,
     at: new Date().toISOString(),
   };
 }

@@ -8,6 +8,7 @@ import { useTodos } from "@/components/todos/TodoProvider";
 import { Skeleton } from "@/components/fx";
 import { Icon, Menu, Sheet, Tabs } from "@/components/ui";
 import { itemState } from "./TaskRow";
+import { DayPlan, DecisionDeck } from "./DecisionDeck";
 import { AGENTS, KIND_LABEL, REJECT_REASONS, STATUS_META, TRUST_META, agentById, type AgentTrustView, type Lesson, type LearningState, type TrustLevel, type AgentId, type BrainItem, type BrainRun, type BrainState, type ItemStatus } from "@/lib/brain-types";
 import { renderMd } from "@/lib/markdown";
 import { lessonToast } from "@/lib/learn-client";
@@ -44,7 +45,8 @@ export function Brief({ text }: { text: string }) {
 /** Beyin sayfası: merkez + yan ajanlar, beyne yaz, bugün odak, iş panosu. */
 export default function BrainView() {
   const { toast } = usePeriod();
-  const { st, err, thinking, think, patch, runWork, approveWork, setTrust, setSt, open, setOpen, load } = useBrainState();
+  const brain = useBrainState();
+  const { st, err, thinking, think, patch, runWork, approveWork, setTrust, setSt, open, setOpen, load } = brain;
   const [agent, setAgent] = useState<AgentId | null>(null);
   const [mobileCol, setMobileCol] = useState<Col>("inbox");
   const [seed, setSeed] = useState<{ text: string; agent: AgentId; n: number } | null>(null);
@@ -84,7 +86,16 @@ export default function BrainView() {
           } else toast(it ? "Beyin notu işe çevirdi" : "Not işlendi");
         }}
       />
-      {st.focus && <Focus st={st} onOpen={setOpen} />}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <DecisionDeck brain={brain} onOpen={setOpen} />
+        {st.focus?.plan?.length ? (
+          <div className="clay p-4 sm:p-5">
+            <DayPlan plan={st.focus.plan} items={st.items} onOpen={setOpen} />
+          </div>
+        ) : st.focus ? (
+          <Focus st={st} onOpen={setOpen} />
+        ) : null}
+      </div>
       <TrustSuggest trust={st.trust} onTrust={setTrust} />
       <Learning learning={st.learning} onLearned={load} />
 
@@ -658,7 +669,7 @@ function Details({ x, onPatch }: { x: BrainItem; onPatch: (id: string, p: Partia
 }
 
 /** Teslimat metnini e-posta parçalarına ayırır: başlık, Kime, Konu, gövde, kaynak satırı. */
-function splitDeliverable(md: string) {
+export function splitDeliverable(md: string) {
   let body = md.trim();
   let to: string | undefined;
   let subject: string | undefined;

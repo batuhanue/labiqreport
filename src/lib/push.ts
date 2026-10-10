@@ -49,7 +49,7 @@ export async function sendToAll(messages: NotifyMessage[], only?: string) {
 }
 
 /** Günlük cron: aktif dönem için bugünün hatırlatmalarını gönderir. */
-export async function runDaily(opts: { dry?: boolean; today?: Date } = {}) {
+export async function runDaily(opts: { dry?: boolean; today?: Date; extra?: NotifyMessage[] } = {}) {
   const s = store();
   const prefs = await getPrefs();
   const { activePeriod } = await s.getState();
@@ -60,7 +60,8 @@ export async function runDaily(opts: { dry?: boolean; today?: Date } = {}) {
   if ((await googleStatus("", false).catch(() => null))?.connected) {
     events = (await googleSync({ force: true }).catch(() => null))?.calendar.items ?? events;
   }
-  const messages = buildMessages(data, prefs, { today: opts.today, activePeriod, todos, events });
+  // beynin sabah brifingi en üstte
+  const messages = [...(opts.extra ?? []), ...buildMessages(data, prefs, { today: opts.today, activePeriod, todos, events })];
   if (opts.dry || messages.length === 0 || !pushConfigured()) return { messages, result: null };
   return { messages, result: await sendToAll(messages) };
 }

@@ -74,8 +74,10 @@ export interface ItemFile {
 
 /** Ajanın bu iş için ürettiği teslimat (taslak yanıt, özet, analiz…). */
 export interface ItemWork {
-  /** queued: ajan kendisi yapacak (güven seviyesi 2), sırada */
+  /** queued: ajan kendisi yapacak (güven seviyesi 2 ya da beyin önden hazırlıyor), sırada */
   status: "queued" | "running" | "ready" | "waiting_ok" | "approved" | "error";
+  /** followup: yanıt gelmeyen gönderim için hatırlatma taslağı */
+  purpose?: "followup";
   /** markdown teslimat */
   output: string;
   /** dışarıya gidecekse ne gideceği (onay kapısı) */
@@ -103,6 +105,7 @@ export interface MailDraft {
   subject: string;
   /** bir e-postaya yanıt olarak mı (aynı yazışmada) */
   reply: boolean;
+  threadId?: string;
   at: string;
 }
 
@@ -143,8 +146,49 @@ export interface BrainItem {
   /** ajan güven seviyesiyle kendisi onayladı (Batuhan'a sormadan Yapılacak'a aldı) */
   auto?: { at: string; level: TrustLevel };
   work?: ItemWork;
+  /** bu tarihe (YYYY-AA-GG) kadar kararlarda gösterilmez ("Sonra") */
+  snoozeUntil?: string;
+  /** beyin teslimatı sen istemeden önden hazırladı (öneri hâlâ senin onayında) */
+  prep?: boolean;
+  /** strateji katmanının açtığı iş (risk, takip, çakışma) */
+  origin?: "strateji";
+  /** gönderildi, yanıt bekleniyor */
+  followUp?: FollowUp;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FollowUp {
+  to: string[];
+  threadId?: string;
+  /** gönderim zamanı (ISO) */
+  since: string;
+  /** bu tarihe kadar yanıt gelmezse hatırlat (YYYY-AA-GG) */
+  due: string;
+  nudges: number;
+  /** yanıt geldiyse zamanı ve özeti */
+  replied?: { at: string; from: string; snippet: string };
+}
+
+/** Beynin sana sunduğu tek karar: durum → önerim → tek tuş. Her karar bir işe bağlıdır. */
+export interface Decision {
+  itemId: string;
+  /** durum, tek cümle ("Hakan Bey Eylül tüketim verisini soruyor") */
+  headline: string;
+  /** öneri, emir kipinde tek cümle ("Hazırladığım yanıtı gönder; veri 3 Ekim'de yüklendi") */
+  recommendation: string;
+  why: string;
+  urgency: 1 | 2 | 3;
+  type: "reply" | "accept" | "follow_up" | "risk" | "prep" | "do";
+}
+
+export interface PlanBlock {
+  /** HH:MM (İstanbul) */
+  start: string;
+  end: string;
+  title: string;
+  kind: "meeting" | "focus";
+  itemId?: string;
 }
 
 export interface BrainFocus {
@@ -153,6 +197,14 @@ export interface BrainFocus {
   brief: string;
   /** öncelik sırası: iş kimliği ya da "todo:<id>" */
   order: { id: string; reason: string }[];
+  /** tek cümlelik durum ("Bugün 3 karar ve 1 risk var; en önemlisi …") */
+  headline?: string;
+  /** senin vermen gereken kararlar (en önemliden) */
+  decisions?: Decision[];
+  /** bugünün planı: toplantılar + boş saatlere yerleştirilmiş odak blokları */
+  plan?: PlanBlock[];
+  /** plan hangi gün için */
+  day?: string;
 }
 
 export interface AgentRun {
@@ -176,6 +228,10 @@ export interface BrainRun {
   error?: string;
   /** bu düşünmede açılan işler */
   createdIds?: string[];
+  /** strateji katmanının sunduğu karar sayısı */
+  decisions?: number;
+  /** yanıtı gelen gönderimler */
+  replied?: string[];
   /** ajanların güven seviyesiyle kendisi onayladığı işler */
   autoIds?: string[];
 }
@@ -254,7 +310,8 @@ export type ChoiceKind =
   | "todo_delete"
   | "todo_focus"
   | "suggestion_accept"
-  | "suggestion_dismiss";
+  | "suggestion_dismiss"
+  | "snooze";
 
 export const CHOICE_LABEL: Record<ChoiceKind, string> = {
   accept: "öneriyi onayladı",
@@ -274,6 +331,7 @@ export const CHOICE_LABEL: Record<ChoiceKind, string> = {
   todo_focus: "görevi odağa aldı",
   suggestion_accept: "asistan önerisini uyguladı",
   suggestion_dismiss: "asistan önerisini gizledi",
+  snooze: "kararı sonraya erteledi",
 };
 
 /** Hazır ret sebepleri (tek dokunuş) */

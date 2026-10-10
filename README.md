@@ -106,6 +106,19 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   zamanlama" başlıkları) yazar; tek ve sebepsiz bir seçimden kural çıkarmaz, örüntü arar. Ajanlar, önceliklendirme ve
   asistan son seçimlerini her istekte de görür (reddettiğin türde iş açılmaz). Beyin panelindeki "🎓 Seni tanıyorum"
   kartı öğrenilenleri gösterir; bellekten düzenleyip silebilirsin.
+  **Şef yardımcısı (strateji katmanı):** Her düşünmenin sonunda beyin bütün kaynakları birlikte okur (bugün/yarın
+  takvimi ve boş saatler, denetim terminleri ve ilerleme, açık işler ve teslimat durumları, yanıt beklenen gönderimler,
+  kişisel görevler, son seçimlerin ve bellek) ve sana **kararları** sunar: her biri "durum → önerim → tek tuş". Hiçbir
+  işin karşılamadığı riskler (termini riskte alan, çakışma, yanıtlanmamış davet) için kendisi iş açar. Kararlar için
+  gereken taslak/not/özet **önden hazırlanır** (düşünme başına en fazla 3; öneri yine senin onayında kalır), böylece
+  kart geldiğinde "Gmail'e kaydet" ya da "Onayla" tek dokunuştur. "Evet, hallet" öneriyi üstlenip ajana yaptırır,
+  "Sonra" yarına erteler, "Gerek yok" sebebiyle reddeder (öğrenir). **Bugünün planı:** boş saatlere odak blokları.
+  **Takip:** gönderilen e-postalar "yanıt bekleniyor"a geçer; aynı yazışmada yanıt gelince iş kendiliğinden kapanır
+  (telefona "↩ yanıt verdi" bildirimi), 2 iş günü içinde gelmezse hatırlatma taslağı hazırlanıp karar olarak gelir.
+  Kararlar adada sağ panelde (telefonda alttan), Beyin ofisinde ve liste görünümünde. **Sana ulaşma:** 07:30'da
+  sabah düşünmesi (`/api/cron/brain`), 08:00'de önden hazırlık + sabah brifingi bildirimi (`/api/cron/notify`); gün
+  içinde yeni acil karar çıkarsa bildirim (2 saatte en fazla bir). Ada ya da Beyin açıkken 10 dakikada bir arka planda
+  düşünür ve sıradaki taslağı hazırlar.
   **Kazanılan güven:** her ajanın bir güven seviyesi var (ajan kartında): 🙋 Öner (her işi sorar) · ✅ Kendisi onaylasın
   (yeni işleri sormadan Yapılacak'a alır; onay oranı düşük türleri yine sorar) · 🤖 Teslimatı da hazırlasın (onayladığı işi
   kendisi yapar; işler sayfa açıkken ya da arka planda sırayla yapılır). Seviyeyi sen seçersin; seçimlerinden onay oranı

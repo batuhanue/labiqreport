@@ -9,9 +9,11 @@ import { useAssistant } from "@/components/assistant/AssistantPanel";
 import { useGoogle } from "@/components/google/GoogleProvider";
 import { NotificationBell } from "@/components/Notifications";
 import { usePeriod } from "@/components/PeriodProvider";
-import { Icon } from "@/components/ui";
+import { Icon, Sheet } from "@/components/ui";
+import { ItemSheet } from "@/components/brain/BrainView";
+import { DayPlan, DecisionDeck, useDecisions } from "@/components/brain/DecisionDeck";
+import { useBrainState } from "@/components/brain/useBrain";
 import { AnimatedNumber } from "@/components/fx";
-import type { BrainState } from "@/lib/brain-types";
 import { AREAS } from "@/lib/checklist";
 import { areaProgress, deadlineInfo, overallProgress } from "@/lib/period";
 import { DEFAULT_PLACE, TR_DAYS, TR_DAYS_SHORT, TR_MONTHS, fetchForecast, geocode, sampleForecast, wmo, type Forecast, type WxKind, type WxPlace } from "@/lib/weather";
@@ -76,20 +78,6 @@ function useForecast(place: WxPlace) {
   return fc;
 }
 
-function useBrainSummary() {
-  const [st, setSt] = useState<BrainState | null>(null);
-  useEffect(() => {
-    const load = () =>
-      fetch("/api/brain", { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j) => j && setSt(j))
-        .catch(() => {});
-    load();
-    const t = setInterval(load, 60_000);
-    return () => clearInterval(t);
-  }, []);
-  return st;
-}
 
 function useNow() {
   const [now, setNow] = useState(() => new Date());
@@ -106,7 +94,12 @@ export default function IslandHome() {
   const { toggle: toggleAssistant } = useAssistant();
   const { data, summaries } = usePeriod();
   const { status: google } = useGoogle();
-  const brain = useBrainSummary();
+  // beyin: kararlar, önden hazırlık (ada açıkken arka planda düşünür ve taslak hazırlar)
+  const brainHook = useBrainState();
+  const brain = brainHook.st;
+  const decisions = useDecisions(brainHook);
+  const [deck, setDeck] = useState(true);
+  const [deckSheet, setDeckSheet] = useState(false);
   const now = useNow();
 
   const [place, setPlace] = useState<WxPlace>(DEFAULT_PLACE);
@@ -116,6 +109,7 @@ export default function IslandHome() {
   useEffect(() => {
     setPlace(store.get("lq:wx-place", DEFAULT_PLACE));
     setView({ ...DEFAULT_VIEW, ...store.get<Partial<ViewSettings>>("lq:island-view", {}) });
+    setDeck(store.get("lq:island-deck", true));
     setReady(true);
   }, []);
   const fc = useForecast(place);
@@ -182,13 +176,13 @@ export default function IslandHome() {
     const unread = google?.snapshot?.gmail.unread ?? 0;
     return {
       denetim: { name: "Denetim", sub: overdue ? `${overdue} alan gecikti — kontrol listesine git` : "Kapanış kontrol listesi", badge: prog ? `%${Math.round(prog.overall * 100)}` : undefined, tone: overdue ? "alert" : prog && prog.overall >= 1 ? "ok" : "info", color: "#e0663d" },
-      beyin: { name: "Beyin", sub: "Ajanlar, öneriler ve görevlerin", badge: waitingOk ? `${waitingOk} onay` : inbox ? `${inbox} öneri` : undefined, tone: waitingOk ? "warn" : "info", color: "#8b5cf6", busy: !!brain?.running || items.some((x) => x.work?.status === "running") },
+      beyin: { name: "Beyin", sub: "Ajanlar, kararlar ve görevlerin", badge: decisions.list.length ? `${decisions.list.length} karar` : waitingOk ? `${waitingOk} onay` : inbox ? `${inbox} öneri` : undefined, tone: decisions.list.length || waitingOk ? "warn" : "info", color: "#8b5cf6", busy: !!brain?.running || items.some((x) => x.work?.status === "running") },
       google: { name: "Google ofis", sub: "Gmail, takvim, sohbet ve Drive", badge: unread ? `${unread} okunmamış` : undefined, tone: "info", color: "#4f7fbf" },
       analiz: { name: "Analiz", sub: "Alanlar, bulgular, terminler", badge: prog?.fails ? `${prog.fails} bulgu` : undefined, tone: "warn", color: "#e9a23b" },
       aksiyonlar: { name: "Aksiyonlar", sub: "Bulgu → sorumlu → çözüm", badge: openActions ? `${openActions} açık` : undefined, tone: openActions ? "warn" : "ok", color: "#e05a4f" },
       gecmis: { name: "Geçmiş", sub: "Önceki dönemler ve arşiv", badge: summaries.length ? `${summaries.length} dönem` : undefined, color: "#b98257" },
     };
-  }, [data, brain, google, summaries]);
+  }, [data, brain, google, summaries, decisions.list.length]);
 
   useEffect(() => {
     Object.values(ROUTES).forEach((r) => router.prefetch(r));
@@ -328,6 +322,25 @@ export default function IslandHome() {
             <RoundBtn label="Asistan" onClick={toggleAssistant}>
               <Icon name="spark" size={16} />
             </RoundBtn>
+            <RoundBtn
+              label="Senin için hazırladıklarım"
+              active={deck && !panel && day == null}
+              onClick={() => {
+                if (window.innerWidth < 640) return setDeckSheet(true);
+                const next = !(deck && !panel && day == null);
+                setDeck(next);
+                store.set("lq:island-deck", next);
+                if (next) {
+                  setPanel(null);
+                  setDay(null);
+                }
+              }}
+            >
+              <span className="relative">
+                <Icon name="brain" size={16} />
+                {decisions.list.length > 0 && <span className="absolute -right-2 -top-2 grid h-4 min-w-4 place-items-center rounded-full bg-[#ef4d5a] px-1 text-[9px] font-extrabold text-white">{decisions.list.length}</span>}
+              </span>
+            </RoundBtn>
             <RoundBtn label="Görünümü ayarla" active={panel === "settings"} onClick={() => setPanel((p) => (p === "settings" ? null : "settings"))}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>
             </RoundBtn>
@@ -367,7 +380,38 @@ export default function IslandHome() {
           {day != null && fc && (
             <DayPanel key={`day${day}`} fc={fc} day={day} onClose={() => setDay(null)} />
           )}
+          {deck && !panel && day == null && !fly && (
+            <motion.aside
+              key="deck"
+              initial={{ opacity: 0, x: 24, filter: "blur(6px)" }}
+              animate={{ opacity: 1, x: 0, filter: "blur(0px)", transition: { type: "spring", stiffness: 260, damping: 28, delay: ready ? 0 : 1.2 } }}
+              exit={{ opacity: 0, x: 24, transition: { duration: 0.2 } }}
+              className="pointer-events-auto absolute right-4 top-[68px] z-20 hidden max-h-[calc(100dvh-230px)] w-[min(380px,calc(100vw-32px))] space-y-4 overflow-y-auto overscroll-contain rounded-[24px] border border-white/60 bg-white/80 p-3 text-ink shadow-[0_24px_60px_-24px_rgba(20,30,60,.45)] backdrop-blur-xl sm:right-8 sm:top-[76px] sm:block dark:border-white/10 dark:bg-[#1b1e27]/85"
+            >
+              <DecisionDeck bare compact max={4} brain={brainHook} onOpen={brainHook.setOpen} />
+              <DayPlan compact plan={brain?.focus?.plan} items={brain?.items ?? []} onOpen={brainHook.setOpen} />
+              <Link href="/gorevler" className="block px-1 pb-1 text-xs font-bold text-blue">
+                Beyni aç →
+              </Link>
+            </motion.aside>
+          )}
         </AnimatePresence>
+
+        {/* telefon: kararlar alttan açılır */}
+        {decisions.list.length > 0 && (
+          <motion.button
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ type: "spring", stiffness: 260, damping: 26, delay: 1.1 }}
+            onClick={() => setDeckSheet(true)}
+            className="pointer-events-auto absolute bottom-[136px] left-4 flex items-center gap-2 rounded-full border border-white/70 bg-white/85 py-1.5 pl-1.5 pr-3 text-xs font-bold text-[#1d2433] shadow-sm backdrop-blur-md sm:hidden"
+          >
+            <span className="grid h-6 w-6 place-items-center rounded-full bg-[#8b5cf6] text-white">
+              <Icon name="brain" size={13} />
+            </span>
+            {decisions.list.length} karar{decisions.ready ? ` · ${decisions.ready} taslak hazır` : ""}
+          </motion.button>
+        )}
 
         {/* ---------------------------------------- alt: 7 günlük tahmin */}
         {fc && (
@@ -439,6 +483,13 @@ export default function IslandHome() {
           />
         )}
       </AnimatePresence>
+      <Sheet open={deckSheet} onClose={() => setDeckSheet(false)} title="Senin için hazırladım">
+        <div className="space-y-5">
+          <DecisionDeck bare hideTitle brain={brainHook} onOpen={(x) => { setDeckSheet(false); brainHook.setOpen(x); }} />
+          <DayPlan plan={brain?.focus?.plan} items={brain?.items ?? []} onOpen={(x) => { setDeckSheet(false); brainHook.setOpen(x); }} />
+        </div>
+      </Sheet>
+      <ItemSheet x={brainHook.open} onClose={() => brainHook.setOpen(null)} onPatch={brainHook.patch} onWork={brainHook.runWork} onApprove={brainHook.approveWork} />
     </div>
   );
 }

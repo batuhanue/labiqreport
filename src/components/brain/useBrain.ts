@@ -24,13 +24,21 @@ export function useBrainState() {
       setErr((e as Error).message);
     }
   }, []);
+  const mountedAt = useRef(Date.now());
   useEffect(() => {
     load();
-    // açılışta (son düşünmeden 30 dk geçtiyse) arka planda düşünmeyi tetikle
-    fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "auto" }) })
-      .then((r) => r.json())
-      .then((j) => j.started && setSt((s) => (s ? { ...s, running: true } : s)))
-      .catch(() => {});
+    // açılışta ve açık kaldıkça 10 dakikada bir: düşünme zamanı geldiyse düşün, değilse sıradaki taslağı hazırla
+    const auto = () =>
+      fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "auto" }) })
+        .then((r) => r.json())
+        .then((j) => (j.started || j.working) && setSt((s) => (s ? { ...s, running: !!j.started || s.running } : s)))
+        .catch(() => {});
+    auto();
+    const t = setInterval(() => {
+      auto();
+      load();
+    }, 10 * 60_000);
+    return () => clearInterval(t);
   }, [load]);
   // düşünürken durumu izle
   useEffect(() => {
@@ -124,17 +132,49 @@ export function useBrainState() {
     [toast],
   );
 
-  // güven 2: ajanın kendisi yapacağı işler sayfa açıkken sırayla yapılır (biri bitince sıradaki)
+  // sıradaki işler (güven 2 ya da beynin önden hazırlığı) sayfa açıkken sırayla yapılır (biri bitince sıradaki).
+  // açılıştaki sunucu tarafı hazırlıkla çakışmasın diye ilk 8 sn beklenir.
   const draining = useRef<string | null>(null);
   const queued = st?.items.filter((x) => x.work?.status === "queued").sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]?.id;
   const anyRunning = !!st?.items.some((x) => x.work?.status === "running");
+  const [warm, setWarm] = useState(false);
   useEffect(() => {
-    if (!queued || anyRunning || draining.current) return;
+    const t = setTimeout(() => setWarm(true), Math.max(0, 8000 - (Date.now() - mountedAt.current)));
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    if (!warm || !queued || anyRunning || draining.current) return;
     draining.current = queued;
     runWork(queued, undefined, undefined, true).finally(() => {
       draining.current = null;
     });
-  }, [queued, anyRunning, runWork]);
+  }, [warm, queued, anyRunning, runWork]);
+
+  /** "Sonra": yarına ertele (karar listesinden çıkar) */
+  const snooze = useCallback(
+    (id: string, days = 1) => {
+      const d = new Date(Date.now() + 3 * 3600_000 + days * 86400_000).toISOString().slice(0, 10);
+      patch(id, { snoozeUntil: d });
+      toast(days === 1 ? "Yarın tekrar sorarım" : `${days} gün sonra tekrar sorarım`);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toast],
+  );
+  /** yanıt gelmeyen gönderim için hatırlatma taslağı */
+  const nudge = useCallback(
+    async (id: string) => {
+      setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? { ...x, work: { ...(x.work ?? { output: "", used: [], revisions: [] }), status: "running", at: new Date().toISOString() } as BrainItem["work"] } : x)) } : s));
+      const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "work", id, followup: true }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.item) {
+        toast(j.error ?? "Hatırlatma yazılamadı");
+        return load();
+      }
+      setSt((s) => (s ? { ...s, items: s.items.map((x) => (x.id === id ? j.item : x)) } : s));
+      toast("Hatırlatma taslağı hazır");
+    },
+    [toast, load],
+  );
   const working = !!st?.items.some((x) => x.work?.status === "running");
   useEffect(() => {
     if (!working) return;
@@ -142,5 +182,5 @@ export function useBrainState() {
     return () => clearInterval(t);
   }, [working, load]);
 
-  return { st, setSt, err, thinking, think, patch, runWork, approveWork, setTrust, open, setOpen, load };
+  return { st, setSt, err, thinking, think, patch, runWork, approveWork, setTrust, snooze, nudge, open, setOpen, load };
 }

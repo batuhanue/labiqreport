@@ -18,7 +18,7 @@ export interface NotifyPrefs {
 export const DEFAULT_PREFS: NotifyPrefs = { deadlines: true, daysBefore: 2, actions: true, friday: true, monthStart: true, todos: true, calendar: true };
 
 export interface NotifyMessage {
-  kind: "deadline" | "overdue" | "action" | "friday" | "month" | "todo" | "calendar";
+  kind: "deadline" | "overdue" | "action" | "friday" | "month" | "todo" | "calendar" | "brain";
   title: string;
   body: string;
   url: string;

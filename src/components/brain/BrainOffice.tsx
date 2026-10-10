@@ -10,8 +10,9 @@ import { AGENTS, agentById, STATUS_META, type AgentId, type BrainItem } from "@/
 import { AREAS } from "@/lib/checklist";
 import { areaProgress, deadlineInfo } from "@/lib/period";
 import { OFFICE_DARK, OFFICE_LIGHT, type OfficePal } from "../office/Furniture";
-import { AgentPanel, Brief, Capture, ItemSheet, Learning, TrustSuggest } from "./BrainView";
+import { AgentPanel, Capture, ItemSheet, Learning, TrustSuggest } from "./BrainView";
 import { TaskListView } from "./TaskRow";
+import { DayPlan, DecisionDeck } from "./DecisionDeck";
 import { BrainScene, type CameraApi, type Screen } from "./BrainScene";
 import { DEPTS, deptById } from "./layout";
 import { useBrainState } from "./useBrain";
@@ -32,11 +33,6 @@ function usePal(): OfficePal {
 const glass = "border border-white/60 bg-white/80 shadow-[0_10px_40px_-12px_rgba(31,35,48,.25)] backdrop-blur-xl dark:border-white/10 dark:bg-[#1b1e27]/85";
 const serif = "font-serif tracking-wide";
 
-function ago(s?: string) {
-  if (!s) return "—";
-  const m = Math.round((Date.now() - Date.parse(s)) / 60000);
-  return m < 1 ? "şimdi" : m < 60 ? `${m} dk` : m < 1440 ? `${Math.round(m / 60)} sa` : `${Math.round(m / 1440)} g`;
-}
 
 
 /* bağlı servisler: kaynak → departman */
@@ -379,7 +375,8 @@ export default function BrainOffice() {
                 </>
               ) : (
                 <>
-                  <BrainCard brain={brain} />
+                  <DecisionDeck bare compact max={4} brain={brain} onOpen={setOpen} />
+                  <DayPlan compact plan={st?.focus?.plan} items={st?.items ?? []} onOpen={setOpen} />
                   <TrustSuggest compact trust={st?.trust} onTrust={brain.setTrust} />
                   <section>
                     <div className="mb-2 px-1 text-sm font-extrabold">İşler</div>
@@ -398,32 +395,4 @@ export default function BrainOffice() {
   );
 }
 
-/* ------------------------------------------------------------------ beyin kartı */
-function BrainCard({ brain }: { brain: ReturnType<typeof useBrainState> }) {
-  const { st } = brain;
-  const [showFocus, setShowFocus] = useState(true);
-  const busy = brain.thinking || !!st?.running;
-  return (
-    <section>
-      <div className="flex items-center gap-2 px-1">
-        <div className="text-sm font-extrabold">Bugün</div>
-        <span className="text-xs text-ink-3">{st?.lastRun ? `düşünme ${ago(st.lastRun)} önce` : "henüz düşünmedi"}</span>
-        <button onClick={brain.think} disabled={busy} className="ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold text-ink-2 hover:bg-black/5 disabled:opacity-60 dark:hover:bg-white/10" title="Kaynakları şimdi oku">
-          <Icon name="refresh" size={13} className={busy ? "animate-spin" : ""} />
-          {busy ? "Düşünüyor" : "Düşün"}
-        </button>
-        {st?.focus && (
-          <button onClick={() => setShowFocus((v) => !v)} className="grid h-7 w-7 place-items-center rounded-full text-ink-3 hover:bg-black/5 dark:hover:bg-white/10" aria-label="Brifingi aç/kapat">
-            <Icon name="chevron" size={13} className={`transition-transform ${showFocus ? "-rotate-90" : "rotate-90"}`} />
-          </button>
-        )}
-      </div>
-      {st?.focus && showFocus && (
-        <div className="mt-1.5 px-1 text-[13.5px] leading-relaxed text-ink-2">
-          <Brief text={st.focus.brief} />
-        </div>
-      )}
-    </section>
-  );
-}
 

@@ -445,7 +445,8 @@ body {
 
 /* 5) Kademeli giriş: sayfanın bölümleri sırayla yükselir (bitince transform kalmaz) */
 [data-cascade] > * > * {
-  animation: cascade-in 900ms var(--spring-soft) both;
+  /* yalnızca "backwards": bitince öğede filter/translate kalmaz (kalırsa içerideki fixed/backdrop-filter bozulur) */
+  animation: cascade-in 900ms var(--spring-soft) backwards;
   animation-delay: calc(var(--cascade-i, 0) * 55ms + 60ms);
 }
 [data-cascade] > * > :nth-child(2) { --cascade-i: 1; }
@@ -460,11 +461,6 @@ body {
     opacity: 0;
     translate: 0 22px;
     filter: blur(6px);
-  }
-  to {
-    opacity: 1;
-    translate: none;
-    filter: none;
   }
 }
 

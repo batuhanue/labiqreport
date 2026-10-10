@@ -8,13 +8,16 @@ import { AREAS } from "./checklist";
 import { ASSISTANT_MODEL, claude, claudeConfigured, costUsd, recordUsage } from "./claude";
 import { store } from "./db";
 import { getSnapshot } from "./google";
-import { areaProgress, deadlineInfo, normalizePeriod, periodLabel } from "./period";
+import { areaProgress, deadlineInfo, normalizePeriod, overallProgress, periodLabel } from "./period";
+import { addWorkdays, buildPlan, checkFollowUps, daysSince, freeSlots, meetingsOn, ruleDecisions, trDay, trHM } from "./brain-plan";
 import { emptyStore, type TodoStore } from "./todo";
 import { brainSystem } from "./brain-prompt";
 import { learn, learningState, readChoices, recentChoices, recordChoices } from "./learning";
 import { createDraft } from "./gmail-draft";
+import { pushConfigured, sendToAll } from "./push";
+import type { NotifyMessage } from "./notify";
 import { applyTrust, reviewTrust, trustView } from "./trust";
-import { AGENTS, agentById, KIND_LABEL, type AgentId, type Choice, type AgentRun, type BrainFocus, type BrainItem, type BrainRun, type BrainState, type ItemSource, type ItemWork, type Signal, type TeamPiece, type TeamRun } from "./brain-types";
+import { AGENTS, agentById, KIND_LABEL, type AgentId, type Choice, type AgentRun, type BrainFocus, type BrainItem, type Decision, type BrainRun, type BrainState, type ItemSource, type ItemWork, type Signal, type TeamPiece, type TeamRun } from "./brain-types";
 
 /*
  * Beyin döngüsü (her "düşünme"):
@@ -38,6 +41,8 @@ interface Meta {
   lock?: number;
   /** elle yazılanlar (sonraki düşünmede işlenir) */
   captures: Signal[];
+  /** son anlık bildirim (seyrek tutulur) */
+  lastPush?: string;
 }
 const emptyMeta = (): Meta => ({ seen: {}, focus: null, runs: [], captures: [] });
 
@@ -215,22 +220,53 @@ const ITEM_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-const FOCUS_SCHEMA = {
+const AGENT_ENUM = ["posta", "sohbet", "takvim", "toplanti", "denetim", "dosya", "gorev"] as const;
+const STRATEGY_SCHEMA = {
   type: "object",
   properties: {
-    brief: { type: "string", description: "Batuhan'a 3-5 satırlık Türkçe günlük brifing (markdown, madde işaretli olabilir)" },
-    order: {
+    headline: { type: "string", description: "tek cümle: günün en önemli konusu ve neden (sayı yazma)" },
+    brief: { type: "string", description: "2-4 maddelik markdown brifing (risk, fırsat, dikkat)" },
+    decisions: {
       type: "array",
+      description: "Batuhan'ın bugün vermesi gereken kararlar, en önemliden; en fazla 6",
       items: {
         type: "object",
-        properties: { id: { type: "string" }, reason: { type: "string", description: "neden bu sırada (kısa)" } },
-        required: ["id", "reason"],
+        properties: {
+          ref: { type: "string", description: "ilgili açık işin kimliği; yoksa boş (new_* ile iş açılır)" },
+          type: { type: "string", enum: ["reply", "accept", "follow_up", "risk", "prep", "do"] },
+          urgency: { type: "integer", enum: [1, 2, 3], description: "1 bugün mutlaka · 2 bugün · 3 bu hafta" },
+          headline: { type: "string", description: "durum, tek cümle, kişi ve konu adıyla" },
+          recommendation: { type: "string", description: "emir kipinde tek cümle somut öneri (kim, ne, ne zaman)" },
+          why: { type: "string", description: "kısa gerekçe (termin, rol, risk)" },
+          prepare: { type: "boolean", description: "ajan teslimatı (yanıt/hatırlatma/hazırlık notu/özet) şimdiden hazırlasın mı" },
+          new_title: { type: "string", description: "ref boşsa açılacak işin başlığı, değilse boş" },
+          new_agent: { type: "string", enum: [...AGENT_ENUM, ""] },
+          new_kind: { type: "string", enum: ["gorev", "yanit", "toplanti", "takip", "bilgi", ""] },
+          new_summary: { type: "string" },
+          new_due: { type: "string", description: "YYYY-AA-GG ya da boş" },
+          new_steps: { type: "array", items: { type: "string" } },
+        },
+        required: ["ref", "type", "urgency", "headline", "recommendation", "why", "prepare", "new_title", "new_agent", "new_kind", "new_summary", "new_due", "new_steps"],
         additionalProperties: false,
       },
-      description: "bugün odaklanılacak en fazla 7 iş, en önemliden",
+    },
+    plan: {
+      type: "array",
+      description: "bugünkü boş saatlere yerleştirilen odak blokları (toplantılar hariç)",
+      items: {
+        type: "object",
+        properties: {
+          start: { type: "string", description: "HH:MM" },
+          end: { type: "string", description: "HH:MM" },
+          title: { type: "string" },
+          ref: { type: "string", description: "ilgili iş kimliği ya da boş" },
+        },
+        required: ["start", "end", "title", "ref"],
+        additionalProperties: false,
+      },
     },
   },
-  required: ["brief", "order"],
+  required: ["headline", "brief", "decisions", "plan"],
   additionalProperties: false,
 } as const;
 
@@ -371,35 +407,237 @@ async function attachFiles(touched: (BrainItem & { _q?: string })[]) {
   return n;
 }
 
-// ------------------------------------------------------------------ 4) önceliklendirme
-async function prioritize(items: BrainItem[], system: Anthropic.TextBlockParam[], usage: Usage, timeout: number): Promise<BrainFocus | null> {
-  const todos = ((await store().getKV<TodoStore>("todos")) ?? emptyStore()).todos.filter((t) => !t.done && !t.source?.startsWith("brain:"));
-  const open = items.filter((x) => isOpen(x) && x.status !== "waiting");
-  if (!open.length && !todos.length) return { at: new Date().toISOString(), brief: "Açık iş yok. Yeni bir şey geldiğinde ajanlar burada önerecek.", order: [] };
+// ------------------------------------------------------------------ 4) strateji (şef yardımcısı)
+/*
+ * Bütün kaynakları birlikte okur: takvim (bugün/yarın, boş saatler), denetim terminleri, açık işler ve teslimat
+ * durumları, yanıt beklenen gönderimler, kişisel görevler, son seçimler ve bellek. Çıktı: verilecek kararlar
+ * (her biri tek cümle öneri + tek tuş), hiçbir işin karşılamadığı riskler için yeni işler, ve günün planı.
+ */
+interface StrategyOut {
+  headline: string;
+  brief: string;
+  decisions: {
+    ref: string;
+    type: Decision["type"];
+    urgency: number;
+    headline: string;
+    recommendation: string;
+    why: string;
+    prepare: boolean;
+    new_title: string;
+    new_agent: string;
+    new_kind: string;
+    new_summary: string;
+    new_due: string;
+    new_steps: string[];
+  }[];
+  plan: { start: string; end: string; title: string; ref: string }[];
+}
+
+const WORK_LABEL: Record<string, string> = { queued: "hazırlanıyor", running: "hazırlanıyor", ready: "teslimat hazır", waiting_ok: "taslak hazır, onay bekliyor", approved: "onaylandı", error: "hata" };
+const STATUS_TR: Record<string, string> = { inbox: "öneri", todo: "yapılacak", doing: "sürüyor", waiting: "bekliyor" };
+
+async function strategyContext(items: BrainItem[], overdueIds: Set<string>, now: Date) {
+  const today = trDay(now);
+  const tomorrow = trDay(new Date(+now + 86400_000));
   const snap = await getSnapshot().catch(() => null);
-  const todayKey = istDay();
-  const meetings = (snap?.calendar.items ?? []).filter((e) => e.response !== "declined" && (e.allDay ? e.start : istDay(new Date(e.start))) === todayKey);
-  const content = `ŞU AN: Beyinsin. Bütün açık işleri ve Batuhan'ın kendi görevlerini rolüne, terminlere ve bugünkü takvime göre önceliklendir; bugün odaklanması gereken en fazla 7 işi sırala ve kısa bir brifing yaz.
-Bugün: ${todayKey}.
-Bugünkü toplantılar: ${meetings.map((e) => `${e.allDay ? "tüm gün" : trTime(e.start)} ${e.title}`).join(" · ") || "yok"}
+  const events = snap?.calendar.items ?? [];
+  const fmtM = (day: string) =>
+    meetingsOn(events, day)
+      .map((m) => `- ${trHM(m.start)}–${trHM(m.end)} ${m.title}${m.who.length ? ` (${m.who.join(", ")})` : ""}`)
+      .join("\n") || "(yok)";
+  const invites = events.filter((e) => e.response === "needsAction" && Date.parse(e.start) > +now).slice(0, 5);
+  const slots = freeSlots(events, now);
 
-BEYİNDEKİ İŞLER:
-${open.map((x) => `- [${x.id}] (${x.status === "inbox" ? "öneri" : x.status}, P${x.priority}${x.due ? `, termin ${x.due}` : ""}, ${x.kind}) ${x.title} — ${clip(x.summary, 160)}`).join("\n") || "(yok)"}
+  // denetim
+  const { activePeriod } = await store().getState();
+  const raw = activePeriod ? await store().getPeriod(activePeriod) : null;
+  let audit = "(aktif dönem yok)";
+  if (raw) {
+    const p = normalizePeriod(raw);
+    const pr = overallProgress(p);
+    const rows = AREAS.map((a) => ({ a, pr: areaProgress(p, a), d: deadlineInfo(p.period, a, now) }))
+      .filter((x) => x.pr.both < x.a.items.length && x.d.days != null && x.d.days <= 5)
+      .map((x) => `- ${x.a.code} ${x.a.title}: ${x.d.days! < 0 ? `termin ${-x.d.days!} gün geçti` : x.d.days === 0 ? "termin bugün" : `termine ${x.d.days} gün`} · Bursa ${x.pr.bursa}/${x.pr.total}, Başakşehir ${x.pr.basaksehir}/${x.pr.total}`);
+    const openActs = p.actions.filter((x) => x.status !== "Tamamlandı");
+    const lateActs = openActs.filter((x) => x.due && x.due < today);
+    audit = `${periodLabel(p.period)} · %${Math.round(pr.overall * 100)} kontrol edildi · ${pr.fails} bulgu
+Termini yakın/geçen alanlar:
+${rows.join("\n") || "(yok)"}
+Açık aksiyonlar: ${openActs.length}${lateActs.length ? ` (termini geçen ${lateActs.length}: ${lateActs.slice(0, 4).map((x) => `${x.areaCode} ${x.owner}`).join(", ")})` : ""}`;
+  }
 
-BATUHAN'IN SON SEÇİMLERİ (neye öncelik verdiğini gösterir):
+  const open = items.filter((x) => isOpen(x) && !(x.snoozeUntil && x.snoozeUntil > today));
+  const waitingReplies = open.filter((x) => x.followUp && !x.followUp.replied && x.status === "waiting");
+  const work = open.filter((x) => !(x.followUp && x.status === "waiting"));
+  const todos = ((await store().getKV<TodoStore>("todos")) ?? emptyStore()).todos.filter((t) => !t.done && !t.source?.startsWith("brain:"));
+  return {
+    events,
+    text: `ŞU AN: Stratejistsin — Batuhan'ın şef yardımcısı. Onun yerine düşün: bütün kaynakları birlikte değerlendir, bugün vermesi gereken kararları çıkar, her biri için tek cümlelik net bir öneri yaz ve gününü planla. Batuhan her karara tek dokunuşla cevap verebilmeli; gerekli taslağı/notu ajanlar senin "prepare" işaretinle önden hazırlar.
+Şu an: ${today} ${new Date(+now).toLocaleDateString("tr-TR", { weekday: "long", timeZone: "Europe/Istanbul" })} ${trHM(now)} (İstanbul).
+
+TAKVİM — bugün:
+${fmtM(today)}
+Yarın:
+${fmtM(tomorrow)}
+Yanıt bekleyen davetler: ${invites.map((e) => `${e.title} (${trTime(e.start)})`).join(" · ") || "yok"}
+Bugünkü boş saatler: ${slots.map((x) => `${trHM(x.start)}–${trHM(x.end)}`).join(", ") || "yok (gün bitti ya da dolu)"}
+
+DENETİM: ${audit}
+
+YANIT BEKLENEN GÖNDERİMLER (Batuhan gönderdi, karşı taraf yanıt vermedi):
+${waitingReplies.map((x) => `- [${x.id}] ${x.followUp!.to.join(", ")} · "${x.title}" · ${daysSince(x.followUp!.since, now)} gündür yanıt yok${overdueIds.has(x.id) ? " · HATIRLATMA ZAMANI GELDİ" : ""} (hatırlatma: ${x.followUp!.nudges})`).join("\n") || "(yok)"}
+
+BEYİNDEKİ AÇIK İŞLER:
+${work
+  .slice(0, 70)
+  .map((x) => `- [${x.id}] (${STATUS_TR[x.status] ?? x.status}, P${x.priority}${x.due ? `, termin ${x.due}` : ""}, ${KIND_LABEL[x.kind]}, ${agentById(x.agent)?.name ?? x.agent}${x.work ? `, ${WORK_LABEL[x.work.status] ?? x.work.status}` : ""}) ${x.title} — ${clip(x.summary, 140)}`)
+  .join("\n") || "(yok)"}
+
+KİŞİSEL GÖREVLERİ:
+${todos.slice(0, 40).map((t) => `- (P${t.priority}${t.due ? `, ${t.due}` : ""}) ${t.title}`).join("\n") || "(yok)"}
+
+SON SEÇİMLERİ (neye evet/hayır dediği):
 ${(await recentChoices({ limit: 20 }).catch(() => "")) || "(henüz yok)"}
 
-BATUHAN'IN GÖREVLERİ (kimlik todo:…):
-${todos.slice(0, 60).map((t) => `- [todo:${t.id}] (P${t.priority}${t.due ? `, ${t.due}` : ""}) ${t.title}`).join("\n") || "(yok)"}`;
+KURALLAR:
+1. decisions en fazla 6, en önemliden. Karar = Batuhan'ın bugün vereceği bir evet/hayır ya da tek eylem. Bilgi amaçlı şeyleri karar yapma.
+2. Mevcut bir işle ilgiliyse ref = o işin kimliği. Hiçbir işin karşılamadığı bir risk varsa (termini riskte denetim alanı, takvim çakışması, yanıtlanmamış davet, hazırlıksız toplantı) ref boş bırak, new_* ile iş aç (aynı konuda açık iş varsa onu kullan).
+3. headline durumu kişi/konu adıyla tek cümlede söyler. recommendation emir kipinde, somut ve kısa: kime, ne, ne zaman ("Bumin Bey'e bugün 14:00'e kadar Başakşehir verisini sor"). "Kontrol et", "gözden geçir" gibi genel ifadeler yazma.
+4. prepare=true: yanıt e-postası, hatırlatma, veri talebi, toplantı hazırlık notu ya da özet gerekiyorsa ve işin teslimatı henüz yoksa. Teslimatı hazır olan işte false.
+5. type: reply (yanıt verilecek), accept (öneriyi üstlenmeli mi), follow_up (yanıt gelmeyen gönderim), risk (termin/çakışma), prep (toplantı hazırlığı), do (yapılacak iş).
+6. Hatırlatma zamanı gelen gönderimleri follow_up kararı yap. Taslağı hazır işleri (onay bekliyor) mutlaka karar olarak sun.
+7. Belleğe ve son seçimlerine uy: reddettiği türde işleri önerme; değiştirdiği önceliği esas al.
+8. plan: bugünkü boş saatlere en önemli işleri yerleştir (30–90 dk, boş saatlerin dışına taşma, toplantıları yazma). Boş saat yoksa boş liste.
+9. headline (en üst) tek cümle: günün en önemli konusu ve neden (karar sayısı yazma, uygulama gösteriyor). brief 2–4 madde: riskler, terminler, dikkat edilecekler.`,
+  };
+}
+
+async function strategize(items: BrainItem[], overdueIds: Set<string>, system: Anthropic.TextBlockParam[], usage: Usage, timeout: number) {
+  const now = new Date();
+  const ctx = await strategyContext(items, overdueIds, now);
   const res = await claude().messages.parse(
-    { model: ASSISTANT_MODEL, max_tokens: 4000, system, output_config: { effort: "low", format: jsonSchemaOutputFormat(FOCUS_SCHEMA) }, messages: [{ role: "user", content }] },
+    { model: ASSISTANT_MODEL, max_tokens: 6000, system, output_config: { effort: "medium", format: jsonSchemaOutputFormat(STRATEGY_SCHEMA) }, messages: [{ role: "user", content: ctx.text }] },
     { timeout },
   );
   addUsage(usage, res);
-  const p = res.parsed_output;
-  if (!p) return null;
-  const valid = new Set([...open.map((x) => x.id), ...todos.map((t) => `todo:${t.id}`)]);
-  return { at: new Date().toISOString(), brief: p.brief, order: p.order.filter((o) => valid.has(o.id)).slice(0, 7) };
+  if (res.stop_reason === "refusal" || !res.parsed_output) return { out: null, events: ctx.events };
+  return { out: res.parsed_output as StrategyOut, events: ctx.events };
+}
+
+/** En fazla bu kadar iş bir düşünmede önden hazırlığa alınır (maliyet sınırı). */
+const PREP_PER_RUN = 3;
+
+/** Strateji çıktısını uygula: yeni risk işleri, kararlar, önden hazırlık kuyruğu, gün planı. */
+function applyStrategy(items: BrainItem[], out: StrategyOut | null, overdue: BrainItem[], events: Parameters<typeof buildPlan>[1]): BrainFocus {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const today = trDay(now);
+  const decisions: Decision[] = [];
+  const prepare = new Set<string>();
+  for (const d of out?.decisions ?? []) {
+    let it = d.ref ? items.find((x) => x.id === d.ref && isOpen(x)) : undefined;
+    if (!it && d.new_title.trim()) {
+      const title = d.new_title.trim().slice(0, 200);
+      it = items.find((x) => isOpen(x) && x.title.toLocaleLowerCase("tr") === title.toLocaleLowerCase("tr"));
+      if (!it) {
+        it = {
+          id: uid(),
+          title,
+          summary: d.new_summary || d.headline,
+          why: d.why,
+          kind: (["gorev", "yanit", "toplanti", "takip", "bilgi"].includes(d.new_kind) ? d.new_kind : "takip") as BrainItem["kind"],
+          priority: (d.urgency === 1 ? 1 : d.urgency === 2 ? 2 : 3) as BrainItem["priority"],
+          due: /^\d{4}-\d{2}-\d{2}$/.test(d.new_due) ? d.new_due : undefined,
+          steps: d.new_steps.slice(0, 6).map((t) => ({ title: t, done: false })),
+          files: [],
+          sources: [],
+          agent: (agentById(d.new_agent) ? d.new_agent : "gorev") as AgentId,
+          status: "inbox",
+          origin: "strateji",
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        items.unshift(it);
+      }
+    }
+    if (!it || decisions.some((x) => x.itemId === it!.id)) continue;
+    decisions.push({ itemId: it.id, type: d.type, urgency: ([1, 2, 3].includes(d.urgency) ? d.urgency : 2) as Decision["urgency"], headline: d.headline, recommendation: d.recommendation, why: d.why });
+    if (d.prepare && !it.work) prepare.add(it.id);
+  }
+  // yapay zekâ eksik bıraktıysa: hazır taslaklar ve yanıtı geciken gönderimler her zaman karar olur
+  for (const r of ruleDecisions(items, now)) {
+    if (decisions.length >= 7) break;
+    if (decisions.some((x) => x.itemId === r.itemId)) continue;
+    if (out && r.type !== "reply" && r.type !== "follow_up") continue;
+    decisions.push(r);
+  }
+  // yanıtı geciken gönderimler: hatırlatma taslağı önden
+  for (const it of overdue) if (it.work?.status !== "queued" && it.work?.status !== "running" && !(it.work?.purpose === "followup" && it.work.status === "waiting_ok")) prepare.add(it.id);
+  // önden hazırlık kuyruğu (öneri hâlâ Batuhan'ın onayında; yalnızca taslak/not hazırlanır)
+  let queued = 0;
+  for (const id of prepare) {
+    if (queued >= PREP_PER_RUN) break;
+    const it = items.find((x) => x.id === id);
+    if (!it) continue;
+    const followup = overdue.includes(it);
+    it.work = { status: "queued", output: it.work?.output ?? "", used: [], revisions: it.work?.revisions ?? [], at: nowIso, purpose: followup ? "followup" : undefined };
+    if (it.status === "inbox") it.prep = true;
+    it.updatedAt = nowIso;
+    queued++;
+  }
+  const valid = new Set(items.filter(isOpen).map((x) => x.id));
+  return {
+    at: nowIso,
+    day: today,
+    headline: out?.headline || (decisions.length ? `${decisions.length} karar seni bekliyor.` : "Şu an senden karar bekleyen bir şey yok; izlemeye devam ediyorum."),
+    brief: out?.brief || "",
+    decisions,
+    plan: buildPlan(out?.plan ?? [], events, valid, now),
+    order: decisions.map((d) => ({ id: d.itemId, reason: d.recommendation })),
+  };
+}
+
+// ------------------------------------------------------------------ sana ulaşma (anlık bildirim)
+/** Gün içinde: yeni acil karar ya da gelen yanıt varsa telefona bildirim (2 saatte en fazla bir). Sabah brifingi cron'da. */
+async function pushNews(prev: BrainFocus | null, next: BrainFocus, items: BrainItem[], trigger: BrainRun["trigger"], meta: Meta) {
+  if (!pushConfigured() || trigger === "cron") return;
+  if (meta.lastPush && Date.now() - Date.parse(meta.lastPush) < 2 * 3600_000) return;
+  const seen = new Set((prev?.decisions ?? []).map((d) => d.itemId));
+  const urgent = (next.decisions ?? []).filter((d) => d.urgency === 1 && !seen.has(d.itemId));
+  const replied = items.filter((x) => x.followUp?.replied && Date.now() - Date.parse(x.followUp.replied.at) < 6 * 3600_000 && Date.parse(x.updatedAt) > Date.now() - 120_000);
+  const msgs: NotifyMessage[] = [];
+  if (urgent.length) msgs.push({ kind: "brain", title: `🧠 ${urgent[0].headline}`, body: `${urgent[0].recommendation}${urgent.length > 1 ? ` (+${urgent.length - 1} karar)` : ""}`, url: "/", tag: "brain-urgent", level: "alert" });
+  if (replied.length) msgs.push({ kind: "brain", title: `↩ ${replied[0].followUp!.replied!.from} yanıt verdi`, body: `${replied[0].title}: ${replied[0].followUp!.replied!.snippet}`, url: "/gorevler", tag: "brain-reply", level: "info" });
+  if (!msgs.length) return;
+  await sendToAll(msgs);
+  meta.lastPush = new Date().toISOString();
+}
+
+/** Sabah brifingi (cron): kararlar, hazır taslaklar, gün planının ilk bloğu. */
+export async function morningBrief(): Promise<NotifyMessage | null> {
+  const [meta, items] = await Promise.all([readMeta(), readItems()]);
+  const f = meta.focus;
+  if (!f?.decisions) return null;
+  const byId = new Map(items.map((x) => [x.id, x]));
+  const live = f.decisions.filter((d) => {
+    const it = byId.get(d.itemId);
+    return it && isOpen(it);
+  });
+  const ready = live.filter((d) => {
+    const w = byId.get(d.itemId)?.work?.status;
+    return w === "waiting_ok" || w === "ready";
+  }).length;
+  if (!live.length) return null;
+  const first = f.plan?.find((b) => b.kind === "focus");
+  return {
+    kind: "brain",
+    title: `Günaydın Batuhan — ${live.length} karar${ready ? `, ${ready} taslak hazır` : ""}`,
+    body: `${f.headline ?? live[0].headline}${first ? ` İlk odak: ${first.start} ${first.title}.` : ""}`,
+    url: "/",
+    tag: `brain-morning-${istDay()}`,
+    level: "info",
+  };
 }
 
 // ------------------------------------------------------------------ çalıştır
@@ -467,10 +705,30 @@ export async function think(opts: { trigger: BrainRun["trigger"]; budgetMs?: num
     const keep = items.filter((x) => (x.status === "done" ? Date.now() - Date.parse(x.updatedAt) < 30 * 86400_000 : x.status === "dismissed" ? Date.now() - Date.parse(x.updatedAt) < 60 * 86400_000 : true));
     await store().setKV(ITEMS_KEY, keep);
 
-    if (left() > 9000 && (touched.length || !meta.focus || istDay(new Date(meta.focus.at)) !== istDay())) {
-      calls++;
-      meta.focus = (await prioritize(keep, system, usage, Math.max(6000, left() - 2000)).catch(() => null)) ?? meta.focus;
-    }
+    // gönderilenlerin yanıt takibi (yanıt geldiyse iş biter; gecikenler hatırlatma adayı)
+    const snap = await getSnapshot().catch(() => null);
+    const fu = checkFollowUps(keep, snap?.gmail.items ?? [], snap?.account?.email);
+    run.replied = fu.replied.map((x) => x.id);
+    // strateji: plan saatle değiştiği için 2 saatte bir de yenilenir
+    const stale = !meta.focus?.decisions || meta.focus.day !== istDay() || Date.now() - Date.parse(meta.focus.at) > 2 * 3600_000;
+    if (touched.length || fu.replied.length || fu.overdue.length || stale) {
+      const prev = meta.focus;
+      let out: StrategyOut | null = null;
+      let events: Parameters<typeof buildPlan>[1] = snap?.calendar.items ?? [];
+      if (left() > 9000) {
+        calls++;
+        const r = await strategize(keep, new Set(fu.overdue.map((x) => x.id)), system, usage, Math.max(8000, left() - 2000)).catch((e) => {
+          run.error = `Strateji: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}`;
+          return null;
+        });
+        out = r?.out ?? null;
+        if (r) events = r.events;
+      }
+      meta.focus = applyStrategy(keep, out, fu.overdue, events);
+      run.decisions = meta.focus.decisions?.length ?? 0;
+      await store().setKV(ITEMS_KEY, keep);
+      await pushNews(prev, meta.focus, keep, opts.trigger, meta).catch(() => null);
+    } else if (fu.replied.length) await store().setKV(ITEMS_KEY, keep);
     // birikmiş seçimlerden öğren (sabah cron'unda da çalışır)
     if (left() > 10000) await learn({ force: true, timeout: left() - 3000 }).catch(() => null);
   } catch (e) {
@@ -549,7 +807,7 @@ const PRIO = ["", "acil", "yüksek", "orta", "normal"];
 const itemDetail = (it: BrainItem) =>
   [KIND_LABEL[it.kind], it.sources[0] && `kaynak: ${it.sources[0].title}${it.sources[0].who ? ` (${it.sources[0].who})` : ""}`, it.person && `kişi: ${it.person}`, it.area, `P${it.priority}`].filter(Boolean).join(" · ");
 
-export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "status" | "steps" | "priority" | "due" | "title" | "todoId" | "agent">>, opts: { reason?: string } = {}) {
+export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "status" | "steps" | "priority" | "due" | "title" | "todoId" | "agent" | "snoozeUntil">>, opts: { reason?: string } = {}) {
   const items = await readItems();
   const it = items.find((x) => x.id === id);
   if (!it) return null;
@@ -569,6 +827,7 @@ export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "sta
   if (patch.due !== undefined && (patch.due || undefined) !== it.due) choices.push({ ...base, kind: "due", detail: `${base.detail} · ${it.due ?? "tarihsiz"} → ${patch.due || "tarihsiz"}` });
   if (patch.agent && patch.agent !== it.agent && agentById(patch.agent)) choices.push({ ...base, kind: "reassign", detail: `${base.detail} · ${agentById(it.agent)?.name} → ${agentById(patch.agent)?.name}` });
   if (patch.title?.trim() && patch.title.trim() !== it.title) choices.push({ ...base, kind: "rename", detail: `eski: ${it.title} → yeni: ${patch.title.trim()}` });
+  if (patch.snoozeUntil && patch.snoozeUntil !== it.snoozeUntil) choices.push({ ...base, kind: "snooze", detail: `${base.detail} · ${patch.snoozeUntil} tarihine` });
 
   if (patch.status) it.status = patch.status;
   if (patch.steps) it.steps = patch.steps.slice(0, 30).map((s) => ({ title: String(s.title).slice(0, 300), done: !!s.done }));
@@ -577,6 +836,9 @@ export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "sta
   if (patch.title?.trim()) it.title = patch.title.trim().slice(0, 200);
   if (patch.todoId) it.todoId = patch.todoId;
   if (patch.agent && agentById(patch.agent)) it.agent = patch.agent;
+  if (patch.snoozeUntil !== undefined) it.snoozeUntil = /^\d{4}-\d{2}-\d{2}$/.test(patch.snoozeUntil ?? "") ? patch.snoozeUntil : undefined;
+  // öneri kabul edildiyse önden hazırlık işareti kalkar
+  if (patch.status && patch.status !== "inbox") it.prep = undefined;
   it.updatedAt = new Date().toISOString();
   await store().setKV(ITEMS_KEY, items);
   const pending = choices.length ? await recordChoices(choices).catch(() => 0) : 0;
@@ -799,7 +1061,7 @@ async function teamWork(it: BrainItem, system: Anthropic.TextBlockParam[], ctx: 
   return final;
 }
 
-export async function work(id: string, opts: { feedback?: string; budgetMs?: number; team?: boolean; queued?: boolean } = {}): Promise<BrainItem | null> {
+export async function work(id: string, opts: { feedback?: string; budgetMs?: number; team?: boolean; queued?: boolean; followup?: boolean } = {}): Promise<BrainItem | null> {
   if (!claudeConfigured()) throw new Error("ANTHROPIC_API_KEY tanımlı değil");
   const t0 = Date.now();
   const deadline = t0 + (opts.budgetMs ?? 56000);
@@ -809,8 +1071,11 @@ export async function work(id: string, opts: { feedback?: string; budgetMs?: num
   // sıradaki iş: başka biri (sekme ya da arka plan) başlattıysa ikinci kez çalıştırma
   if (opts.queued && it.work?.status !== "queued") return it;
   const prev = it.work;
-  it.work = { status: "running", output: prev?.output ?? "", used: [], revisions: prev?.revisions ?? [], at: new Date().toISOString() };
-  if (it.status === "inbox" || it.status === "todo") it.status = "doing";
+  const followup = (opts.followup || prev?.purpose === "followup") && !opts.feedback && !!it.followUp;
+  it.work = { status: "running", output: prev?.output ?? "", used: [], revisions: prev?.revisions ?? [], at: new Date().toISOString(), purpose: followup ? "followup" : undefined };
+  // önden hazırlık: öneri senin onayında kalır, yalnızca teslimat hazırlanır
+  const prepOnly = it.status === "inbox" && !!opts.queued && !!it.prep;
+  if (!prepOnly && (it.status === "inbox" || it.status === "todo")) it.status = "doing";
   await store().setKV(ITEMS_KEY, items);
 
   const usage: Usage = { input: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, output: 0 };
@@ -832,7 +1097,11 @@ export async function work(id: string, opts: { feedback?: string; budgetMs?: num
       { type: "text", text: memoryPrompt(memory), cache_control: { type: "ephemeral", ttl: "1h" } },
     ];
     const ctx = await itemContext(it);
-    const revise = opts.feedback && prev?.output ? `\nÖNCEKİ TESLİMATIN:\n${prev.output}\n\nBATUHAN'IN DÜZELTMESİ: "${opts.feedback}" — teslimatı buna göre yeniden yaz.` : "";
+    const revise = opts.feedback && prev?.output
+      ? `\nÖNCEKİ TESLİMATIN:\n${prev.output}\n\nBATUHAN'IN DÜZELTMESİ: "${opts.feedback}" — teslimatı buna göre yeniden yaz.`
+      : followup && it.followUp
+        ? `\nTAKİP: ${trTime(it.followUp.since)} tarihinde ${it.followUp.to.join(", ")} kişisine gönderilen e-postaya ${daysSince(it.followUp.since)} gündür yanıt gelmedi${it.followUp.nudges ? ` (daha önce ${it.followUp.nudges} kez hatırlatıldı)` : ""}.\nGÖNDERİLEN:\n${prev?.output ?? "(metin yok)"}\n\nŞimdi aynı kişiye, aynı yazışmaya yanıt olarak kısa ve nazik bir hatırlatma e-postası yaz (2-4 cümle; neyi, hangi tarihe kadar beklediğini net söyle; suçlayıcı olma). En sona GİDECEK satırını ekle.`
+        : "";
     // düzeltme ekibi yeniden çalıştırmaz: lider aynı teslimatı düzeltir
     const text =
       opts.team && !revise
@@ -862,7 +1131,8 @@ export async function work(id: string, opts: { feedback?: string; budgetMs?: num
     const cur = items.find((x) => x.id === id);
     if (cur) {
       cur.work = w;
-      if (w.status === "waiting_ok") cur.status = "waiting";
+      // önden hazırlanan öneri, onaylanana dek "öneri"de kalır
+      if (w.status === "waiting_ok" && !(cur.status === "inbox" && cur.prep)) cur.status = "waiting";
       cur.updatedAt = new Date().toISOString();
       await store().setKV(ITEMS_KEY, items);
     }
@@ -877,7 +1147,7 @@ export async function work(id: string, opts: { feedback?: string; budgetMs?: num
       cost: w.cost ?? null,
       ms: w.ms ?? 0,
       error: w.error,
-      label: `${agentById(it.agent)?.emoji ?? "🧠"} ${opts.team ? "Ekip işi" : "İş"}`,
+      label: `${agentById(it.agent)?.emoji ?? "🧠"} ${opts.team ? "Ekip işi" : followup ? "Hatırlatma" : prepOnly ? "Önden hazırlık" : "İş"}`,
     });
   }
   return (await readItems()).find((x) => x.id === id) ?? null;
@@ -1032,10 +1302,26 @@ export async function approve(id: string, opts: { mail?: boolean } = {}) {
     if (!it?.work) return null;
     it.work.draft = draft;
   }
+  const wasInbox = it.status === "inbox";
+  const nowIso = new Date().toISOString();
   it.work.status = "approved";
-  it.status = "done";
-  it.updatedAt = new Date().toISOString();
+  if (it.work.outbound) {
+    // gönderildi (ya da Gmail'de taslak): yanıt takibe alınır; 2 iş günü içinde yanıt gelmezse hatırlatma hazırlanır
+    const snap = await getSnapshot().catch(() => null);
+    const src = it.sources.find((s) => s.ref?.source === "gmail");
+    const thread = it.work.draft?.threadId ?? (src ? snap?.gmail.items.find((m) => m.id === src.ref!.id)?.threadId : undefined) ?? it.followUp?.threadId;
+    const to = it.work.draft?.to ?? it.followUp?.to ?? (src?.who ? [src.who.match(/<([^>]+)>/)?.[1] ?? src.who] : it.person ? [it.person] : []);
+    const nudge = it.work.purpose === "followup";
+    it.followUp = { to, threadId: thread, since: nowIso, due: addWorkdays(istDay(), 2), nudges: nudge ? (it.followUp?.nudges ?? 0) + 1 : 0 };
+    it.status = "waiting";
+  } else it.status = "done";
+  it.prep = undefined;
+  it.updatedAt = nowIso;
   await store().setKV(ITEMS_KEY, items);
-  await recordChoices([{ where: "beyin", kind: "approve", agent: it.agent, itemKind: it.kind, auto: !!it.auto || undefined, title: it.title, detail: `${itemDetail(it)}${it.work.outbound ? ` · gidecek: ${it.work.outbound}` : ""}${it.work.draft ? ` · Gmail taslağı: ${it.work.draft.to.join(", ")}` : ""}` }]).catch(() => 0);
+  const base = { where: "beyin" as const, agent: it.agent, itemKind: it.kind, auto: !!it.auto || undefined, title: it.title };
+  await recordChoices([
+    ...(wasInbox ? [{ ...base, kind: "accept" as const, detail: itemDetail(it) }] : []),
+    { ...base, kind: "approve", detail: `${itemDetail(it)}${it.work.outbound ? ` · gidecek: ${it.work.outbound}` : ""}${it.work.draft ? ` · Gmail taslağı: ${it.work.draft.to.join(", ")}` : ""}` },
+  ]).catch(() => 0);
   return it;
 }
