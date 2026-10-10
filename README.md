@@ -66,10 +66,16 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   SDK yeniden dener; yanıt ortada koparsa yarım metin silinip tur yeniden istenir.
   Kurulum: Vercel'e `ANTHROPIC_API_KEY` (console.anthropic.com → Settings → API keys) ekleyin; model `ANTHROPIC_MODEL`
   ile değiştirilebilir (varsayılan `claude-haiku-5-5`; ör. `claude-sonnet-5-5`, `claude-opus-5-5`).
-- **Push bildirimleri:** Sağ üstteki zil → "Bildirimleri aç". Her sabah 09:00'da (Vercel Cron) aktif dönem için:
+- **Push bildirimleri:** Sağ üstteki zil → "Bildirimleri aç". Her sabah 08:00'de (Vercel Cron) aktif dönem için:
   yaklaşan/geçen rapor alanı terminleri, termini gelen/geciken aksiyonlar, Cuma 12:00 toplantı özeti ve ay başı
   hatırlatması. Zil menüsü aynı hatırlatmaları uygulama içinde de gösterir; hangi bildirimlerin geleceği oradan seçilir.
   iPhone/iPad'de önce Safari → Paylaş → **Ana Ekrana Ekle** (iOS 16.4+), sonra uygulamayı oradan açıp bildirimi aç.
+  Zil menüsündeki **Kayıtlı cihazlar** her cihazın son gönderim sonucunu gösterir (✓ ya da push servisinin hata
+  nedeni). Uygulama her açılışta bu cihazın aboneliğini sunucuyla eşitler; abonelik yenilenirse servis çalışanı yenisini
+  kaydeder. Bildirimler yüksek öncelikle gider (telefonlar normal öncelikli push'u uyku modunda bekletebiliyor).
+  Telefona gelmiyorsa: zil → "Test gönder"; hata yazıyorsa nedeni oradadır (ör. `BadJwtToken` → `VAPID_SUBJECT`),
+  "Gönderildi" diyorsa sorun telefonun bildirim ayarındadır (iPhone: Ayarlar → Bildirimler → LabIQ; Odak/Rahatsız
+  Etmeyin kapalı olmalı).
 - **Beyin (Görevler sayfası):** İşini anlayan merkez ve ona bağlı yan ajanlar — asıl çalışma ekibi. Tablet/masaüstünde
   **Beyin ofisi** (3B, Agents Office düzeni): ortada not ağıyla Beyin, çevresinde her ajan bir departman pod'u; masalarda
   lider (★) ve alt görevler oturur, ajan çalışırken çalışanlar ve ekranlar hareketlenir. Pod kartlarında açık iş, iki
@@ -184,9 +190,11 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
 3. İsteğe bağlı: **Settings → Environment Variables** altında `APP_PASSWORD` tanımla — uygulama şifreyle korunur.
 4. Push bildirimleri için ortam değişkenleri:
    - `npm run vapid` çalıştır → çıkan anahtarları `VAPID_PUBLIC_KEY` ve `VAPID_PRIVATE_KEY` olarak ekle
-   - `VAPID_SUBJECT=mailto:eposta@adresin`
+   - `VAPID_SUBJECT=mailto:eposta@adresin` (boşluksuz, `<>` olmadan, gerçek adres). Apple (iPhone/iPad) yer tutucu ya da
+     bozuk değeri `403 BadJwtToken` ile reddeder; masaüstü tarayıcılar umursamaz. Uygulama yazım hatalarını düzeltir,
+     geçersizse sitenin adresini (`https://…vercel.app`) kullanır.
    - `CRON_SECRET` = rastgele uzun bir değer (Vercel Cron bunu otomatik `Authorization` başlığıyla gönderir)
-   - Zamanlama `vercel.json` içinde: `0 6 * * *` (UTC) = her gün 09:00 İstanbul
+   - Zamanlama `vercel.json` içinde: `0 5 * * *` (UTC) = her gün 08:00 İstanbul (`30 4 * * *` = 07:30 sabah düşünmesi)
 5. Google Workspace bağlantısı (bir kerelik):
    - console.cloud.google.com → şirket hesabıyla yeni proje
    - **APIs & Services → Library**: Gmail API, Google Calendar API, Google Chat API, Google Meet REST API, People API, Google Drive API → Enable

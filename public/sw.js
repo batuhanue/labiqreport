@@ -22,6 +22,23 @@ self.addEventListener("push", (event) => {
   );
 });
 
+// Tarayıcı aboneliği yenilerse (anahtar/uç nokta değişimi) sunucuya yenisini bildir; yoksa bildirimler sessizce kesilir
+self.addEventListener("pushsubscriptionchange", (event) => {
+  const old = event.oldSubscription;
+  event.waitUntil(
+    (async () => {
+      const key = old && old.options && old.options.applicationServerKey;
+      const sub = event.newSubscription || (key ? await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }) : null);
+      if (!sub) return;
+      await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: sub.toJSON(), oldEndpoint: old ? old.endpoint : undefined }),
+      });
+    })().catch(() => {}),
+  );
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin).href;

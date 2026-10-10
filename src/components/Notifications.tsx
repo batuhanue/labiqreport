@@ -14,10 +14,23 @@ interface PushInfo {
   configured: boolean;
   publicKey: string;
   prefs: NotifyPrefs;
-  devices: { device: string; createdAt: string; endpointTail: string }[];
+  devices: { device: string; createdAt: string; endpointTail: string; service: string; lastOk?: string; lastError?: string; lastErrorAt?: string }[];
 }
 
 type Support = "checking" | "ok" | "unsupported" | "ios-install";
+
+/** iPadOS masaüstü kipinde kendini Mac olarak tanıtır; dokunmatikse iPad'dir */
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || !!(navigator as { standalone?: boolean }).standalone;
+
+/** İzin reddedildiyse nereden açılacağı */
+function deniedHint() {
+  if (isIOS()) return "iPhone Ayarlar → Bildirimler → LabIQ → Bildirimlere İzin Ver'i aç, sonra uygulamayı kapatıp yeniden aç.";
+  if (/Android/.test(navigator.userAgent)) return "Adres çubuğundaki kilit simgesi → İzinler → Bildirimler → İzin ver (uygulama olarak yüklüyse: Ayarlar → Uygulamalar → LabIQ → Bildirimler).";
+  return "Tarayıcının site ayarlarından bu siteye bildirim izni ver.";
+}
+
+const fmtAt = (iso?: string) => (iso ? new Date(iso).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
 
 const b64ToBytes = (b64: string) => {
   const pad = "=".repeat((4 - (b64.length % 4)) % 4);
@@ -27,7 +40,7 @@ const b64ToBytes = (b64: string) => {
 
 function deviceName() {
   const ua = navigator.userAgent;
-  const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "Cihaz";
+  const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? "iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "Cihaz";
   const br = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "";
   return [os, br].filter(Boolean).join(" · ");
 }
@@ -59,6 +72,7 @@ export function NotificationBell() {
   const [support, setSupport] = useState<Support>("checking");
   const [sub, setSub] = useState<PushSubscription | null>(null);
   const [busy, setBusy] = useState(false);
+  const [perm, setPerm] = useState<NotificationPermission | null>(null);
 
   const prefs = info?.prefs ?? DEFAULT_PREFS;
   const { store: todoStore } = useTodos();
@@ -73,45 +87,64 @@ export function NotificationBell() {
     } catch {}
   }, []);
 
+  /** Bu cihazın aboneliğini sunucuya (yeniden) yaz: sunucu kaydı silinmiş/yenilenmişse bildirimler sessizce kesilmesin */
+  const syncSub = useCallback(async (s: PushSubscription) => {
+    const r = await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscription: s.toJSON(), device: deviceName() }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+  }, []);
+
   useEffect(() => {
-    load();
     (async () => {
-      const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
-      const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as { standalone?: boolean }).standalone;
       if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-        setSupport(ios && !standalone ? "ios-install" : "unsupported");
+        setSupport(isIOS() && !isStandalone() ? "ios-install" : "unsupported");
+        load();
         return;
       }
+      setPerm(Notification.permission);
       try {
         const reg = await navigator.serviceWorker.register("/sw.js");
-        setSub(await reg.pushManager.getSubscription());
+        reg.update().catch(() => {});
+        const s = await reg.pushManager.getSubscription();
+        setSub(s);
         setSupport("ok");
+        if (s && Notification.permission === "granted") await syncSub(s).catch(() => {});
       } catch {
         setSupport("unsupported");
       }
+      load();
     })();
-  }, [load]);
+  }, [load, syncSub]);
 
   const enable = async () => {
     if (!info?.configured) return toast("Sunucuda push anahtarları tanımlı değil");
     setBusy(true);
     try {
-      const perm = await Notification.requestPermission();
-      if (perm !== "granted") {
-        toast("Bildirim izni verilmedi");
+      const p = await Notification.requestPermission();
+      setPerm(p);
+      if (p !== "granted") {
+        toast(p === "denied" ? `Bildirim izni kapalı. ${deniedHint()}` : "Bildirim izni verilmedi");
         return;
       }
       const reg = await navigator.serviceWorker.ready;
-      const s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(info.publicKey) });
-      const r = await fetch("/api/push/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscription: s.toJSON(), device: deviceName() }),
-      });
-      if (!r.ok) throw new Error((await r.json()).error);
+      const key = b64ToBytes(info.publicKey);
+      let s: PushSubscription;
+      try {
+        s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      } catch (e) {
+        // eski (başka anahtarla yapılmış) abonelik varsa kaldırıp yeniden dene
+        const old = await reg.pushManager.getSubscription();
+        if (!old) throw e;
+        await old.unsubscribe();
+        s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      }
+      await syncSub(s);
       setSub(s);
-      await fetch("/api/push/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: s.endpoint }) });
-      toast("Bildirimler açıldı");
+      const t = await (await fetch("/api/push/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: s.endpoint }) })).json().catch(() => ({}));
+      toast(t.result?.sent ? "Bildirimler açıldı · test bildirimi gönderildi" : `Abone olundu ama test gönderilemedi: ${t.result?.failed?.[0] ?? t.error ?? "bilinmeyen hata"}`);
       load();
     } catch (e) {
       toast(`Açılamadı: ${e instanceof Error ? e.message : e}`);
@@ -138,6 +171,7 @@ export function NotificationBell() {
     if (!sub) return;
     setBusy(true);
     try {
+      await syncSub(sub);
       const r = await fetch("/api/push/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -146,11 +180,13 @@ export function NotificationBell() {
       const body = await r.json();
       if (!r.ok) throw new Error(body.error);
       if (mode === "today" && !body.messages?.length) toast("Bugün için hatırlatma yok");
-      else toast("Gönderildi");
+      else if (!body.result?.sent) throw new Error(body.result?.failed?.[0]?.replace(/^[^:]+:\s*/, "") ?? "push servisi kabul etmedi");
+      else toast("Gönderildi · birkaç saniye içinde gelmeli");
     } catch (e) {
       toast(`Gönderilemedi: ${e instanceof Error ? e.message : e}`);
     } finally {
       setBusy(false);
+      load();
     }
   };
 
@@ -215,6 +251,11 @@ export function NotificationBell() {
             </div>
           ) : support === "unsupported" ? (
             <div className="text-sm text-ink-2">Bu tarayıcı push bildirimlerini desteklemiyor.</div>
+          ) : perm === "denied" ? (
+            <div className="text-sm">
+              <div className="font-extrabold">🔕 Bildirim izni kapalı</div>
+              <p className="mt-1 text-ink-2">{deniedHint()}</p>
+            </div>
           ) : !info?.configured ? (
             <div className="text-sm text-ink-2">
               <b>Sunucu ayarı eksik:</b> Vercel ortam değişkenlerine <code>VAPID_PUBLIC_KEY</code>, <code>VAPID_PRIVATE_KEY</code> ve <code>CRON_SECRET</code> eklenmeli (README&apos;de anlatıldı).
@@ -227,7 +268,7 @@ export function NotificationBell() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="font-extrabold">Açık</div>
-                  <div className="text-xs text-ink-3">Her sabah 09:00&apos;da hatırlatmalar gelir · {info.devices.length} cihaz kayıtlı</div>
+                  <div className="text-xs text-ink-3">Her sabah 08:00&apos;de hatırlatmalar gelir · {info.devices.length} cihaz kayıtlı</div>
                 </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2">
@@ -244,6 +285,7 @@ export function NotificationBell() {
               </button>
             </>
           )}
+          {support !== "checking" && info?.configured && info.devices.length > 0 && <Devices devices={info.devices} mine={sub?.endpoint} />}
         </div>
 
         {/* Görünüm (telefonda tema düğmesi burada) */}
@@ -271,6 +313,33 @@ export function NotificationBell() {
         </div>
       </Sheet>
     </>
+  );
+}
+
+/** Kayıtlı cihazlar ve her birinin son gönderim sonucu (hangi telefonun neden almadığı buradan görünür) */
+function Devices({ devices, mine }: { devices: PushInfo["devices"]; mine?: string }) {
+  return (
+    <div className="mt-4 border-t border-black/5 pt-3 dark:border-white/10">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-ink-3">Kayıtlı cihazlar</div>
+      <div className="mt-1.5 space-y-1.5">
+        {devices.map((d) => {
+          const err = d.lastError && (!d.lastOk || (d.lastErrorAt ?? "") > d.lastOk);
+          return (
+            <div key={d.endpointTail} className="flex items-start gap-2 text-xs">
+              <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${err ? "bg-fail" : d.lastOk ? "bg-ok" : "bg-ink-3/40"}`} />
+              <div className="min-w-0 flex-1">
+                <div className="font-bold">
+                  {d.device}
+                  {mine?.endsWith(d.endpointTail) ? <span className="font-semibold text-ink-3"> · bu cihaz</span> : null}
+                  <span className="font-semibold text-ink-3"> · {d.service}</span>
+                </div>
+                <div className={err ? "text-fail" : "text-ink-3"}>{err ? `Son gönderim başarısız (${fmtAt(d.lastErrorAt)}): ${d.lastError}` : d.lastOk ? `Son gönderim ${fmtAt(d.lastOk)} ✓` : "Henüz gönderim yok"}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

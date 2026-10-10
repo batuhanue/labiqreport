@@ -31,6 +31,11 @@ export interface StoredSub {
   keys: { p256dh: string; auth: string };
   device: string;
   createdAt: string;
+  /** son başarılı gönderim */
+  lastOk?: string;
+  /** son hata (servisin cevabı) */
+  lastError?: string;
+  lastErrorAt?: string;
 }
 
 // ---------------------------------------------------------------- Postgres
