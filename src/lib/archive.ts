@@ -233,11 +233,87 @@ export async function stats(): Promise<ArchiveStats> {
   return out;
 }
 
+/** Google arşivini siler; yüklenen şirket verisi (kurum) kalır. */
 export async function clearArchive() {
-  if (!url) return writeAll([]);
+  if (!url) return writeAll((await readAll()).filter((x) => x.source === "kurum"));
   const sql = pg();
   await ready;
-  await sql`DELETE FROM google_archive`;
+  await sql`DELETE FROM google_archive WHERE source <> 'kurum'`;
+}
+
+/** Kaynaktaki kayıtları siler (kimlik öneki ile; ör. bir yüklenen dosyanın bütün parçaları). */
+export async function removeByPrefix(source: ArchiveSource, prefix: string) {
+  if (!url) return writeAll((await readAll()).filter((x) => !(x.source === source && x.id.startsWith(prefix))));
+  const sql = pg();
+  await ready;
+  await sql.query(`DELETE FROM google_archive WHERE source = $1 AND starts_with(id, $2)`, [source, prefix]);
+}
+
+// ------------------------------------------------------------------ analiz için sorgular (kişi haritası, bağlam, eğitim)
+export type LightRow = Omit<ArchiveItem, "body"> & { body: string };
+
+/**
+ * Tarih aralığındaki kayıtlar, gövde kırpılmış (`bodyChars`, 0 = gövdesiz). İstatistik ve eğitim taraması için;
+ * yeniden eskiye.
+ */
+export async function rowsIn(sources: ArchiveSource[], after: string, before?: string, opts: { limit?: number; bodyChars?: number } = {}): Promise<LightRow[]> {
+  const limit = Math.min(opts.limit ?? 5000, 30000);
+  const n = Math.max(0, opts.bodyChars ?? 0);
+  if (!url) {
+    return (await readAll())
+      .filter((x) => sources.includes(x.source) && x.ts >= after && (!before || x.ts < before))
+      .sort((a, b) => b.ts.localeCompare(a.ts))
+      .slice(0, limit)
+      .map((x) => ({ ...x, body: x.body.slice(0, n) }));
+  }
+  const sql = pg();
+  await ready;
+  const rows = (await sql.query(
+    `SELECT source, id, ts, title, who, left(body, ${n}) AS body, link, meta FROM google_archive
+     WHERE source = ANY($1::text[]) AND ts >= $2 AND ($3::timestamptz IS NULL OR ts < $3) ORDER BY ts DESC LIMIT ${limit}`,
+    [sources, after, before ?? null],
+  )) as LightRow[];
+  return rows.map((x) => ({ ...x, ts: new Date(x.ts).toISOString() }));
+}
+
+/** Bir e-posta yazışmasının (thread) iletileri, eskiden yeniye. */
+export async function mailThread(threadId: string, limit = 12, bodyChars = 700): Promise<LightRow[]> {
+  if (!url) {
+    return (await readAll())
+      .filter((x) => x.source === "gmail" && x.meta?.threadId === threadId)
+      .sort((a, b) => a.ts.localeCompare(b.ts))
+      .slice(-limit)
+      .map((x) => ({ ...x, body: x.body.slice(0, bodyChars) }));
+  }
+  const sql = pg();
+  await ready;
+  const rows = (await sql.query(
+    `SELECT * FROM (SELECT source, id, ts, title, who, left(body, ${bodyChars}) AS body, link, meta FROM google_archive
+     WHERE source = 'gmail' AND meta->>'threadId' = $1 ORDER BY ts DESC LIMIT ${Math.min(limit, 50)}) t ORDER BY ts`,
+    [threadId],
+  )) as LightRow[];
+  return rows.map((x) => ({ ...x, ts: new Date(x.ts).toISOString() }));
+}
+
+/** Bir adresin geçtiği e-postalar (gönderen ya da alıcı olarak), gövdesiz; yeniden eskiye. */
+export async function mailWith(email: string, after: string, limit = 600): Promise<LightRow[]> {
+  const e = email.trim().toLowerCase();
+  if (!e.includes("@")) return [];
+  if (!url) {
+    return (await readAll())
+      .filter((x) => x.source === "gmail" && x.ts >= after && x.who.toLowerCase().includes(e))
+      .sort((a, b) => b.ts.localeCompare(a.ts))
+      .slice(0, limit)
+      .map((x) => ({ ...x, body: "" }));
+  }
+  const sql = pg();
+  await ready;
+  const rows = (await sql.query(
+    `SELECT source, id, ts, title, who, '' AS body, link, meta FROM google_archive
+     WHERE source = 'gmail' AND ts >= $2 AND position($1 in lower(who)) > 0 ORDER BY ts DESC LIMIT ${Math.min(limit, 2000)}`,
+    [e, after],
+  )) as LightRow[];
+  return rows.map((x) => ({ ...x, ts: new Date(x.ts).toISOString() }));
 }
 
 // ------------------------------------------------------------------ listeleme (aylık / sohbet bazlı)

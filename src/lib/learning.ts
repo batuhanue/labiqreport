@@ -6,6 +6,7 @@ import { brainSystem } from "./brain-prompt";
 import { agentById, CHOICE_LABEL, type AgentId, type Choice, type LearningState, type LearnLog, type Lesson } from "./brain-types";
 import { ASSISTANT_MODEL, claude, claudeConfigured, costUsd, recordUsage } from "./claude";
 import { store } from "./db";
+import type { ImportanceStats } from "./training-types";
 
 /*
  * Seçimlerden öğrenme:
@@ -175,4 +176,34 @@ Kurallar:
     });
   }
   return error ? null : lessons;
+}
+
+/**
+ * Önem isabeti: beynin açtığı öneriler Batuhan'ın gözünde ne kadar doğru?
+ * Onay/görevlere alma = isabet; "Önemsiz" / "Benim işim değil" = yanlış alarm; kaçırılanlar ayrıca sayılır.
+ */
+export async function importanceStats(days = 30): Promise<ImportanceStats> {
+  const list = await readChoices();
+  const now = Date.now();
+  const win = (from: number, to: number) => list.filter((c) => c.where === "beyin" && Date.parse(c.at) >= from && Date.parse(c.at) < to);
+  const calc = (xs: Choice[]) => {
+    const acc = new Set(xs.filter((c) => c.kind === "accept" || c.kind === "to_todo").map((c) => c.title));
+    const rej = xs.filter((c) => c.kind === "reject");
+    const noise = rej.filter((c) => /önemsiz|gürültü/i.test(c.reason ?? "")).length;
+    const notMine = rej.filter((c) => /benim işim değil/i.test(c.reason ?? "")).length;
+    const timing = rej.filter((c) => /zaten yapıldı|şimdi değil/i.test(c.reason ?? "")).length;
+    const wrong = rej.length - timing;
+    const byAgent: ImportanceStats["byAgent"] = {};
+    for (const c of xs) {
+      if (!c.agent || (c.kind !== "accept" && c.kind !== "to_todo" && c.kind !== "reject")) continue;
+      const a = (byAgent[c.agent] ??= { accepted: 0, rejected: 0 });
+      if (c.kind === "reject") a.rejected++;
+      else a.accepted++;
+    }
+    return { accepted: acc.size, noise, notMine, timing, wrong, missed: xs.filter((c) => c.kind === "missed").length, reprioritized: xs.filter((c) => c.kind === "priority").length, byAgent };
+  };
+  const cur = calc(win(now - days * 86400_000, now + 1));
+  const prev = calc(win(now - 2 * days * 86400_000, now - days * 86400_000));
+  const pct = (x: ReturnType<typeof calc>) => (x.accepted + x.wrong + x.missed >= 5 ? Math.round((x.accepted / (x.accepted + x.wrong + x.missed)) * 100) : null);
+  return { days, accepted: cur.accepted, noise: cur.noise, notMine: cur.notMine, timing: cur.timing, missed: cur.missed, reprioritized: cur.reprioritized, precision: pct(cur), prevPrecision: pct(prev), byAgent: cur.byAgent };
 }

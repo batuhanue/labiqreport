@@ -9,6 +9,8 @@ import { store } from "./db";
 import { getSnapshot, status as googleStatus } from "./google";
 import { COMPOSE_SCOPE, type ArchiveStats } from "./google-types";
 import { learningState } from "./learning";
+import { readPeople } from "./people";
+import { readTraining, trainingDue } from "./training";
 import type { AgentHealth, Kpi, OrgAgent, OrgDept, OrgProcess, OrgState } from "./org-types";
 import { areaDeadline, areaProgress, deadlineInfo, normalizePeriod, overallProgress, periodLabel } from "./period";
 import type { TodoStore } from "./todo";
@@ -64,6 +66,7 @@ export async function buildOrg(brain: BrainRaw): Promise<OrgState> {
     store().getState(),
     store().listPeriods().catch(() => []),
   ]);
+  const [training, people] = await Promise.all([readTraining().catch(() => null), readPeople().catch(() => ({ at: "", people: [] }))]);
   const raw = st.activePeriod ? await store().getPeriod(st.activePeriod).catch(() => null) : null;
   const period: PeriodData | null = raw ? normalizePeriod(raw) : null;
   const prevRaw = period ? await store().getPeriod(prevPeriod(period.period)).catch(() => null) : null;
@@ -344,6 +347,27 @@ export async function buildOrg(brain: BrainRaw): Promise<OrgState> {
         agent({ id: "planlayici", name: "Planlayıcı", role: "Boş saatlere odak blokları yerleştirir", kind: "analitik", health: focusBlocks.length ? "ok" : "idle", status: focusBlocks.length ? `${focusBlocks.length} odak bloğu planladı` : "bugün için plan yok", kpis: [{ label: "Odak bloğu", value: String(focusBlocks.length) }, { label: "Toplantı", value: String((brain.focus?.plan ?? []).filter((b) => b.kind === "meeting").length) }] }),
         agent({ id: "risk", name: "Risk analisti", role: "Hiçbir işin karşılamadığı riskleri (termin, çakışma, davet) iş olarak açar", kind: "analitik", health: areaAgents.some((x) => x.alert?.includes("geçti")) ? "alert" : "ok", status: `${risks.length} risk işi açık`, alert: areaAgents.find((x) => x.alert?.includes("geçti"))?.alert, kpis: [{ label: "Açık risk", value: String(risks.length) }, { label: "Riskli alan", value: String(areaAgents.filter((x) => x.health === "alert").length) }] }),
         agent({ id: "ogrenme", name: "Öğrenme ajanı", role: "Seçimlerinden kalıcı tercihleri çıkarıp belleğe yazar", kind: "llm", health: learning.pending > 12 ? "alert" : learning.total ? "ok" : "idle", status: `${lessons} tercih öğrendi`, alert: learning.pending > 12 ? `${learning.pending} seçim öğrenilmeyi bekliyor` : undefined, lastAt: learning.log[0]?.at, kpis: [{ label: "Seçim", value: String(learning.total) }, { label: "Öğrenilen", value: String(lessons) }, { label: "Sırada", value: String(learning.pending) }] }),
+        (() => {
+          const read = training ? Object.keys(training.months).length : 0;
+          const due = !!training && trainingDue(training, people, arch.total > 0);
+          const open = training?.questions.filter((q) => !q.answer && !q.skipped).length ?? 0;
+          return agent({
+            id: "egitmen",
+            name: "Eğitmen",
+            role: "Geçmişini ay ay okuyup iş bilgisini (is-bilgisi.md) ve kişi haritasını yazar; emin olamadığını sana sorar",
+            kind: "llm",
+            health: training?.running && training.running > Date.now() ? "working" : training?.lastError ? "error" : !training?.profileAt ? "idle" : due || open ? "alert" : "ok",
+            status: training?.profileAt ? `${read} ay okudu · ${people.people.length} kişi tanıyor` : arch.total ? "henüz eğitilmedi" : "arşiv bekleniyor",
+            alert: training?.lastError ? `Son eğitim hatası: ${training.lastError}` : open ? `${open} sorusu cevap bekliyor` : due && training?.profileAt ? "güncelleme zamanı geldi" : undefined,
+            lastAt: training?.profileAt,
+            href: "/gorevler?gorunum=egitim",
+            kpis: [
+              { label: "Okunan ay", value: String(read) },
+              { label: "Kişi", value: String(people.people.length) },
+              { label: "Açık soru", value: String(open) },
+            ],
+          });
+        })(),
         agent({ id: "guven", name: "Güven denetçisi", role: "Ajanların onay oranını ölçer, yetki önerir ya da düşürür", kind: "analitik", health: trustDown ? "alert" : "ok", status: `${trustUp} ajan kendi başına çalışıyor`, alert: trustDown ? `${trustDown} ajanın yetkisi düşürüldü` : undefined, kpis: [{ label: "Yetkili ajan", value: String(trustUp) }, { label: "Yükseltme önerisi", value: String(trustSuggest) }] }),
       ],
       health: 0,

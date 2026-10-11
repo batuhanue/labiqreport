@@ -112,3 +112,33 @@ export async function recordUsage(e: UsageEntry) {
 }
 
 export const getUsage = async () => (await store().getKV<UsageLog>(USAGE_KV)) ?? { days: {}, recent: [] };
+
+// ------------------------------------------------------------------ ortak sayaç (beyin dışı işler: kişi haritası, eğitim, şirket verisi)
+export type Usage = { input: number; cacheRead: number; cacheWrite: number; cacheWrite1h: number; output: number };
+export const newUsage = (): Usage => ({ input: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, output: 0 });
+export function addUsage(u: Usage, m: Anthropic.Message) {
+  u.input += m.usage.input_tokens ?? 0;
+  u.cacheRead += m.usage.cache_read_input_tokens ?? 0;
+  u.cacheWrite += m.usage.cache_creation_input_tokens ?? 0;
+  u.cacheWrite1h += m.usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+  u.output += m.usage.output_tokens ?? 0;
+}
+/** Kullanım günlüğüne yazar (çağrı yoksa yazmaz); tahmini maliyeti döndürür. */
+export async function logUsage(label: string, u: Usage, o: { t0: number; rounds: number; error?: string }) {
+  const cost = costUsd(ASSISTANT_MODEL, u);
+  if (o.rounds)
+    await recordUsage({
+      at: new Date().toISOString(),
+      model: ASSISTANT_MODEL,
+      rounds: o.rounds,
+      prompt: u.input + u.cacheRead + u.cacheWrite,
+      cached: u.cacheRead,
+      written: u.cacheWrite,
+      output: u.output,
+      cost,
+      ms: Date.now() - o.t0,
+      error: o.error,
+      label,
+    });
+  return cost ?? 0;
+}

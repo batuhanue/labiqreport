@@ -40,6 +40,8 @@ export interface Signal {
   link?: string;
   /** arşivdeki kayıt (uygulama içinde açmak için) */
   ref?: { source: string; id: string };
+  /** önem değerlendirmesi için bağlam ipuçları (kaydedilmez) */
+  hint?: { email?: string; name?: string; threadId?: string; space?: string; dm?: boolean; to?: string; cc?: string };
 }
 
 export type ItemKind = "gorev" | "yanit" | "toplanti" | "takip" | "bilgi";
@@ -234,6 +236,8 @@ export interface BrainRun {
   replied?: string[];
   /** ajanların güven seviyesiyle kendisi onayladığı işler */
   autoIds?: string[];
+  /** arşivden bağlamla zenginleştirilen sinyal sayısı */
+  enriched?: number;
 }
 
 export interface BrainState {
@@ -311,7 +315,8 @@ export type ChoiceKind =
   | "todo_focus"
   | "suggestion_accept"
   | "suggestion_dismiss"
-  | "snooze";
+  | "snooze"
+  | "missed";
 
 export const CHOICE_LABEL: Record<ChoiceKind, string> = {
   accept: "öneriyi onayladı",
@@ -332,6 +337,7 @@ export const CHOICE_LABEL: Record<ChoiceKind, string> = {
   suggestion_accept: "asistan önerisini uyguladı",
   suggestion_dismiss: "asistan önerisini gizledi",
   snooze: "kararı sonraya erteledi",
+  missed: "beynin kaçırdığı önemli bir mesajı gösterdi",
 };
 
 /** Hazır ret sebepleri (tek dokunuş) */

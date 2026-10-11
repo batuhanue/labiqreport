@@ -1,4 +1,6 @@
 import "server-only";
+import type Anthropic from "@anthropic-ai/sdk";
+import { loadKnowledge, loadMemory, memoryPrompt } from "./assistant";
 
 /** Beyin ve ajanların ortak sistem metni (önbellek öneki: düşünme, iş ve öğrenme aynı bloğu paylaşır). */
 export function brainSystem(knowledge: string) {
@@ -14,4 +16,13 @@ Kurallar:
 
 =============== BİLGİ DOSYALARI ===============
 ${knowledge}`;
+}
+
+/** Beynin önbellekli iki sistem bloğu: bilgi dosyaları + bellek (1 saatlik önbellek; düşünme, iş, öğrenme, eğitim paylaşır). */
+export async function brainBlocks(): Promise<Anthropic.TextBlockParam[]> {
+  const [knowledge, memory] = await Promise.all([loadKnowledge(), loadMemory()]);
+  return [
+    { type: "text", text: brainSystem(knowledge), cache_control: { type: "ephemeral", ttl: "1h" } },
+    { type: "text", text: memoryPrompt(memory), cache_control: { type: "ephemeral", ttl: "1h" } },
+  ];
 }

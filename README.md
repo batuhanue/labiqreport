@@ -135,6 +135,24 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   aksiyon → onay), son 7 günün hızına göre tahmini bitiş ve son terminle farkı ("günde N kontrol gerekiyor"), gelen iş
   akışı (öneri → kabul → teslimat → onay → yanıt), yanıt takibi, toplantı hazırlığı ve kişisel görevler; her birinde
   darboğaz. Şef yardımcısı bu analizi her düşünmede okur ve süreç risklerini karara çevirir.
+  **Kanıta dayalı önem:** posta ve sohbet ajanları bir mesajı yalnızca metninden değil, arşivden ölçülen bağlamla
+  değerlendirir (veritabanı sorguları, ek yapay zekâ çağrısı yok): gönderenin kişi haritasındaki seviyesi ve rolü, son
+  180 günde onunla yazışma, ona yanıt oranın ve hızın; doğrudan alıcı mısın, yalnızca CC'de mi, toplu gönderim mi;
+  yazışmanın önceki iletileri (daha önce söz verdin mi); sohbette birebir mi, adın geçiyor mu; yüklenen şirket
+  verisinde ilgili kayıt. Karar gerekçesi (`why`) bu kanıtı yazar ("Yöneticin; ona genelde 2 saatte dönüyorsun…").
+  **🎓 Eğitim (Beyin → Eğitim):** beyin işini kendi geçmişinden öğrenir. *Kişi haritası* (haftada bir): kim kimdir, kime
+  ne hızla dönüyorsun; Claude rol/ilişki/önem (Kritik · Önemli · Rutin) etiketler, sen düzeltirsin (seçimin esas) →
+  bilgi dosyası `kisi-haritasi.md`. *Ay ay okuma* (son 6 ay, sonra her hafta bu ay): yanıt verdiğin yazışmalar, yazdığın
+  sohbetler, toplantılar ve takvimden süreçler, aylık döngü, kimin ne beklediği, neyin acil neyin gürültü olduğu,
+  yazılı olmayan kurallar → bilgi dosyası `is-bilgisi.md` (her düşünmede okunur). Emin olamadıklarını **sana sorar**;
+  cevabın belleğe yazılır ve dosya yeniden yazılır. Uygulama açıkken arka planda ve Pazar sabahı cron'da kendini
+  günceller. **Şirket verisi:** izinli dosyaları yükle (Word, Excel, PowerPoint, PDF 4 MB'a kadar; CSV/TXT/MD/JSON
+  sınırsız, satır sınırından parçalanır, tablo başlığı her parçada) → metni arşivde `kurum` kaynağı olarak tam metin
+  aranır; asistan ve ajanlar `search_archive` ile okur, önem değerlendirmesine ilgili kayıt eklenir (PDF'i Claude okur;
+  dosyanın kendisi saklanmaz; Google arşivini temizlemek şirket verisini silmez). **İsabet:** Eğitim ekranı son 30
+  günde önerilerin ne kadarının doğru çıktığını (onay ↔ "Önemsiz"/"Benim işim değil" ↔ kaçırılan) ve önceki 30 günle
+  farkını gösterir. E-posta okuyucudaki **Önemliydi** ile beynin kaçırdığı bir mesajı gösterirsin: nedenini öğrenir,
+  hemen iş açar.
   **Kazanılan güven:** her ajanın bir güven seviyesi var (ajan kartında): 🙋 Öner (her işi sorar) · ✅ Kendisi onaylasın
   (yeni işleri sormadan Yapılacak'a alır; onay oranı düşük türleri yine sorar) · 🤖 Teslimatı da hazırlasın (onayladığı işi
   kendisi yapar; işler sayfa açıkken ya da arka planda sırayla yapılır). Seviyeyi sen seçersin; seçimlerinden onay oranı

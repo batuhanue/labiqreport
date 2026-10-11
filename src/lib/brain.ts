@@ -16,6 +16,8 @@ import { learn, learningState, readChoices, recentChoices, recordChoices } from 
 import { createDraft } from "./gmail-draft";
 import { pushConfigured, sendToAll } from "./push";
 import { buildOrg, orgDigest, type BrainRaw } from "./org";
+import { enrichSignals } from "./insight";
+import { readPeople } from "./people";
 import type { NotifyMessage } from "./notify";
 import { applyTrust, reviewTrust, trustView } from "./trust";
 import { AGENTS, agentById, KIND_LABEL, type AgentId, type Choice, type AgentRun, type BrainFocus, type BrainItem, type Decision, type BrainRun, type BrainState, type ItemSource, type ItemWork, type Signal, type TeamPiece, type TeamRun } from "./brain-types";
@@ -74,9 +76,10 @@ async function collect(meta: Meta): Promise<Record<AgentId, Signal[]>> {
         ts: m.date,
         title: m.subject,
         who: `${m.from} <${m.fromEmail}>`,
-        text: `${m.unread ? "[OKUNMADI] " : ""}${m.important ? "[ÖNEMLİ] " : ""}${m.snippet}`,
+        text: `${m.unread ? "[OKUNMADI] " : ""}${m.important ? "[Gmail: önemli işaretli] " : ""}${m.snippet}`,
         link: m.link,
         ref: { source: "gmail", id: m.id },
+        hint: { email: m.fromEmail, name: m.from, threadId: m.threadId },
       };
       if (fresh(s)) out.posta.push(s);
     }
@@ -93,6 +96,7 @@ async function collect(meta: Meta): Promise<Record<AgentId, Signal[]>> {
         who: [...new Set(theirs.map((x) => x.sender))].join(", "),
         text: sp.messages.slice(-6).map((x) => `${x.mine ? "Batuhan" : x.sender} (${trTime(x.time)}): ${x.text}`).join("\n"),
         link: sp.link,
+        hint: { name: last.sender, space: sp.link, dm: sp.kind === "DIRECT_MESSAGE" },
       };
       if (fresh(s)) out.sohbet.push(s);
     }
@@ -130,6 +134,10 @@ async function collect(meta: Meta): Promise<Record<AgentId, Signal[]>> {
     out.posta.slice(0, 25).map(async (s) => {
       const full = await getItem("gmail", s.ref!.id).catch(() => null);
       if (full?.body) s.text = `${s.text}\n---\n${clip(full.body, 2500)}`;
+      if (full && s.hint) {
+        s.hint.to = full.who.split(" → ")[1];
+        s.hint.cc = typeof full.meta?.cc === "string" ? full.meta.cc : undefined;
+      }
     }),
   );
 
@@ -176,10 +184,20 @@ async function collect(meta: Meta): Promise<Record<AgentId, Signal[]>> {
 }
 
 // ------------------------------------------------------------------ 2) ajanlar
+/** Önem kararı: metne değil kanıta (arşivden ölçülen BAĞLAM + kişi haritası + iş bilgisi) dayanır */
+const IMPORTANCE = `ÖNEM NASIL BELİRLENİR: Her sinyalin altındaki BAĞLAM satırlarını (arşivden ölçüldü) ve bilgi dosyalarındaki kişi haritası ile iş bilgisini kullan; konu başlığındaki "acil" gibi kelimelere değil kanıta bak.
+- Gönderen kritik kişiyse (yöneticisi, üst yönetim ya da Batuhan'ın hızlı yanıt verdiği biri) ve Batuhan'dan doğrudan bir şey istiyorsa öncelik 1-2.
+- Batuhan yalnızca CC'deyse, toplu gönderimse, Batuhan'ın bu kişiye/sohbete neredeyse hiç yanıt vermediği bir kaynaksa iş açma — içinde Batuhan'a özel açık bir istek, termin ya da denetim/kapanış riski yoksa.
+- Yazışmada Batuhan daha önce söz verdiyse ("gönderirim", "bakarım") ya da karşı taraf Batuhan'ın yanıtını bekliyorsa kaçırma.
+- Aylık kapanış/denetim terminleri, R-01…R-10 bulguları ve iş bilgisindeki kritik süreçlerle ilgili olanlar önemlidir.
+- why alanına önemin KANITINI yaz (ör. "Yöneticin; ona genelde 2 saatte dönüyorsun; senden R-02 verisini istiyor, termin Cuma"). Kanıt yoksa ve emin değilsen iş açma.`;
 const AGENT_RULES: Record<Exclude<AgentId, "dosya">, string> = {
   posta:
-    "Sen Posta ajanısın. E-postaları oku; yalnızca Batuhan'dan bir şey isteyen, ona yanıt/onay/veri gerektiren, bir termini olan ya da rolü gereği takip etmesi gereken e-postalar için iş aç. Bülten, otomatik bildirim, bilgi amaçlı CC'ler için iş açma. Yanıt gerekiyorsa kind=yanit.",
-  sohbet: "Sen Sohbet ajanısın. Google Chat mesajlarında Batuhan'a yöneltilen istekleri, sorulan soruları ve Batuhan'ın verdiği sözleri ('bakarım', 'gönderirim') iş olarak çıkar. Selamlaşma ve sohbet için iş açma.",
+    "Sen Posta ajanısın. E-postaları oku; yalnızca Batuhan'dan bir şey isteyen, ona yanıt/onay/veri gerektiren, bir termini olan ya da rolü gereği takip etmesi gereken e-postalar için iş aç. Bülten, otomatik bildirim, bilgi amaçlı CC'ler için iş açma. Yanıt gerekiyorsa kind=yanit.\n" +
+    IMPORTANCE,
+  sohbet:
+    "Sen Sohbet ajanısın. Google Chat mesajlarında Batuhan'a yöneltilen istekleri, sorulan soruları ve Batuhan'ın verdiği sözleri ('bakarım', 'gönderirim') iş olarak çıkar. Selamlaşma ve sohbet için iş açma.\n" +
+    IMPORTANCE,
   takvim:
     "Sen Takvim ajanısın. Yaklaşan toplantılar için Batuhan'ın hazırlanması gereken bir şey varsa (veri, rapor, sunum, önceki toplantı aksiyonları) kind=toplanti hazırlık işi aç ve terminini toplantıdan önceye koy. Yanıt bekleyen davetler için kısa iş aç. Rutin/hazırlık gerektirmeyen toplantılar için iş açma.",
   toplanti:
@@ -321,7 +339,8 @@ Bu sinyallerden çıkan işleri döndür. İş gerektirmeyen sinyalleri atla (bo
       model: ASSISTANT_MODEL,
       max_tokens: 12000,
       system,
-      output_config: { effort: "low", format: jsonSchemaOutputFormat(ITEM_SCHEMA) },
+      // posta/sohbette önem kararı kanıt tartmayı gerektirir: daha derin düşün (Haiku'da maliyet farkı küçük)
+      output_config: { effort: agent === "posta" || agent === "sohbet" ? "medium" : "low", format: jsonSchemaOutputFormat(ITEM_SCHEMA) },
       messages: [{ role: "user", content }],
     },
     { timeout },
@@ -664,7 +683,10 @@ export async function think(opts: { trigger: BrainRun["trigger"]; budgetMs?: num
   const run: BrainRun = { id: uid(), at: new Date().toISOString(), trigger: opts.trigger, ms: 0, agents: [], files: 0, tokens: 0, cost: 0 };
   let calls = 0;
   try {
-    const [signals, knowledge, memory, items] = await Promise.all([collect(meta), loadKnowledge(), loadMemory(), readItems()]);
+    const [signals, knowledge, memory, items, people] = await Promise.all([collect(meta), loadKnowledge(), loadMemory(), readItems(), readPeople()]);
+    // önem kararı için arşivden bağlam (gönderen geçmişi, alıcı durumu, yazışma geçmişi, şirket verisi)
+    const account = (await getSnapshot().catch(() => null))?.account;
+    run.enriched = await enrichSignals([...signals.posta.slice(0, 20), ...signals.sohbet.slice(0, 20)], people, account, Math.max(0, Math.min(9000, left() - 35000))).catch(() => 0);
     const system: Anthropic.TextBlockParam[] = [
       { type: "text", text: brainSystem(knowledge), cache_control: { type: "ephemeral", ttl: "1h" } },
       { type: "text", text: memoryPrompt(memory), cache_control: { type: "ephemeral", ttl: "1h" } },

@@ -120,7 +120,8 @@ export interface GoogleStatus {
 }
 
 // ------------------------------------------------------------------ arşiv (geriye dönük hafıza)
-export type ArchiveSource = "gmail" | "chat" | "meet" | "calendar" | "drive";
+/** kurum: uygulamaya yüklenen şirket verisi (Google'dan gelmez; arşiv temizlenince silinmez) */
+export type ArchiveSource = "gmail" | "chat" | "meet" | "calendar" | "drive" | "kurum";
 
 export interface ArchiveItem {
   source: ArchiveSource;

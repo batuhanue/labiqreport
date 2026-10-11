@@ -34,6 +34,14 @@ export function useBrainState() {
         .then((j) => (j.started || j.working) && setSt((s) => (s ? { ...s, running: !!j.started || s.running } : s)))
         .catch(() => {});
     auto();
+    // eğitim (geçmişten öğrenme) gerekiyorsa arka planda bir adım; saatte en çok bir kez sorulur
+    try {
+      const k = "lq:train-bg";
+      if (Date.now() - Number(localStorage.getItem(k) ?? 0) > 3600_000) {
+        localStorage.setItem(k, String(Date.now()));
+        setTimeout(() => fetch("/api/training", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "background" }) }).catch(() => {}), 20_000);
+      }
+    } catch {}
     const t = setInterval(() => {
       auto();
       load();

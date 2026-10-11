@@ -6,7 +6,7 @@ import type { ArchiveSource } from "./google-types";
 
 /** Asistanın ve beyin ajanlarının ortak araçları: Google arşivi (Drive dahil) ve bellek. */
 // ------------------------------------------------------------------ araçlar (Google arşivi)
-export const SOURCE_ENUM = ["gmail", "chat", "meet", "calendar", "drive"];
+export const SOURCE_ENUM = ["gmail", "chat", "meet", "calendar", "drive", "kurum"];
 export const MEMORY_TOOL: Anthropic.Tool = {
   name: "remember",
   description:
@@ -27,7 +27,8 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_archive",
     description:
-      "Batuhan'ın Google Workspace arşivinde (geçmiş tüm e-postalar, Google Chat mesajları, Meet toplantı transkriptleri, takvim etkinlikleri, Google Drive dosyaları ve içerikleri — Dokümanlar, E-Tablolar, Slaytlar, Word, Excel, PowerPoint) arama yapar. " +
+      "Batuhan'ın Google Workspace arşivinde (geçmiş tüm e-postalar, Google Chat mesajları, Meet toplantı transkriptleri, takvim etkinlikleri, Google Drive dosyaları ve içerikleri — Dokümanlar, E-Tablolar, Slaytlar, Word, Excel, PowerPoint) ve uygulamaya yüklenen şirket verisinde (source=kurum: prosedürler, raporlar, tablolar, sistem dökümleri) arama yapar. " +
+      "Şirkete özgü bir kural, rakam, prosedür ya da kayıt sorulduğunda source=kurum ile de ara. " +
       "Bir dosya, rapor, tablo, prosedür ya da şablon sorulduğunda source=drive ile ara. " +
       "Geçmişe dönük her soruda (kim ne dedi, ne zaman konuşuldu, hangi e-posta geldi, toplantıda ne kararlaştırıldı) kullan. " +
       "query boş bırakılıp tarih aralığı verilirse o aralıktaki kayıtları en yeniden eskiye listeler. Gerekirse farklı kelimelerle birden çok kez ara.",

@@ -506,7 +506,7 @@ export async function archiveStep(opts: { budgetMs?: number } = {}): Promise<Arc
         await fn(sub);
         delete st.errors[src];
       } catch (e) {
-        st.errors[src] = explain({ gmail: "Gmail", chat: "Chat", meet: "Meet", calendar: "Takvim", drive: "Drive" }[src], e);
+        st.errors[src] = explain(({ gmail: "Gmail", chat: "Chat", meet: "Meet", calendar: "Takvim", drive: "Drive", kurum: "Şirket verisi" } as Record<ArchiveSource, string>)[src], e);
       }
     };
     // takvim önce (Meet başlıkları için), sonra diğerleri; geri kalan süre sırayla paylaşılır

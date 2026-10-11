@@ -6,7 +6,7 @@ import type { ArchiveSource } from "@/lib/google-types";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const SOURCES = ["gmail", "chat", "meet", "calendar", "drive"];
+const SOURCES = ["gmail", "chat", "meet", "calendar", "drive", "kurum"];
 
 /**
  * İlerleme; ?q= / source / after / before → arama;

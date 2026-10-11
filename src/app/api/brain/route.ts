@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import { bad, handle } from "@/lib/api";
-import { LEARN_EVERY, learn } from "@/lib/learning";
+import { LEARN_EVERY, learn, recordChoices } from "@/lib/learning";
 import { agentProfile, approve, capture, due, interview, nextQueued, state, think, updateItem, work, type InterviewTurn } from "@/lib/brain";
 import { DraftError } from "@/lib/gmail-draft";
 import { setTrust } from "@/lib/trust";
@@ -27,7 +27,21 @@ export async function GET(req: Request) {
  * { action: "capture", text }    — beyne not yaz; görev ajanı hemen işe çevirir
  */
 export async function POST(req: Request) {
-  const b = (await req.json().catch(() => null)) as { action?: string; text?: string; id?: string; feedback?: string; agent?: string; team?: boolean; turns?: InterviewTurn[]; mail?: boolean; queued?: boolean; followup?: boolean; level?: number } | null;
+  const b = (await req.json().catch(() => null)) as { action?: string; text?: string; id?: string; feedback?: string; agent?: string; team?: boolean; turns?: InterviewTurn[]; mail?: boolean; queued?: boolean; followup?: boolean; level?: number; title?: string; who?: string; source?: string; reason?: string } | null;
+  // beynin kaçırdığı önemli mesaj: öğrenir (neden önemliydi) ve hemen işe çevirir
+  if (b?.action === "missed") {
+    const title = b.title?.trim().slice(0, 200);
+    if (!title) return bad("Başlık gerekli");
+    const chat = b.source === "chat";
+    const reason = b.reason?.trim().slice(0, 300) || "Önemliydi; bunu kaçırmamalıydın";
+    return handle(async () => {
+      await recordChoices([{ kind: "missed", where: "beyin", agent: chat ? "sohbet" : "posta", title, detail: b.who ? `kimden: ${b.who.slice(0, 120)}` : undefined, reason }]);
+      await capture(`[Beynin kaçırdığı ${chat ? "sohbet mesajı" : "e-posta"} — Batuhan önemli dedi: "${reason}"]\n${title}${b.who ? `\nKimden: ${b.who}` : ""}\n${(b.text ?? "").slice(0, 2500)}\nBunu iş olarak aç; önceliği Batuhan'ın gerekçesine göre ver.`);
+      const run = await think({ trigger: "capture", only: ["gorev"], budgetMs: 25000 }).catch(() => null);
+      after(() => learn({ force: true }).catch(() => null));
+      return { run, created: run?.createdIds ?? [] };
+    });
+  }
   if (b?.action === "capture") {
     const text = b.text?.trim();
     if (!text) return bad("Boş not");

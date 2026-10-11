@@ -4,12 +4,13 @@ import { motion } from "motion/react";
 import dynamic from "next/dynamic";
 import { startTransition, useEffect, useState, ViewTransition } from "react";
 import BrainView from "@/components/brain/BrainView";
+import TrainingPanel from "@/components/brain/TrainingPanel";
 import TodoBoard from "@/components/todos/TodoBoard";
 import { Segmented } from "@/components/ui";
 
 const TAB_KEY = "lq:brain-tab";
 const VIEW_KEY = "lq:brain-view2";
-type View = "net" | "office" | "list";
+type View = "net" | "office" | "list" | "train";
 
 /** Beyin ofisi (3B) yalnızca tablet/masaüstünde ve gerektiğinde indirilir. */
 const BrainOffice = dynamic(() => import("@/components/brain/BrainOffice"), {
@@ -39,7 +40,8 @@ export default function BeyinPage() {
     try {
       if (localStorage.getItem(TAB_KEY) === "todos" || new URLSearchParams(window.location.search).get("sekme") === "gorevler") setTab("todos");
       const v = localStorage.getItem(VIEW_KEY);
-      if (v === "office" || v === "list") setView(v);
+      if (v === "office" || v === "list" || v === "train") setView(v);
+      if (new URLSearchParams(window.location.search).get("gorunum") === "egitim") setView("train");
     } catch {}
     const mq = window.matchMedia("(min-width: 768px)");
     const on = () => setWide(mq.matches);
@@ -82,6 +84,7 @@ export default function BeyinPage() {
                 ["net", "🕸 Ağ"],
                 ["office", "🏢 Ofis"],
                 ["list", "☰ Liste"],
+                ["train", "🎓 Eğitim"],
               ] as const
             )
               .filter(([v]) => wide || v !== "office")
@@ -95,7 +98,7 @@ export default function BeyinPage() {
         )}
       </div>
       <ViewTransition update="swap" default="none">
-        <div>{tab === "todos" ? <TodoBoard /> : shown === "net" ? <NetworkMap /> : shown === "office" ? <BrainOffice /> : <BrainView />}</div>
+        <div>{tab === "todos" ? <TodoBoard /> : shown === "net" ? <NetworkMap /> : shown === "office" ? <BrainOffice /> : shown === "train" ? <TrainingPanel /> : <BrainView />}</div>
       </ViewTransition>
     </div>
   );

@@ -1096,6 +1096,7 @@ function MailReader({ mail, onClose }: { mail: MailLite | null; onClose: () => v
               <Icon name="spark" size={15} /> Ne istiyor, nasıl yanıtlamalıyım?
             </button>
             <TaskButtonWide make={() => newTodo({ title: `E-posta: ${mail.subject} (${mail.from})`, due: iso(new Date()), tags: ["eposta"], notes: full?.link ?? "" })} />
+            <MissedButton title={mail.subject} who={full ? `${full.from} <${full.fromEmail}>` : mail.from} text={full?.text || mail.snippet} />
             {full?.link && (
               <a href={full.link} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1.5 px-2 text-sm font-bold text-ink-3 hover:text-ink">
                 Gmail'de aç <Icon name="external" size={13} />
@@ -1137,6 +1138,66 @@ body{padding:14px}img{max-width:100%!important;height:auto!important}table{max-w
       className="w-full rounded-2xl border border-line bg-white"
       style={{ height: h }}
     />
+  );
+}
+
+/** Beyin bu e-postayı kaçırdı: neden önemli olduğunu öğrenir ve hemen işe çevirir */
+const MISSED_REASONS = ["Gönderen önemli", "Benden bir şey istiyor", "Termini var", "Denetim/kapanışla ilgili"];
+function MissedButton({ title, who, text }: { title: string; who: string; text: string }) {
+  const { toast } = usePeriod();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const send = async (reason: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch("/api/brain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "missed", source: "gmail", title, who, text: text.slice(0, 3000), reason }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+      toast(j.created?.length ? "Beyin işi açtı ve neden önemli olduğunu öğreniyor" : "Beyne bildirildi; neden önemli olduğunu öğreniyor");
+      setOpen(false);
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button onClick={() => setOpen((x) => !x)} aria-expanded={open} className={`inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold ${open ? "bg-track text-ink" : "clay-sm text-ink-2 hover:text-ink"}`}>
+        <Icon name="brain" size={15} /> Önemliydi
+      </button>
+      {/* seçenekler butonların altında açılır (panel içinde kayan kutu yerine) */}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="order-last basis-full overflow-hidden"
+          >
+            <div className="rounded-2xl bg-track/60 p-3">
+              <div className="text-sm font-extrabold">Beyin bunu kaçırdı mı? Neden önemliydi?</div>
+              <div className="text-xs text-ink-3">Öğrenir ve benzerlerini kaçırmaz; bu e-posta için hemen iş açar.</div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {MISSED_REASONS.map((r) => (
+                  <button key={r} disabled={busy} onClick={() => send(r)} className="clay-sm rounded-full px-3 py-1.5 text-xs font-bold text-ink-2 hover:text-ink disabled:opacity-50">
+                    {r}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 flex gap-1.5">
+                <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === "Enter" && note.trim() && send(note.trim())} placeholder="Kendi cümlenle…" className="clay-pressed min-w-0 flex-1 rounded-full px-3 py-2 text-xs outline-none" />
+                <button disabled={busy || !note.trim()} onClick={() => send(note.trim())} className="rounded-full bg-blue px-4 py-2 text-xs font-bold text-white disabled:opacity-50">
+                  {busy ? "Gönderiliyor…" : "Gönder"}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 
@@ -1760,6 +1821,7 @@ const SRC: Record<ArchiveSource, { icon: string; label: string; unit: string }> 
   meet: { icon: "🎥", label: "Meet", unit: "toplantı" },
   calendar: { icon: "📅", label: "Takvim", unit: "etkinlik" },
   drive: { icon: "📁", label: "Drive", unit: "dosya" },
+  kurum: { icon: "🏢", label: "Şirket verisi", unit: "parça" },
 };
 const monthYear = (s: string) => new Date(s).toLocaleDateString("tr-TR", { month: "long", year: "numeric" });
 
