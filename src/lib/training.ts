@@ -7,6 +7,7 @@ import { addUsage, ASSISTANT_MODEL, claude, claudeConfigured, logUsage, newUsage
 import { store } from "./db";
 import { getSnapshot } from "./google";
 import { buildPeople, readPeople } from "./people";
+import { listFiles as kurumFiles, readNotes as kurumNotes, unitsOf } from "./kurum";
 import type { ArchiveStats } from "./google-types";
 import type { MonthNotes, TrainingState, TrainingView } from "./training-types";
 
@@ -355,6 +356,19 @@ function mergeQuestions(cur: TrainingState["questions"], next: TrainingState["qu
   return [...byId.values()];
 }
 
+/** Başka bir öğrenme (ör. şirket verisi eğitimi) Batuhan'a soru ekler; aynısı varsa eklenmez */
+export async function addQuestions(qs: { q: string; why: string }[]) {
+  if (!qs.length) return;
+  const st = await readTraining();
+  const known = new Set(st.questions.map((q) => q.q.trim().toLowerCase()));
+  const at = new Date().toISOString();
+  for (const q of qs) {
+    if (!q.q.trim() || known.has(q.q.trim().toLowerCase())) continue;
+    st.questions.push({ id: Math.random().toString(36).slice(2, 9), q: q.q.trim(), why: q.why.trim(), at });
+  }
+  await save(st);
+}
+
 /** Batuhan'ın cevabı: belleğe yazılır (hemen etkili), sonraki sentezde kesin bilgi olur */
 export async function answerQuestion(id: string, answer: string | null) {
   const st = await readTraining();
@@ -373,7 +387,8 @@ export async function answerQuestion(id: string, answer: string | null) {
 
 /** Arayüz için özet */
 export async function trainingView(): Promise<TrainingView> {
-  const [st, people, arch] = await Promise.all([readTraining(), readPeople(), archiveStats().catch((): ArchiveStats => ({ total: 0, bySource: {} }))]);
+  const [st, people, arch, kf, kn] = await Promise.all([readTraining(), readPeople(), archiveStats().catch((): ArchiveStats => ({ total: 0, bySource: {} })), kurumFiles().catch(() => []), kurumNotes().catch(() => ({ units: {}, log: [] }))]);
+  const units = unitsOf(kf, kn);
   const months = targetMonths().map((m) => ({ month: m, at: st.months[m]?.at, empty: st.months[m]?.empty, stats: st.months[m]?.stats }));
   const hasArchive = arch.total > 0;
   return {
@@ -386,6 +401,7 @@ export async function trainingView(): Promise<TrainingView> {
     due: trainingDue(st, people, hasArchive),
     hasArchive,
     archive: { total: arch.total, kurum: arch.bySource.kurum?.count ?? 0 },
+    company: { units: units.length, trained: units.filter((u) => u.trainedAt && !u.stale).length, stale: units.filter((u) => u.stale).length, files: kf.length },
     questions: st.questions.filter((q) => !q.skipped).sort((a, b) => Number(!!a.answer) - Number(!!b.answer) || b.at.localeCompare(a.at)).slice(0, 12),
     log: st.log.slice(0, 6),
     lastError: st.lastError,

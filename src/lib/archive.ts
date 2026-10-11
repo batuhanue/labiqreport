@@ -249,6 +249,15 @@ export async function removeByPrefix(source: ArchiveSource, prefix: string) {
   await sql.query(`DELETE FROM google_archive WHERE source = $1 AND starts_with(id, $2)`, [source, prefix]);
 }
 
+/** Kimlik önekiyle kayıtlar (ör. yüklenen bir dosyanın parçaları), kimliğe göre sıralı. */
+export async function itemsByPrefix(source: ArchiveSource, prefix: string, limit = 2000): Promise<ArchiveItem[]> {
+  if (!url) return (await readAll()).filter((x) => x.source === source && x.id.startsWith(prefix)).slice(0, limit);
+  const sql = pg();
+  await ready;
+  const rows = (await sql.query(`SELECT source, id, ts, title, who, body, link, meta FROM google_archive WHERE source = $1 AND starts_with(id, $2) LIMIT ${Math.min(limit, 5000)}`, [source, prefix])) as ArchiveItem[];
+  return rows.map((x) => ({ ...x, ts: new Date(x.ts).toISOString() }));
+}
+
 // ------------------------------------------------------------------ analiz için sorgular (kişi haritası, bağlam, eğitim)
 export type LightRow = Omit<ArchiveItem, "body"> & { body: string };
 

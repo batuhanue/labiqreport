@@ -1,12 +1,13 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { renderMd } from "@/lib/markdown";
 import type { Person, PeopleStore } from "@/lib/people-types";
 import type { ImportanceStats, TrainingView } from "@/lib/training-types";
 import { usePeriod } from "../PeriodProvider";
 import { Icon, Menu, Ring } from "../ui";
+import CompanyData from "./CompanyData";
 
 /*
  * Beyin → Eğitim: beynin seni ne kadar tanıdığı (önem isabeti), geçmişten öğrenme (kişi haritası, ay ay okuma,
@@ -14,25 +15,9 @@ import { Icon, Menu, Ring } from "../ui";
  */
 
 type View = TrainingView & { importance: ImportanceStats };
-interface KurumFile {
-  id: string;
-  name: string;
-  kind: string;
-  size: number;
-  chars: number;
-  parts: number;
-  uploadedAt: string;
-  partial?: boolean;
-}
-
-const TEXT_EXT = ["md", "txt", "csv", "tsv", "json", "xml", "html", "htm", "log"];
-const BIN_EXT = ["docx", "xlsx", "pptx", "pdf"];
-const MAX_BYTES = 4 * 1024 * 1024;
-const SEG = 1_500_000;
 
 const monthName = (m: string) => new Date(`${m}-15T12:00:00Z`).toLocaleDateString("tr-TR", { month: "short" });
 const dayText = (iso?: string) => (iso ? new Date(iso).toLocaleDateString("tr-TR", { day: "numeric", month: "short" }) : "");
-const kb = (n: number) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -109,7 +94,9 @@ export default function TrainingPanel() {
       </div>
       <div className="space-y-4">
         <People onChange={load} />
-        <Company onChange={load} />
+      </div>
+      <div className="xl:col-span-2">
+        <CompanyData onChange={load} />
       </div>
     </div>
   );
@@ -159,7 +146,7 @@ function Hero({ v, training, progress, onTrain }: { v: View; training: boolean; 
       <div className="mt-5 grid grid-cols-3 gap-2">
         <Stat label="kişi tanıyor" value={v.people} sub={v.peopleAt ? dayText(v.peopleAt) : "henüz yok"} />
         <Stat label="ay okundu" value={`${read}/${v.months.length}`} sub={v.profileAt ? (v.resynth ? "iş bilgisi güncellenecek" : `iş bilgisi ${dayText(v.profileAt)}`) : "iş bilgisi yok"} />
-        <Stat label="şirket parçası" value={v.archive.kurum} sub={`${v.archive.total.toLocaleString("tr-TR")} arşiv kaydı`} />
+        <Stat label="şirket klasörü" value={`${v.company.trained}/${v.company.units}`} sub={v.company.stale ? `${v.company.stale} güncellenmeli` : `${v.company.files} dosya`} />
       </div>
 
       {/* aylar */}
@@ -403,105 +390,6 @@ function People({ onChange }: { onChange: () => void }) {
         <button onClick={() => setAll((x) => !x)} className="mt-2 text-xs font-bold text-blue">
           {all ? "Daha az göster" : `Tümünü göster (${list.length})`}
         </button>
-      )}
-    </section>
-  );
-}
-
-/* ------------------------------------------------------------------ şirket verisi */
-function Company({ onChange }: { onChange: () => void }) {
-  const { toast } = usePeriod();
-  const [files, setFiles] = useState<KurumFile[] | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [drag, setDrag] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
-  const load = useCallback(() => api<{ files: KurumFile[] }>("/api/kurum").then((j) => setFiles(j.files)).catch(() => setFiles([])), []);
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const upload = async (list: FileList | File[]) => {
-    for (const f of Array.from(list)) {
-      const ext = f.name.toLowerCase().split(".").pop() ?? "";
-      setBusy(f.name);
-      try {
-        if (TEXT_EXT.includes(ext)) {
-          const text = await f.text();
-          let id: string | undefined;
-          // büyük dosya satır sınırlarından parça parça gider (satır bölünmez)
-          for (let i = 0; i < text.length; ) {
-            let j = Math.min(text.length, i + SEG);
-            if (j < text.length) {
-              const nl = text.lastIndexOf("\n", j);
-              if (nl > i) j = nl + 1;
-            }
-            const r = await api<{ file: KurumFile }>("/api/kurum", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: f.name, text: text.slice(i, j), id, size: f.size }) });
-            id = r.file.id;
-            i = j;
-          }
-        } else if (BIN_EXT.includes(ext)) {
-          if (f.size > MAX_BYTES) throw new Error(`${f.name} 4 MB'tan büyük — Google Drive'a koy (arşiv okur) ya da Excel'i CSV olarak kaydet`);
-          const r = await api<{ file: KurumFile }>(`/api/kurum?name=${encodeURIComponent(f.name)}`, { method: "PUT", body: f });
-          if (r.file.partial) toast(`${f.name}: PDF uzun; okunabilen kısmı kaydedildi`);
-        } else throw new Error(`${f.name}: .${ext} desteklenmiyor (${[...TEXT_EXT, ...BIN_EXT].join(", ")})`);
-      } catch (e) {
-        toast((e as Error).message);
-      }
-    }
-    setBusy(null);
-    load();
-    onChange();
-  };
-  const remove = async (f: KurumFile) => {
-    if (!confirm(`“${f.name}” şirket verisinden silinsin mi?`)) return;
-    await api(`/api/kurum?id=${f.id}`, { method: "DELETE" }).catch((e) => toast((e as Error).message));
-    load();
-    onChange();
-  };
-
-  return (
-    <section className="clay p-5">
-      <div className="flex items-baseline gap-2">
-        <span className="text-lg font-extrabold">Şirket verisi</span>
-        <span className="text-xs text-ink-3">{files?.length ? `${files.length} dosya` : "izinli dosyalar"}</span>
-      </div>
-      <p className="mt-0.5 text-xs text-ink-3">
-        Prosedür, rapor, tablo, sistem dökümü… Metni veritabanına yazılır; beyin önem değerlendirirken ve asistan cevap verirken buradan arar. Yalnızca paylaşma iznin olan verileri yükle.
-      </p>
-      <div
-        onDragOver={(e) => (e.preventDefault(), setDrag(true))}
-        onDragLeave={() => setDrag(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDrag(false);
-          if (e.dataTransfer.files.length) upload(e.dataTransfer.files);
-        }}
-        onClick={() => !busy && input.current?.click()}
-        className={`mt-3 grid cursor-pointer place-items-center rounded-2xl border-2 border-dashed px-4 py-6 text-center transition-colors ${drag ? "border-blue bg-blue/5" : "border-line hover:border-ink-3"}`}
-      >
-        <Icon name="upload" size={22} className="text-ink-3" />
-        <div className="mt-1.5 text-sm font-bold">{busy ? `Okunuyor: ${busy}` : "Dosyaları bırak ya da seç"}</div>
-        <div className="text-[11px] text-ink-3">Word, Excel, PowerPoint, PDF (4 MB'a kadar) · CSV, TXT, MD, JSON (sınırsız)</div>
-        <input ref={input} type="file" multiple hidden accept={[...TEXT_EXT, ...BIN_EXT].map((x) => `.${x}`).join(",")} onChange={(e) => e.target.files && upload(e.target.files)} />
-      </div>
-      {!!files?.length && (
-        <ul className="mt-3 divide-y divide-line">
-          {files.map((f) => (
-            <li key={f.id} className="flex items-center gap-3 py-2">
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-track text-[10px] font-extrabold uppercase text-ink-2">{f.kind.slice(0, 4)}</span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-bold">{f.name}</div>
-                <div className="text-[11px] text-ink-3">
-                  {kb(f.size)} · {f.parts} parça · {dayText(f.uploadedAt)}
-                  {f.partial ? " · yarım okundu" : ""}
-                </div>
-              </div>
-              <button onClick={() => remove(f)} aria-label="Sil" className="grid h-8 w-8 place-items-center rounded-full text-ink-3 hover:bg-track hover:text-fail">
-                <Icon name="trash" size={15} />
-              </button>
-            </li>
-          ))}
-        </ul>
       )}
     </section>
   );

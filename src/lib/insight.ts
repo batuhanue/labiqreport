@@ -104,7 +104,7 @@ async function chatContext(s: Signal, people: PeopleStore, self?: { email?: stri
 /** Yüklenen şirket verisinde konuyla ilgili kayıt (varsa) */
 async function companyContext(s: Signal) {
   const hits = await search({ query: s.title, source: "kurum", limit: 2 }).catch(() => []);
-  return hits.length ? [`Şirket verisinde ilgili: ${hits.map((x) => `"${x.title}" — ${clip(x.excerpt.replace(/\s+/g, " "), 220)}`).join(" | ")}`] : [];
+  return hits.length ? [`Şirket verisinde ilgili: ${hits.map((x) => `"${x.title}" (${x.who.replace(/^Şirket verisi · /, "")}) — ${clip(x.excerpt.replace(/\s+/g, " "), 220)}`).join(" | ")}`] : [];
 }
 
 /**

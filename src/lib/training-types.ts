@@ -66,6 +66,8 @@ export interface TrainingView {
   due: boolean;
   hasArchive: boolean;
   archive: { total: number; kurum: number };
+  /** şirket verisi klasörleri (hastane · dönem · kategori) */
+  company: { units: number; trained: number; stale: number; files: number };
   questions: TrainingQuestion[];
   log: TrainingState["log"];
   lastError?: string;
