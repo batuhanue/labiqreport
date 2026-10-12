@@ -11,9 +11,13 @@ export const ASSISTANT_MODEL = process.env.ANTHROPIC_MODEL?.trim() || "claude-ha
 export const claudeConfigured = () => !!process.env.ANTHROPIC_API_KEY?.trim();
 
 let client: Anthropic | null = null;
-/** SDK 429/529/5xx ve bağlantı hatalarını kontrollü olarak dener, Vercel süre aşımını engeller. */
+/**
+ * SDK 429/529/5xx ve bağlantı hatalarını kendisi yeniden dener. Varsayılan süre 50 sn (rotalar 60 sn);
+ * kısa sürmesi gereken çağrılar (ör. LabIQ ajanı) istek başına kendi `timeout`unu verir.
+ * 12 sn varsayılan beyin, eğitim ve asistan çağrılarını yarıda kesiyordu.
+ */
 export function claude() {
-  client ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.trim(), maxRetries: 1, timeout: 12_000 });
+  client ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.trim(), maxRetries: 2, timeout: 50_000 });
   return client;
 }
 

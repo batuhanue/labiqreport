@@ -231,10 +231,14 @@ export async function runLabiqAgentChat(
   try {
     const t0 = Date.now();
 
-    // 8 saniyelik zaman aşımı koruması (Vercel 10s sınırını aşmamak için)
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Zaman aşımı: Model yanıtı 8 sn içinde tamamlanamadı")), 8000)
-    );
+    // Toplam süre bütçesi (rota 60 sn): her model çağrısı kalan süreyle sınırlı; araçlar (giriş, export) arada çalışır.
+    // Eskiden tek bir 8 sn'lik sayaç bütün turları (araçlar dahil) kapsıyordu ve ajan işini bitiremiyordu.
+    const deadline = t0 + 50_000;
+    const callTimeout = () => {
+      const left = deadline - Date.now();
+      if (left < 3000) throw new Error("Zaman aşımı: ajan 50 sn içinde işi bitiremedi");
+      return { timeout: Math.min(25_000, left), maxRetries: 1 };
+    };
 
     const callAi = ai.messages.create({
       model,
@@ -242,9 +246,9 @@ export async function runLabiqAgentChat(
       system: `${LABIQ_SYSTEM_PROMPT}\n\nAktif hastane: ${currentStatus.companyLabel} (${currentStatus.companyId}), Kullanıcı: ${currentStatus.user}.`,
       tools: LABIQ_TOOLS,
       messages,
-    });
+    }, callTimeout());
 
-    let currentResponse = await Promise.race([callAi, timeoutPromise]);
+    let currentResponse = await callAi;
 
     let rounds = 0;
     while (currentResponse.stop_reason === "tool_use" && rounds < 3) {
@@ -346,9 +350,9 @@ export async function runLabiqAgentChat(
         system: LABIQ_SYSTEM_PROMPT,
         tools: LABIQ_TOOLS,
         messages,
-      });
+      }, callTimeout());
 
-      currentResponse = await Promise.race([nextCall, timeoutPromise]);
+      currentResponse = await nextCall;
     }
 
     const replyText = currentResponse.content

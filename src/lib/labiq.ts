@@ -13,9 +13,10 @@ import { store } from "./db";
 
 const BASE = "https://labiq.ivdiq.com";
 const WS_BASE = "wss://labiq.ivdiq.com/cable";
-const EMAIL = "batuhanb@diacore.com.tr";
-const PASSWORD = "Fb140228.";
-const USER_ID = "17259";
+// Kimlik bilgileri yalnızca ortam değişkeninden (Vercel → Settings → Environment Variables); koda yazılmaz
+const EMAIL = process.env.LABIQ_EMAIL?.trim() ?? "";
+const PASSWORD = process.env.LABIQ_PASSWORD ?? "";
+const USER_ID = process.env.LABIQ_USER_ID?.trim() ?? "";
 const SESSION_KV = "labiq-session";
 
 export const COMPANIES = [
@@ -90,6 +91,7 @@ function extractExportStreamName(html: string): string {
  * LabIQ'ya giriş yapar ve oturum bilgilerini saklar
  */
 export async function labiqLogin(): Promise<{ ok: boolean; company?: string; error?: string }> {
+  if (!EMAIL || !PASSWORD) return { ok: false, error: "LabIQ giriş bilgileri tanımlı değil: Vercel'e LABIQ_EMAIL, LABIQ_PASSWORD ve LABIQ_USER_ID ekleyin." };
   try {
     // 1) GET login page
     const loginPage = await fetch(`${BASE}/users/sign_in`, {

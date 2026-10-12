@@ -221,7 +221,9 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
      geçersizse sitenin adresini (`https://…vercel.app`) kullanır.
    - `CRON_SECRET` = rastgele uzun bir değer (Vercel Cron bunu otomatik `Authorization` başlığıyla gönderir)
    - Zamanlama `vercel.json` içinde: `0 5 * * *` (UTC) = her gün 08:00 İstanbul (`30 4 * * *` = 07:30 sabah düşünmesi)
-5. Google Workspace bağlantısı (bir kerelik):
+5. LabIQ ajanı için (canlı LabIQ'ya giriş): `LABIQ_EMAIL`, `LABIQ_PASSWORD`, `LABIQ_USER_ID`. Şifre asla koda
+   yazılmaz; yalnızca Vercel ortam değişkeninde durur. `ANTHROPIC_MODEL` boş bırakılırsa `claude-haiku-5-5` kullanılır.
+6. Google Workspace bağlantısı (bir kerelik):
    - console.cloud.google.com → şirket hesabıyla yeni proje
    - **APIs & Services → Library**: Gmail API, Google Calendar API, Google Chat API, Google Meet REST API, People API, Google Drive API → Enable
    - **OAuth consent screen**: User type **Internal** (yalnızca şirket hesapları; Google doğrulaması gerekmez)
