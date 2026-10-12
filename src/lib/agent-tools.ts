@@ -55,12 +55,27 @@ export const TOOLS: Anthropic.Tool[] = [
       required: ["source", "id"],
     },
   },
+  {
+    name: "labiq_action",
+    description: "LabIQ sistemine (https://labiq.ivdiq.com) canlı bağlanır. Hastane seçimi yapar (Bursa PPP / Başakşehir PPP) ve ürün tüketim dökümünü Excel formatında indirir.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["export_consumption", "switch_company", "status"], description: "Yapılacak işlem" },
+        company: { type: "string", enum: ["bursa", "basaksehir"], description: "Hedef hastane (Bursa PPP veya Başakşehir PPP)" },
+        startDate: { type: "string", description: "Başlangıç tarihi (YYYY-MM-DD)" },
+        endDate: { type: "string", description: "Bitiş tarihi (YYYY-MM-DD)" },
+      },
+      required: ["action"],
+    },
+  },
 ];
 
 const trDate = (s: string) => new Date(s).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul", dateStyle: "medium", timeStyle: "short" });
 
 export function statusOf(fc: { name: string; input: unknown }) {
   const a = (fc.input ?? {}) as Record<string, unknown>;
+  if (fc.name === "labiq_action") return `⚡ LabIQ işlemi yürütülüyor (${String(a.action)})...`;
   if (fc.name === "get_archive_item") return "📄 Kayıt okunuyor…";
   if (fc.name === "remember") return `🧠 Belleğe yazılıyor: ${String(a.topic ?? "").slice(0, 60)}`;
   const src = { gmail: "e-postalarda", chat: "Chat'te", meet: "toplantılarda", calendar: "takvimde", drive: "Drive'da" }[String(a.source)] ?? "arşivde";
@@ -70,6 +85,25 @@ export function statusOf(fc: { name: string; input: unknown }) {
 
 export async function runTool(fc: { name: string; input: unknown }) {
   const a = (fc.input ?? {}) as Record<string, unknown>;
+  if (fc.name === "labiq_action") {
+    const { downloadConsumptionReport, switchCompany, getLabiqStatus, ensureSession } = await import("./labiq");
+    await ensureSession();
+    if (a.action === "status") {
+      return { durum: getLabiqStatus() };
+    }
+    if (a.action === "switch_company" && a.company) {
+      const res = await switchCompany(a.company as "bursa" | "basaksehir");
+      return res;
+    }
+    if (a.action === "export_consumption") {
+      const res = await downloadConsumptionReport({
+        company: a.company as "bursa" | "basaksehir" | undefined,
+        startDate: a.startDate ? String(a.startDate) : undefined,
+        endDate: a.endDate ? String(a.endDate) : undefined,
+      });
+      return res;
+    }
+  }
   if (fc.name === "remember") {
     const entries = (Array.isArray(a.entries) ? a.entries : [a.entries]).map(String).filter((x) => x.trim());
     if (!entries.length) return { hata: "entries boş" };

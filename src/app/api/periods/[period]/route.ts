@@ -5,7 +5,9 @@ import type { PeriodData } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, ctx: RouteContext<"/api/periods/[period]">) {
+type RouteCtx = { params: Promise<{ period: string }> };
+
+export async function GET(_req: Request, ctx: RouteCtx) {
   const { period } = await ctx.params;
   if (!PERIOD_RE.test(period)) return bad("Geçersiz dönem");
   return handle(async () => {
@@ -14,7 +16,7 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/periods/[period
   });
 }
 
-export async function PUT(req: Request, ctx: RouteContext<"/api/periods/[period]">) {
+export async function PUT(req: Request, ctx: RouteCtx) {
   const { period } = await ctx.params;
   if (!PERIOD_RE.test(period)) return bad("Geçersiz dönem");
   const body = (await req.json()) as PeriodData;
@@ -26,7 +28,7 @@ export async function PUT(req: Request, ctx: RouteContext<"/api/periods/[period]
   });
 }
 
-export async function DELETE(_req: Request, ctx: RouteContext<"/api/periods/[period]">) {
+export async function DELETE(_req: Request, ctx: RouteCtx) {
   const { period } = await ctx.params;
   if (!PERIOD_RE.test(period)) return bad("Geçersiz dönem");
   return handle(async () => {
