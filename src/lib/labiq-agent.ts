@@ -1,132 +1,91 @@
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
+import { search } from "./archive";
 import { ASSISTANT_MODEL, claude, claudeConfigured, costUsd, friendlyError, recordUsage } from "./claude";
 import { store } from "./db";
-import {
-  COMPANIES,
-  downloadConsumptionReport,
-  ensureSession,
-  fetchPageData,
-  getLabiqStatus,
-  switchCompany,
-  type CompanyKey,
-  type ExportResult,
-} from "./labiq";
+import { COMPANIES, downloadConsumptionReport, getLabiqStatus, parseAgentCommand, switchCompany, type CompanyKey, type ExportResult } from "./labiq";
+import { openPage, siteMap, type Params } from "./labiq-browse";
+import { exportReport, listTables, tableQuery, type QueryInput } from "./labiq-data";
+import { agentPrompt, screenGuide } from "./labiq-docs";
 
-const LABIQ_SYSTEM_PROMPT = `Sen, kullanıcının yetkili LabIQ / Diacore stok, cihaz, personel, verimlilik ve maliyet sistemindeki verileri yöneten, analiz eden ve raporlayan uzman **LabIQ Kurumsal Veri & Canlı Operasyon Ajanı**sın.
+/*
+ * LabIQ ajanı: eğitim paketindeki promptla çalışan, LabIQ'da bir kullanıcı gibi gezinen ajan.
+ * Site haritasından sayfayı bulur, filtre formunu okuyup filtre uygular, tabloyu okur ya da raporu dışa aktarır;
+ * inen Excel tabloya çevrilip şirket verisi klasörüne kaydedilir ve gerçek hesapla (süz/grupla/topla) sorgulanır.
+ * Salt-okunur: yazma/düzenleme sayfaları araç düzeyinde engellidir.
+ */
 
-Bu sistemde şu iki ana hastane mevcuttur:
-1. **Diacore Diagnostik - Bursa PPP** (ID: 226, kod: "bursa")
-2. **Diacore Diagnostik - Başakşehir PPP** (ID: 259, kod: "basaksehir")
+const ADAPTER = `## BU ORTAMDA NASIL ÇALIŞIRSIN (araç eşlemesi — yukarıdaki promptu bu araçlarla uygula)
+Tarayıcın yok; LabIQ'ya sunucu üzerinden, kullanıcının oturumuyla, sayfanın HTML'ini okuyarak erişirsin.
+- NAVIGATE → labiq_sitemap (menüdeki sayfalar ve adresleri) → labiq_open_page(path). Sayfa başlığını (title) hedefle karşılaştır.
+- APPLY_FILTERS → labiq_open_page'in döndürdüğü forms[].fields alan ADLARIYLA params ver; seçmeli alanlarda option VALUE'sunu kullan. "Filtrele"ye basmak = aynı sayfayı params ile yeniden açmak. Sonuçta title / totalHint / notices / tablo ile filtrenin gerçekten uygulandığını doğrula. Tarih aralığı alanının biçimini placeholder ya da mevcut değerden çıkar (ör. "2026-09-01 to 2026-09-30").
+- EXTRACT A (Dışa Aktar) → labiq_export(page, params): dosyayı indirir, tabloya çevirir, şirket verisi klasörüne kaydeder ve tableId döner. Büyük tablolar için tercih et.
+- EXTRACT B → dışa aktarma yoksa labiq_open_page ile pagination'daki sayfaları (params.page) oku.
+- HESAP → labiq_table_query(tableId, where/groupBy/sum/avg/sort). Toplam, ortalama, ilk-10, kırılım gibi her sayıyı bu araçla hesapla; asla kafadan toplama.
+- Ekran bilgisi (filtreler, kolonlar, tuzaklar) → labiq_screen_guide(konu). Bilmediğin ekranda önce buna bak.
+- Bilinen adres: Ürün Kullanım / tüketim dışa aktarma = labiq_export(exportUrl="/product_consumptions/export_excel", params={"movement_date":"YYYY-AA-GG to YYYY-AA-GG"}).
+- Hastane → labiq_switch_company (Bursa PPP / Başakşehir PPP). Önceki indirmeler → labiq_list_tables: aynı rapor+filtre bugün indirildiyse yeniden indirme.
+- Uygulamanın şirket verisi ve arşivinde arama → search_company_data. Uygulamadaki dönem kontrol listesi → check_app_period_data.
+- Yazma eylemleri (Yeni, Düzenle, Sil, Onayla, İptal, Senkronize, Aktarım…) araç düzeyinde engellidir; deneme, kullanıcıya ne yapılması gerektiğini söyle.
+Çalışma bütçen kısa (yaklaşık 50 sn, 12 araç adımı). Önce kısa bir plan yap, gereksiz sayfa açma, aynı sayfayı tekrar tekrar açma. Bitiremezsen: ne yaptığını, hazır tableId'leri ve kalan adımları yaz; kullanıcı "devam" derse labiq_list_tables'tan sürdür.
+Yanıt biçimi: promptun 9. bölümü (çok detaylı/denetim isteklerinde tam yapı; basit sorularda kısa ve net). Kaynak zincirini (modül → sayfa → filtre → tableId/dosya) yaz.`;
 
-## Temel Protokol ve Güvenlik İlkeleri
-- **Varsayılan Hak:** READ_ONLY. Veri okuma, durum sorgulama, hastane değiştirme ve rapor dışa aktarma (Excel export) görevlerini doğrudan yerine getirirsin.
-- **Dönem ve Sonuç Verileri:** Kullanıcı bir dönemin (ör. Eylül, Ağustos) sonuç verilerini sorduğunda, hem uygulamadaki dönem kontrol kayıtlarını hem de LabIQ Verimlilik altındaki 'Dönemsel Sonuçlar' (/companies/226/results_by_periods) veya 'Dönemsel Tüketim' süreçlerini kontrol edip açıkça yanıtla.
-- **Metrik Güvenliği:**
-  - Giriş ≠ Kullanım ≠ Transfer ≠ İade ≠ İmha
-  - Sipariş ≠ Mal kabul ≠ Fiili tüketim
-  - Stok miktarı (kutu/paket) ≠ Toplam miktar (test/adet)
-  - Kritik stok ≠ Fazla stok ≠ Riskli stok
-  - Boş ekran veya filtre uygulanmamış sonuç sıfır (0) kabul edilmez.
-- **Pratik Rapor Tarifleri (R01–R12):**
-  - R01: Stok Hareket Raporu (dönemsel giriş-çıkış-iade-imha dökümü)
-  - R02: Stok Gözlem & Stok Ekstresi (anlık stok ve ürün geçmişi)
-  - R03: Miadı Yaklaşan Ürünler & Depo Gözlem
-  - R04: Tüketim Analiz Raporu & Tüketim Takibi (dönemsel tüketim kıyası)
-  - R05: Stok Yeterlilik Analizi (hedef gün karşılama süresi)
-  - R06: Fazla Stok Analizi & Riskli Stok Raporu (transfer önerileri)
-  - R07: Cihaz Bakım/Kalibrasyon & Servis Performans Raporu
-  - R08: Test Verimlilik Raporu (tüketim vs üretilen sonuç, verimlilik %)
-  - R09: Maliyet Gösterge Paneli & CPR Anomali Raporu (sonuç başı maliyet)
-  - R10: Stok Maliyet Raporu (giriş faturası, sözleşme birim fiyatı)
-  - R11: İmha Raporu
-  - R12: Tedarikçi Sözleşmeleri & Sipariş Formları karşılaştırması
-
-## Görev Yürütme ve Araç Kullanımı
-Kullanıcı senden bir işlem (tüketim indirme, hastane değiştirme, durum sorgulama, dönem kontrolü) istediğinde elindeki araçları kullan:
-1. 'labiq_download_consumption': Excel formatında tüketim dökümünü indirmek için.
-2. 'labiq_switch_company': Aktif hastaneyi değiştirmek için.
-3. 'check_app_period_data': Uygulamadaki dönem kontrol kayıtlarını ve girilen verileri sorgulamak için.
-4. 'labiq_screen_guide': 56 ekran ve R01-R12 tarifleri hakkında teknik bilgi vermek için.
-5. Yanıtlarını zengin, şık Markdown formatında; net başlıklar, KPI maddeleri ve açıklayıcı özetlerle sun.`;
-
-const LABIQ_TOOLS: Anthropic.Tool[] = [
+const TOOLS: Anthropic.Tool[] = [
+  { name: "labiq_sitemap", description: "LabIQ menüsündeki sayfalar ve adresleri (grup, ad, path). Hangi rapor hangi adreste, buradan bulunur.", input_schema: { type: "object", properties: { refresh: { type: "boolean", description: "önbelleği yenile" } } } },
   {
-    name: "labiq_download_consumption",
+    name: "labiq_open_page",
     description:
-      "LabIQ sistemine bağlanarak seçilen hastane ve tarih aralığı için Ürün Tüketim Excel (.xlsx) raporunu oluşturur ve indirir. ActionCable WebSocket üzerinden anında hazır dosyayı yakalar.",
+      "Bir LabIQ sayfasını (isteğe bağlı filtrelerle) açar: başlık, filtre formları (alan adı, etiket, seçenekler), tablolar (ilk 40 satır), toplam kayıt ipucu, sayfalama, sekmeler, dışa aktarma bağlantıları ve 'kayıt bulunamadı' gibi uyarılar.",
     input_schema: {
       type: "object",
       properties: {
-        company: {
-          type: "string",
-          enum: ["bursa", "basaksehir"],
-          description: "Hedef hastane: 'bursa' (Bursa PPP 226) veya 'basaksehir' (Başakşehir PPP 259). Belirtilmezse mevcut aktif hastane kullanılır.",
-        },
-        startDate: {
-          type: "string",
-          description: "Başlangıç tarihi (YYYY-MM-DD formatında, örn: '2026-07-01')",
-        },
-        endDate: {
-          type: "string",
-          description: "Bitiş tarihi (YYYY-MM-DD formatında, örn: '2026-09-01')",
-        },
+        path: { type: "string", description: "sayfa adresi (site haritasından, ör. /stock_movement_reports)" },
+        params: { type: "object", description: "filtreler: form alan adı → değer (dizi: çoklu seçim); sayfa için page", additionalProperties: true },
       },
-      required: ["startDate", "endDate"],
+      required: ["path"],
     },
   },
   {
-    name: "labiq_switch_company",
-    description: "LabIQ oturumundaki aktif hastaneyi değiştirir: Bursa PPP (226) veya Başakşehir PPP (259).",
+    name: "labiq_export",
+    description: "Raporu (filtrelerle) dışa aktarır, Excel/CSV'yi indirir, tabloya çevirir ve şirket verisi klasörüne (aktif hastane · dönem · LabIQ · rapor adı) kaydeder. tableId, sütunlar, satır sayısı ve önizleme döner.",
     input_schema: {
       type: "object",
       properties: {
-        company: {
-          type: "string",
-          enum: ["bursa", "basaksehir"],
-          description: "Geçilmek istenen hastane",
-        },
+        page: { type: "string", description: "raporun sayfa adresi (dışa aktarma bağlantısı sayfadan bulunur)" },
+        exportUrl: { type: "string", description: "biliniyorsa doğrudan dışa aktarma adresi (open_page'in exports listesinden)" },
+        params: { type: "object", description: "sayfadaki filtre alanları", additionalProperties: true },
+        period: { type: "string", description: "klasör dönemi YYYY-AA (verilmezse filtre tarihinden)" },
+        title: { type: "string", description: "rapor adı (verilmezse sayfa başlığı)" },
       },
-      required: ["company"],
     },
   },
   {
-    name: "check_app_period_data",
-    description: "Uygulamadaki bir dönemin (ör. '2026-09' Eylül, '2026-08' Ağustos) kontrol listesi durumunu, verilerinin girilip girilmediğini ve onay durumunu sorgular.",
+    name: "labiq_table_query",
+    description: "İndirilen tabloda gerçek hesap: süz (where), grupla (groupBy), topla (sum), ortalama (avg), sırala, sütun seç. Sütun adları kısmi eşleşir. Sayılar Türkçe biçimden (1.234,56) çevrilir.",
     input_schema: {
       type: "object",
       properties: {
-        period: {
-          type: "string",
-          description: "Dönem kodu (YYYY-MM formatında, örn: '2026-09')",
+        tableId: { type: "string" },
+        where: {
+          type: "array",
+          items: { type: "object", properties: { column: { type: "string" }, op: { type: "string", enum: ["contains", "not_contains", "=", "!=", ">", "<", ">=", "<="] }, value: { type: "string" } }, required: ["column", "value"] },
         },
+        groupBy: { type: "array", items: { type: "string" } },
+        sum: { type: "array", items: { type: "string" } },
+        avg: { type: "array", items: { type: "string" } },
+        columns: { type: "array", items: { type: "string" } },
+        sort: { type: "object", properties: { column: { type: "string" }, dir: { type: "string", enum: ["asc", "desc"] } } },
+        limit: { type: "integer" },
       },
-      required: ["period"],
+      required: ["tableId"],
     },
   },
-  {
-    name: "labiq_get_status",
-    description: "LabIQ canlı oturum durumunu, aktif seçili hastaneyi ve kullanıcı bilgilerini döndürür.",
-    input_schema: {
-      type: "object",
-      properties: {},
-    },
-  },
-  {
-    name: "labiq_screen_guide",
-    description:
-      "LabIQ'daki 56 ekran, navigasyon yolları, filtreler ve R01-R12 rapor tarifleri hakkında tam teknik rehber bilgisini getirir.",
-    input_schema: {
-      type: "object",
-      properties: {
-        topic: {
-          type: "string",
-          description: "Konu veya modül adı (örn: 'stok', 'tüketim', 'cihaz', 'maliyet', 'verimlilik', 'sonuçlar', 'R01', 'R08')",
-        },
-      },
-      required: ["topic"],
-    },
-  },
+  { name: "labiq_list_tables", description: "Daha önce indirilmiş LabIQ tabloları (tableId, rapor, hastane, dönem, filtre, satır, sütunlar).", input_schema: { type: "object", properties: {} } },
+  { name: "labiq_screen_guide", description: "Eğitim paketindeki teknik rapordan ekran/rapor bilgisi: menü yolu, filtreler, kolonlar, tuzaklar ve R01–R12 tarifleri.", input_schema: { type: "object", properties: { topic: { type: "string" } }, required: ["topic"] } },
+  { name: "labiq_switch_company", description: "Aktif hastaneyi değiştirir.", input_schema: { type: "object", properties: { company: { type: "string", enum: ["bursa", "basaksehir"] } }, required: ["company"] } },
+  { name: "labiq_get_status", description: "LabIQ oturumu ve aktif hastane.", input_schema: { type: "object", properties: {} } },
+  { name: "search_company_data", description: "Uygulamadaki şirket verisi ve arşivde arama (önceden indirilmiş LabIQ dosyaları dahil).", input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+  { name: "check_app_period_data", description: "Uygulamadaki dönem kontrol listesinin durumu (YYYY-AA).", input_schema: { type: "object", properties: { period: { type: "string" } }, required: ["period"] } },
 ];
 
 export interface ChatMessage {
@@ -142,277 +101,160 @@ export interface AgentExecutionResult {
   logs: { text: string; time: string; type: "info" | "success" | "warn" }[];
 }
 
-/**
- * Model adını güvenli bir Anthropic model tanıtıcısına eşler
- */
-function resolveModel(): string {
-  return process.env.ANTHROPIC_MODEL?.trim() || ASSISTANT_MODEL;
+const clipJson = (o: unknown, n = 14000) => {
+  const s = JSON.stringify(o);
+  return s.length > n ? `${s.slice(0, n)}…(kısaltıldı; daha dar filtre ya da labiq_table_query kullan)` : s;
+};
+
+const LOG: Record<string, (a: Record<string, unknown>) => string> = {
+  labiq_sitemap: () => "🗺️ LabIQ menüsü okunuyor…",
+  labiq_open_page: (a) => `📄 Sayfa: ${a.path}${a.params && Object.keys(a.params as object).length ? " (filtreli)" : ""}`,
+  labiq_export: (a) => `📥 Dışa aktarılıyor: ${a.page ?? a.exportUrl}`,
+  labiq_table_query: () => "🧮 Tablo hesaplanıyor…",
+  labiq_list_tables: () => "🗂️ İndirilmiş tablolar…",
+  labiq_screen_guide: (a) => `📘 Rehber: ${a.topic}`,
+  labiq_switch_company: (a) => `🏥 Hastane: ${a.company}`,
+  labiq_get_status: () => "🔌 Oturum durumu",
+  search_company_data: (a) => `🔎 Şirket verisinde: ${a.query}`,
+  check_app_period_data: (a) => `📊 Dönem: ${a.period}`,
+};
+
+async function runTool(name: string, a: Record<string, unknown>, onExport: (e: ExportResult) => void): Promise<Record<string, unknown>> {
+  switch (name) {
+    case "labiq_sitemap": {
+      const links = await siteMap({ refresh: !!a.refresh, companyId: getLabiqStatus().companyId });
+      return { sayfaSayisi: links.length, sayfalar: links.map((l) => `${l.group ? `${l.group} › ` : ""}${l.label} → ${l.path}`) };
+    }
+    case "labiq_open_page":
+      return { ...(await openPage(String(a.path), (a.params ?? undefined) as Params)) };
+    case "labiq_export": {
+      const r = await exportReport({ page: a.page ? String(a.page) : undefined, exportUrl: a.exportUrl ? String(a.exportUrl) : undefined, params: (a.params ?? undefined) as Params, period: a.period ? String(a.period) : undefined, title: a.title ? String(a.title) : undefined });
+      if (r.ok && r.downloadUrl) onExport({ ok: true, downloadUrl: r.downloadUrl, fileName: r.fileName, company: getLabiqStatus().companyLabel, range: String(a.period ?? "") });
+      return { ...r };
+    }
+    case "labiq_table_query":
+      return await tableQuery(String(a.tableId), a as QueryInput);
+    case "labiq_list_tables":
+      return { tablolar: (await listTables()).map((t) => ({ tableId: t.id, rapor: t.title, hastane: t.hospital, donem: t.period, satir: t.totalRows, sutunlar: t.headers, filtre: t.source.params, indirildi: t.at })) };
+    case "labiq_screen_guide":
+      return await screenGuide(String(a.topic ?? ""));
+    case "labiq_switch_company":
+      return { ...(await switchCompany(a.company as CompanyKey)) };
+    case "labiq_get_status":
+      return { durum: getLabiqStatus(), hastaneler: COMPANIES };
+    case "search_company_data": {
+      const hits = await search({ query: String(a.query ?? ""), limit: 10 });
+      return { sonuclar: hits.map((h) => ({ kaynak: h.source, baslik: h.title, kim: h.who, ozet: h.excerpt.slice(0, 500) })) };
+    }
+    case "check_app_period_data": {
+      const p = await store().getPeriod(String(a.period ?? "")).catch(() => null);
+      if (!p) return { mevcut: false, mevcutDonemler: (await store().listPeriods().catch(() => [])).map((x) => x.period) };
+      return { mevcut: true, donem: p.period, durum: p.status, bursaIsaretlenen: Object.values(p.items ?? {}).filter((x) => x.bursa != null).length, basaksehirIsaretlenen: Object.values(p.items ?? {}).filter((x) => x.basaksehir != null).length, guncellenme: p.updatedAt };
+    }
+  }
+  return { hata: `Bilinmeyen araç: ${name}` };
 }
 
 /**
- * LabIQ AI Ajanı — Claude Haiku modeliyle tam bağlamlı ve araç destekli sohbet yürütür.
+ * LabIQ ajanıyla sohbet: Claude (Haiku) eğitim paketiyle, araçlarla LabIQ'da gezinir. Süre bütçesi ~52 sn.
  */
-export async function runLabiqAgentChat(
-  history: ChatMessage[],
-  incomingMessage: string,
-  preferredCompany?: CompanyKey
-): Promise<AgentExecutionResult> {
-  const logs: { text: string; time: string; type: "info" | "success" | "warn" }[] = [];
-  const addLog = (text: string, type: "info" | "success" | "warn" = "info") => {
-    logs.push({ text, time: new Date().toLocaleTimeString("tr-TR"), type });
-  };
-
+export async function runLabiqAgentChat(history: ChatMessage[], incomingMessage: string, preferredCompany?: CompanyKey): Promise<AgentExecutionResult> {
+  const logs: AgentExecutionResult["logs"] = [];
+  const addLog = (text: string, type: "info" | "success" | "warn" = "info") => logs.push({ text, time: new Date().toLocaleTimeString("tr-TR"), type });
   const toolCalls: AgentExecutionResult["toolCalls"] = [];
   let exportResult: ExportResult | undefined;
 
-  // 1. Durumu oku (oturum açmayı geciktir — sadece araç gerektiğinde açılır!)
-  const currentStatus = getLabiqStatus();
-
-  // 2. Claude API yapılandırılmış mı?
+  // Claude yoksa: basit yerel komutlar (tüketim indirme, hastane değiştirme)
   if (!claudeConfigured()) {
-    addLog("Yerel motor çalıştırılıyor...", "info");
-    const { parseAgentCommand } = await import("./labiq");
     const parsed = parseAgentCommand(incomingMessage);
-
     if (parsed.action === "switch_company" && parsed.company) {
-      addLog(`${parsed.company.toUpperCase()} hastanesine geçiliyor...`, "info");
       const sw = await switchCompany(parsed.company);
-      return {
-        reply: `**LabIQ Ajanı:** ${sw.company} hastanesine başarıyla geçiş yapıldı.`,
-        toolCalls,
-        status: getLabiqStatus(),
-        logs,
-      };
+      return { reply: sw.ok ? `${sw.company} hastanesine geçildi.` : `Hata: ${sw.error}`, toolCalls, status: getLabiqStatus(), logs };
     }
-
     if (parsed.action === "export_consumption") {
-      addLog(`Rapor indiriliyor: ${parsed.startDate} → ${parsed.endDate}...`, "info");
-      const exp = await downloadConsumptionReport({
-        company: parsed.company || preferredCompany,
-        startDate: parsed.startDate,
-        endDate: parsed.endDate,
-      });
-      exportResult = exp;
-      return {
-        reply: exp.ok
-          ? `**Rapor Hazır!** 🎉\n\n- **Dosya:** \`${exp.fileName}\`\n- **Hastane:** ${exp.company}\n- **Dönem:** ${exp.range}\n\nDosya indirme işlemi başlatıldı.`
-          : `**Hata:** ${exp.error}`,
-        toolCalls,
-        exportResult,
-        status: getLabiqStatus(),
-        logs,
-      };
+      const exp = await downloadConsumptionReport({ company: parsed.company || preferredCompany, startDate: parsed.startDate, endDate: parsed.endDate });
+      return { reply: exp.ok ? `Rapor hazır: ${exp.fileName} (${exp.company}, ${exp.range})` : `Hata: ${exp.error}`, toolCalls, exportResult: exp, status: getLabiqStatus(), logs };
     }
-
-    return {
-      reply: `**LabIQ Ajanı:** "${incomingMessage}" sorusunu aldım. LabIQ üzerinde tüketim indirme, hastane değişimi veya modül rehberliği yapabilirim.`,
-      toolCalls,
-      status: getLabiqStatus(),
-      logs,
-    };
+    return { reply: "Claude bağlı değil (ANTHROPIC_API_KEY). Şimdilik yalnızca tüketim indirme ve hastane değiştirme komutlarını anlayabilirim.", toolCalls, status: getLabiqStatus(), logs };
   }
 
-  // 3. Claude Haiku ile hızlı agentic tool loop
-  addLog("Claude Haiku yanıtı hazırlıyor...", "info");
-  const ai = claude();
-  const model = resolveModel();
-
-  const messages: Anthropic.MessageParam[] = [
-    ...history.slice(-8).map((m) => ({
-      role: m.role,
-      content: m.content,
-    })),
-    {
-      role: "user",
-      content: incomingMessage,
-    },
-  ];
-
+  const t0 = Date.now();
+  const deadline = t0 + 52_000;
+  const model = process.env.ANTHROPIC_MODEL?.trim() || ASSISTANT_MODEL;
+  const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+  let rounds = 0;
   try {
-    const t0 = Date.now();
-
-    // Toplam süre bütçesi (rota 60 sn): her model çağrısı kalan süreyle sınırlı; araçlar (giriş, export) arada çalışır.
-    // Eskiden tek bir 8 sn'lik sayaç bütün turları (araçlar dahil) kapsıyordu ve ajan işini bitiremiyordu.
-    const deadline = t0 + 50_000;
-    const callTimeout = () => {
-      const left = deadline - Date.now();
-      if (left < 3000) throw new Error("Zaman aşımı: ajan 50 sn içinde işi bitiremedi");
-      return { timeout: Math.min(25_000, left), maxRetries: 1 };
-    };
-
-    const callAi = ai.messages.create({
-      model,
-      max_tokens: 1200,
-      system: `${LABIQ_SYSTEM_PROMPT}\n\nAktif hastane: ${currentStatus.companyLabel} (${currentStatus.companyId}), Kullanıcı: ${currentStatus.user}.`,
-      tools: LABIQ_TOOLS,
-      messages,
-    }, callTimeout());
-
-    let currentResponse = await callAi;
-
-    let rounds = 0;
-    while (currentResponse.stop_reason === "tool_use" && rounds < 3) {
-      rounds++;
-      const toolUseBlocks = currentResponse.content.filter((b) => b.type === "tool_use");
-      const toolResultBlocks: Anthropic.ToolResultBlockParam[] = [];
-
-      for (const block of toolUseBlocks) {
-        if (block.type !== "tool_use") continue;
-        const input = block.input as Record<string, unknown>;
-        addLog(`🔧 Araç: ${block.name}...`, "info");
-
-        let resObj: Record<string, unknown> = {};
-
-        if (block.name === "labiq_download_consumption") {
-          const comp = (input.company as CompanyKey) || preferredCompany;
-          const start = String(input.startDate || "2026-07-01");
-          const end = String(input.endDate || "2026-09-01");
-
-          addLog(`📥 Rapor çekiliyor (${start} → ${end})...`, "info");
-          const exp = await downloadConsumptionReport({
-            company: comp,
-            startDate: start,
-            endDate: end,
-          });
-
-          exportResult = exp;
-          if (exp.ok) {
-            addLog(`✅ Dosya hazır: ${exp.fileName}`, "success");
-            resObj = {
-              basarili: true,
-              dosyaAdi: exp.fileName,
-              hastane: exp.company,
-              tarihAraligi: exp.range,
-              indirmeBaglantisi: exp.downloadUrl,
-            };
-          } else {
-            addLog(`⚠️ Dışa aktarma hatası: ${exp.error}`, "warn");
-            resObj = { basarili: false, hata: exp.error };
-          }
-        } else if (block.name === "labiq_switch_company") {
-          const comp = input.company as CompanyKey;
-          addLog(`🏥 Hastane değiştiriliyor: ${comp.toUpperCase()}...`, "info");
-          const sw = await switchCompany(comp);
-          if (sw.ok) {
-            addLog(`✅ Hastane seçildi: ${sw.company}`, "success");
-            resObj = { basarili: true, yeniHastane: sw.company };
-          } else {
-            addLog(`⚠️ Geçiş hatası: ${sw.error}`, "warn");
-            resObj = { basarili: false, hata: sw.error };
-          }
-        } else if (block.name === "check_app_period_data") {
-          const pCode = String(input.period || "2026-09");
-          addLog(`📊 Dönem kontrolü: ${pCode}...`, "info");
-          const pData = await store().getPeriod(pCode).catch(() => null);
-          if (pData) {
-            const bursaItems = Object.values(pData.items || {}).filter((x) => x.bursa != null).length;
-            const basakItems = Object.values(pData.items || {}).filter((x) => x.basaksehir != null).length;
-            resObj = {
-              mevcut: true,
-              donem: pData.period,
-              durum: pData.status,
-              bursaIsaretlenen: `${bursaItems}/48`,
-              basaksehirIsaretlenen: `${basakItems}/48`,
-              hazirlayan: pData.signoffs?.preparer?.name,
-              guncellenmeTarihi: pData.updatedAt,
-            };
-          } else {
-            const periods = await store().listPeriods().catch(() => []);
-            resObj = {
-              mevcut: false,
-              mesaj: `${pCode} dönemi için henüz sistemde kayıt açılmamış.`,
-              mevcutDonemler: periods.map((p) => p.period),
-              labiqNotu: "LabIQ Verimlilik modülü altında 'Dönemsel Sonuçlar' (/companies/226/results_by_periods) veya 'Dönemsel Tüketim' sayfası incelenebilir.",
-            };
-          }
-        } else if (block.name === "labiq_get_status") {
-          resObj = { durum: getLabiqStatus(), hastaneler: COMPANIES };
-        } else if (block.name === "labiq_screen_guide") {
-          resObj = {
-            rehber: `LabIQ modülleri: Stok, Cihaz, Personel, Verimlilik, Maliyet. İlgili ekranlar için R01-R12 reçeteleri geçerlidir. Aktif hastane: ${currentStatus.companyLabel}`,
-          };
-        }
-
-        toolCalls.push({ name: block.name, input, result: resObj });
-        toolResultBlocks.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: JSON.stringify(resObj),
-        });
-      }
-
-      messages.push({ role: "assistant", content: currentResponse.content });
-      messages.push({ role: "user", content: toolResultBlocks });
-
-      const nextCall = ai.messages.create({
-        model,
-        max_tokens: 1200,
-        system: LABIQ_SYSTEM_PROMPT,
-        tools: LABIQ_TOOLS,
-        messages,
-      }, callTimeout());
-
-      currentResponse = await nextCall;
+    if (preferredCompany && preferredCompany !== getLabiqStatus().companyKey) {
+      const sw = await switchCompany(preferredCompany);
+      addLog(sw.ok ? `🏥 Hastane: ${sw.company}` : `⚠️ Hastane değiştirilemedi: ${sw.error}`, sw.ok ? "info" : "warn");
     }
-
-    const replyText = currentResponse.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b.type === "text" ? b.text : ""))
+    const st = getLabiqStatus();
+    const tables = (await listTables().catch(() => [])).slice(0, 12);
+    const system: Anthropic.TextBlockParam[] = [
+      { type: "text", text: `${await agentPrompt()}\n\n${ADAPTER}`, cache_control: { type: "ephemeral" } },
+      {
+        type: "text",
+        text: `Bugün: ${new Date().toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul", dateStyle: "full" })}. Aktif hastane: ${st.companyLabel} (${st.companyKey}). Hastaneler: Bursa PPP (bursa), Başakşehir PPP (basaksehir).${tables.length ? `\nDaha önce indirilen tablolar: ${tables.map((t) => `${t.id} = ${t.title} · ${t.hospital} · ${t.period || "dönemsiz"} · ${t.totalRows} satır · ${t.at.slice(0, 10)}`).join(" | ")}` : ""}`,
+      },
+    ];
+    const messages: Anthropic.MessageParam[] = [...history.slice(-10).map((m) => ({ role: m.role, content: m.content })), { role: "user", content: incomingMessage }];
+    addLog("Claude planlıyor…");
+    let res: Anthropic.Message | null = null;
+    for (;;) {
+      const left = deadline - Date.now();
+      if (left < 4000) break;
+      res = await claude().messages.create({ model, max_tokens: 4096, system, tools: TOOLS, messages }, { timeout: Math.min(30_000, left), maxRetries: 1 });
+      rounds++;
+      usage.input += res.usage.input_tokens ?? 0;
+      usage.cacheRead += res.usage.cache_read_input_tokens ?? 0;
+      usage.cacheWrite += res.usage.cache_creation_input_tokens ?? 0;
+      usage.output += res.usage.output_tokens ?? 0;
+      if (res.stop_reason !== "tool_use" || rounds >= 12) break;
+      const results: Anthropic.ToolResultBlockParam[] = [];
+      for (const b of res.content) {
+        if (b.type !== "tool_use") continue;
+        const input = (b.input ?? {}) as Record<string, unknown>;
+        addLog(LOG[b.name]?.(input) ?? `🔧 ${b.name}`);
+        let out: Record<string, unknown>;
+        try {
+          out = await runTool(b.name, input, (e) => (exportResult = e));
+          if (b.name === "labiq_export") addLog(out.ok ? `✅ ${out.fileName} → ${out.folder ?? "kaydedildi"}` : `⚠️ ${out.error}`, out.ok ? "success" : "warn");
+        } catch (e) {
+          out = { hata: (e as Error).message };
+          addLog(`⚠️ ${b.name}: ${(e as Error).message}`, "warn");
+        }
+        toolCalls.push({ name: b.name, input, result: out });
+        results.push({ type: "tool_result", tool_use_id: b.id, content: clipJson(out), is_error: "hata" in out || undefined });
+      }
+      messages.push({ role: "assistant", content: res.content }, { role: "user", content: results });
+    }
+    let reply = (res?.content ?? [])
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
       .join("\n")
       .trim();
-
-    recordUsage({
-      at: new Date().toISOString(),
-      model,
-      rounds,
-      prompt: currentResponse.usage.input_tokens,
-      cached: 0,
-      written: 0,
-      output: currentResponse.usage.output_tokens,
-      cost: costUsd(model, {
-        input: currentResponse.usage.input_tokens,
-        cacheRead: 0,
-        cacheWrite: 0,
-        output: currentResponse.usage.output_tokens,
-      }),
-      ms: Date.now() - t0,
-      label: "⚡ LabIQ AI Ajanı",
-    });
-
-    addLog("Yanıt hazırlandı.", "success");
-
-    return {
-      reply: replyText || "İşlem tamamlandı.",
-      toolCalls,
-      exportResult,
-      status: getLabiqStatus(),
-      logs,
-    };
-  } catch (err) {
-    const errMsg = friendlyError(err);
-    addLog(`Bilgi: ${errMsg}`, "info");
-
-    // Akıllı yerel yanıt (Vercel timeout veya Anthropic 404/kredi durumunda kullanıcıyı yanıtsız bırakmaz!)
-    const lower = incomingMessage.toLowerCase();
-    let fallbackReply = `**LabIQ Ajanı:** ${incomingMessage}\n\n`;
-
-    if (lower.includes("sonuç") || lower.includes("eylül") || lower.includes("dönem")) {
-      const pData = await store().getPeriod("2026-09").catch(() => null);
-      if (pData) {
-        fallbackReply += `### Eylül 2026 (2026-09) Dönem Durumu:\n- **Durum:** ${pData.status}\n- **Hazırlayan:** ${pData.signoffs?.preparer?.name || "Batuhan Başar"}\n- **Son Güncelleme:** ${pData.updatedAt ? new Date(pData.updatedAt).toLocaleString("tr-TR") : "Belirtilmemiş"}\n\n*Ayrıca LabIQ sisteminde Verimlilik modülü altında **Dönemsel Sonuçlar** (\`/companies/226/results_by_periods\`) ekranından laboratuvar test sonuç hacimlerini inceleyebilirsiniz.*`;
-      } else {
-        const pAug = await store().getPeriod("2026-08").catch(() => null);
-        fallbackReply += `Eylül 2026 (2026-09) dönemi kontrol kayıtları henüz sistemde açılmamış.\n\n- **Ağustos (2026-08) Durumu:** ${pAug ? pAug.status : "Mevcut"}\n- **LabIQ İnceleme Noktası:** Verimlilik & Test modülü → **Dönemsel Sonuçlar** (\`/companies/226/results_by_periods\`) ekranında dönem ve laboratuvar bazlı sonuç hacimleri yer almaktadır.`;
-      }
-    } else {
-      fallbackReply += `İsteğinizi aldım. LabIQ üzerinde tüketim indirme, hastane değişimi veya 56 ekranlık teknik rehberimizdeki (R01-R12) analizleri gerçekleştirebilirim.`;
+    if (!res || res.stop_reason === "tool_use") {
+      const ready = toolCalls.filter((t) => t.name === "labiq_export" && t.result.ok).map((t) => `${t.result.tableId} (${t.result.fileName})`);
+      reply = `${reply ? `${reply}\n\n` : ""}⏱️ Süre doldu; işin bir kısmı tamamlandı.${ready.length ? ` Hazır tablolar: ${ready.join(", ")}.` : ""} Kaldığım yerden sürdürmem için **devam** yaz.`;
     }
-
-    return {
-      reply: fallbackReply,
-      toolCalls,
-      status: getLabiqStatus(),
-      logs,
-    };
+    addLog("Yanıt hazır.", "success");
+    return { reply: reply || "İşlem tamamlandı.", toolCalls, exportResult, status: getLabiqStatus(), logs };
+  } catch (err) {
+    addLog(`⚠️ ${friendlyError(err)}`, "warn");
+    return { reply: `**LabIQ ajanı yanıt veremedi:** ${friendlyError(err)}`, toolCalls, exportResult, status: getLabiqStatus(), logs };
+  } finally {
+    if (rounds)
+      await recordUsage({
+        at: new Date().toISOString(),
+        model,
+        rounds,
+        prompt: usage.input + usage.cacheRead + usage.cacheWrite,
+        cached: usage.cacheRead,
+        written: usage.cacheWrite,
+        output: usage.output,
+        cost: costUsd(model, usage),
+        ms: Date.now() - t0,
+        label: "⚡ LabIQ AI Ajanı",
+      });
   }
 }

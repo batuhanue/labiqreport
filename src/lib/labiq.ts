@@ -11,12 +11,14 @@ import { store } from "./db";
  * - Doğal dil komut çözümleme (Türkçe tarih & niyet tespiti)
  */
 
-const BASE = "https://labiq.ivdiq.com";
-const WS_BASE = "wss://labiq.ivdiq.com/cable";
+export const BASE = (process.env.LABIQ_BASE_URL?.trim() || "https://labiq.ivdiq.com").replace(/\/$/, "");
+const WS_BASE = `${BASE.replace(/^http/, "ws")}/cable`;
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LabIQ-Agent/1.0";
 // Kimlik bilgileri yalnızca ortam değişkeninden (Vercel → Settings → Environment Variables); koda yazılmaz
 const EMAIL = process.env.LABIQ_EMAIL?.trim() ?? "";
 const PASSWORD = process.env.LABIQ_PASSWORD ?? "";
-const USER_ID = process.env.LABIQ_USER_ID?.trim() ?? "";
+/** isteğe bağlı: girişten sonra sayfadan kendiliğinden bulunur */
+const USER_ID_ENV = process.env.LABIQ_USER_ID?.trim() ?? "";
 const SESSION_KV = "labiq-session";
 
 export const COMPANIES = [
@@ -35,6 +37,8 @@ interface LabiqSession {
   csrfToken: string;
   exportStreamName: string;
   lastUsed: number;
+  /** LabIQ kullanıcı kimliği (hastane değiştirmek için; girişten sonra sayfadan okunur) */
+  userId?: string;
 }
 
 let session: LabiqSession = {
@@ -76,6 +80,11 @@ function extractMetaCSRF(html: string): string {
   return m?.[1] ?? "";
 }
 
+/** Girişten sonra sayfadaki bağlantılardan kullanıcı kimliği (ör. /companies/226/users/17259/...) */
+function extractUserId(html: string): string {
+  return html.match(/\/users\/(\d+)\/update_last_sign_id/)?.[1] ?? html.match(/\/companies\/\d+\/users\/(\d+)/)?.[1] ?? html.match(/\/users\/(\d+)(?:\/edit|["'])/)?.[1] ?? USER_ID_ENV;
+}
+
 function extractExportStreamName(html: string): string {
   const streamNames = [...html.matchAll(/signed-stream-name="([^"]+)"/g)].map((m) => m[1]);
   for (const s of streamNames) {
@@ -91,7 +100,7 @@ function extractExportStreamName(html: string): string {
  * LabIQ'ya giriş yapar ve oturum bilgilerini saklar
  */
 export async function labiqLogin(): Promise<{ ok: boolean; company?: string; error?: string }> {
-  if (!EMAIL || !PASSWORD) return { ok: false, error: "LabIQ giriş bilgileri tanımlı değil: Vercel'e LABIQ_EMAIL, LABIQ_PASSWORD ve LABIQ_USER_ID ekleyin." };
+  if (!EMAIL || !PASSWORD) return { ok: false, error: "LabIQ giriş bilgileri tanımlı değil: Vercel'e LABIQ_EMAIL ve LABIQ_PASSWORD ekleyin." };
   try {
     // 1) GET login page
     const loginPage = await fetch(`${BASE}/users/sign_in`, {
@@ -156,7 +165,14 @@ export async function labiqLogin(): Promise<{ ok: boolean; company?: string; err
       csrfToken: extractMetaCSRF(dashHtml),
       exportStreamName: extractExportStreamName(dashHtml),
       lastUsed: Date.now(),
+      userId: extractUserId(dashHtml),
     };
+    if (!dashRes.url.includes("/users/sign_in") && !/name="user\[password\]"/.test(dashHtml)) {
+      // giriş tamam
+    } else {
+      session.loggedIn = false;
+      return { ok: false, error: "LabIQ girişi başarısız: e-posta ya da şifre hatalı olabilir (LABIQ_EMAIL / LABIQ_PASSWORD)." };
+    }
 
     // Oturumu veritabanına kaydet (lambdalar arası paylaşım için)
     try {
@@ -207,7 +223,9 @@ export async function switchCompany(target: CompanyKey | "226" | "259"): Promise
   }
 
   try {
-    const updateUrl = `${BASE}/companies/${session.companyId}/users/${USER_ID}/update_last_sign_id`;
+    const userId = session.userId || USER_ID_ENV;
+    if (!userId) return { ok: false, error: "LabIQ kullanıcı kimliği sayfadan okunamadı; hastane değiştirilemiyor." };
+    const updateUrl = `${BASE}/companies/${session.companyId}/users/${userId}/update_last_sign_id`;
     const res = await fetch(updateUrl, {
       method: "POST",
       headers: {
@@ -241,6 +259,7 @@ export async function switchCompany(target: CompanyKey | "226" | "259"): Promise
     session.companyLabel = targetMeta.label;
     session.csrfToken = extractMetaCSRF(dashHtml);
     session.exportStreamName = extractExportStreamName(dashHtml);
+    session.userId = extractUserId(dashHtml) || session.userId;
     session.lastUsed = Date.now();
 
     try {
@@ -589,4 +608,113 @@ export function getLabiqStatus() {
     user: EMAIL,
     lastUsed: session.lastUsed ? new Date(session.lastUsed).toISOString() : null,
   };
+}
+
+
+// ------------------------------------------------------------------ genel istek ve dışa aktarma (ajanın gezinme araçları için)
+/**
+ * Oturumla LabIQ isteği: çerezleri ekler, yenilerini saklar; oturum düşmüşse bir kez yeniden giriş yapıp tekrar dener.
+ */
+export async function labiqFetch(pathOrUrl: string, init: RequestInit = {}, retry = true): Promise<Response> {
+  const s = await ensureSession();
+  if (!s.ok) throw new Error(s.error ?? "LabIQ oturumu açılamadı");
+  const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${BASE}${pathOrUrl.startsWith("/") ? "" : "/"}${pathOrUrl}`;
+  const res = await fetch(url, { ...init, headers: { "User-Agent": UA, Cookie: cookieHeader(session.cookies), ...(init.headers ?? {}) } });
+  const set = [...(res.headers.getSetCookie?.() ?? [])];
+  if (set.length) {
+    session.cookies = mergeCookies(session.cookies, set);
+    store().setKV(SESSION_KV, session).catch(() => {});
+  }
+  if (retry && res.url.includes("/users/sign_in")) {
+    session.loggedIn = false;
+    const again = await labiqLogin();
+    if (!again.ok) throw new Error(again.error ?? "LabIQ'ya yeniden giriş yapılamadı");
+    return labiqFetch(pathOrUrl, init, false);
+  }
+  return res;
+}
+
+export const sessionCsrf = () => session.csrfToken;
+export const sameHost = (url: string) => url.startsWith(BASE) || url.startsWith("/");
+
+/**
+ * Dışa aktarma: önce LabIQ'nun canlı kanalına (ActionCable) abone olur, sonra dışa aktarmayı tetikler.
+ * Sunucu dosyayı doğrudan döndürürse onu, kanal üzerinden bağlantı gönderirse o bağlantıyı verir.
+ */
+export async function exportViaCable(exportUrl: string, timeoutMs = 25000): Promise<{ ok: true; file?: { buf: Buffer; name: string; type: string }; downloadUrl?: string; fileName?: string } | { ok: false; error: string }> {
+  const s = await ensureSession();
+  if (!s.ok) return { ok: false, error: s.error ?? "oturum yok" };
+  if (!session.exportStreamName) {
+    const dash = await labiqFetch("/");
+    session.exportStreamName = extractExportStreamName(await dash.text());
+  }
+  const trigger = async () => {
+    const res = await labiqFetch(exportUrl, { headers: { Accept: "text/vnd.turbo-stream.html, text/html, application/octet-stream, */*" } });
+    if (!res.ok) return { error: `LabIQ dışa aktarma isteği reddedildi: HTTP ${res.status}` };
+    const type = res.headers.get("content-type") ?? "";
+    const disp = res.headers.get("content-disposition") ?? "";
+    if (/spreadsheet|excel|csv|octet-stream|pdf/i.test(type) || /attachment/i.test(disp)) {
+      const name = decodeURIComponent(disp.match(/filename\*=UTF-8''([^;]+)/i)?.[1] ?? disp.match(/filename="?([^";]+)/i)?.[1] ?? "labiq-rapor.xlsx");
+      return { file: { buf: Buffer.from(await res.arrayBuffer()), name, type } };
+    }
+    const body = await res.text();
+    const href = body.match(/href="([^"]+(?:amazonaws|active_storage|\.xlsx|\.csv)[^"]*)"/)?.[1];
+    return href ? { href: href.replace(/&amp;/g, "&") } : {};
+  };
+  if (!session.exportStreamName) {
+    // canlı kanal yok: yalnızca doğrudan dosya
+    const r = await trigger();
+    if ("error" in r && r.error) return { ok: false, error: r.error };
+    if ("file" in r && r.file) return { ok: true, file: r.file };
+    if ("href" in r && r.href) return { ok: true, downloadUrl: r.href };
+    return { ok: false, error: "Dışa aktarma dosya ya da bağlantı döndürmedi" };
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    let ws: WebSocket | null = null;
+    const finish = (v: Parameters<typeof resolve>[0]) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try {
+        ws?.close();
+      } catch {}
+      resolve(v);
+    };
+    const timer = setTimeout(() => finish({ ok: false, error: `LabIQ dosyayı ${Math.round(timeoutMs / 1000)} sn içinde hazırlamadı` }), timeoutMs);
+    try {
+      ws = new WebSocket(WS_BASE, { headers: { Cookie: cookieHeader(session.cookies), Origin: BASE } } as unknown as string);
+      ws.onopen = () =>
+        ws?.send(JSON.stringify({ command: "subscribe", identifier: JSON.stringify({ channel: "Turbo::StreamsChannel", signed_stream_name: session.exportStreamName }) }));
+      ws.onmessage = async (ev) => {
+        try {
+          const data = JSON.parse(String(ev.data));
+          if (data.type === "confirm_subscription") {
+            const r = await trigger();
+            if ("error" in r && r.error) finish({ ok: false, error: r.error });
+            else if ("file" in r && r.file) finish({ ok: true, file: r.file });
+            else if ("href" in r && r.href) finish({ ok: true, downloadUrl: r.href });
+            return;
+          }
+          const msg = typeof data.message === "string" ? data.message : "";
+          const href = msg.match(/href="([^"]+)"/)?.[1];
+          if (href && /amazonaws|active_storage|\.xlsx|\.csv|\.pdf/i.test(href)) {
+            const raw = href.replace(/&amp;/g, "&");
+            const fn = raw.match(/filename%2A%3DUTF-8%27%27([^&]+)/i)?.[1] ?? raw.match(/filename%3D%22([^"&]+)%22/i)?.[1];
+            finish({ ok: true, downloadUrl: raw, fileName: fn ? decodeURIComponent(fn) : undefined });
+          }
+        } catch {}
+      };
+      ws.onerror = () => finish({ ok: false, error: "LabIQ canlı kanalına bağlanılamadı" });
+    } catch (e) {
+      finish({ ok: false, error: `Bağlantı kurulamadı: ${(e as Error).message}` });
+    }
+  });
+}
+
+/** Dışa aktarılan dosyayı indirir (LabIQ adresine çerezle, S3 gibi dış adrese çerezsiz) */
+export async function fetchFile(url: string) {
+  const res = sameHost(url) ? await labiqFetch(url) : await fetch(url);
+  if (!res.ok) throw new Error(`Dosya indirilemedi: HTTP ${res.status}`);
+  return { buf: Buffer.from(await res.arrayBuffer()), type: res.headers.get("content-type") ?? "" };
 }

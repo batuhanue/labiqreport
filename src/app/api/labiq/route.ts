@@ -1,3 +1,4 @@
+import { importDownloaded } from "@/lib/labiq-data";
 import { NextResponse } from "next/server";
 import {
   COMPANIES,
@@ -53,7 +54,9 @@ export async function POST(req: Request) {
         startDate,
         endDate,
       });
-      return NextResponse.json(res);
+      // Excel'i oku, şirket verisi klasörüne ve sorgulanabilir tablolara kaydet
+      const saved = res.ok && res.downloadUrl ? await importDownloaded(res.downloadUrl, { fileName: res.fileName, title: "Ürün Kullanım", params: { movement_date: `${startDate} to ${endDate}` } }).catch((e) => ({ ok: false, error: (e as Error).message })) : undefined;
+      return NextResponse.json({ ...res, saved });
     }
 
     // 4. Doğal Dil Komutu (AI Ajan Konsolu)
@@ -127,6 +130,10 @@ export async function POST(req: Request) {
         }
 
         addLog(`Dosya hazırlandı: ${exp.fileName}`, "success");
+        if (exp.downloadUrl) {
+          const saved = await importDownloaded(exp.downloadUrl, { fileName: exp.fileName, title: "Ürün Kullanım", params: { movement_date: `${parsed.startDate} to ${parsed.endDate}` } }).catch((e) => ({ ok: false, error: (e as Error).message, folder: undefined }));
+          addLog(saved.ok ? `Şirket verisine kaydedildi: ${saved.folder}` : `Kaydedilemedi: ${saved.error}`, saved.ok ? "success" : "warn");
+        }
         addLog(`İndirme bağlantısı sağlandı.`, "success");
 
         return NextResponse.json({

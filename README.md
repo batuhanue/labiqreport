@@ -161,6 +161,12 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   günde önerilerin ne kadarının doğru çıktığını (onay ↔ "Önemsiz"/"Benim işim değil" ↔ kaçırılan) ve önceki 30 günle
   farkını gösterir. E-posta okuyucudaki **Önemliydi** ile beynin kaçırdığı bir mesajı gösterirsin: nedenini öğrenir,
   hemen iş açar.
+  **LabIQ ajanı (Beyin → ⚡ LabIQ):** eğitim paketiyle (knowledge/labiq: ajan promptu + 56 ekranlık teknik rapor)
+  çalışan, LabIQ'da bir kullanıcı gibi gezinen ajan: menüden site haritasını çıkarır, sayfanın filtre formunu okuyup
+  filtre uygular, tabloyu okur ya da raporu dışa aktarır. İnen Excel/CSV tabloya çevrilir, şirket verisi klasörüne
+  (hastane · dönem · "LabIQ · <rapor>") kaydedilir ve `labiq_table_query` ile gerçek hesapla süzülür, gruplanır,
+  toplanır (model kafadan toplamaz). Ekran bilgisi teknik rapordan bölüm bölüm aranır. Salt-okunur: yazma/düzenleme
+  sayfaları araç düzeyinde engellidir. Bir istek ~50 sn ve 12 adımda bitmezse hazır tabloları söyler, "devam" ile sürer.
   **Kazanılan güven:** her ajanın bir güven seviyesi var (ajan kartında): 🙋 Öner (her işi sorar) · ✅ Kendisi onaylasın
   (yeni işleri sormadan Yapılacak'a alır; onay oranı düşük türleri yine sorar) · 🤖 Teslimatı da hazırlasın (onayladığı işi
   kendisi yapar; işler sayfa açıkken ya da arka planda sırayla yapılır). Seviyeyi sen seçersin; seçimlerinden onay oranı
@@ -221,8 +227,8 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
      geçersizse sitenin adresini (`https://…vercel.app`) kullanır.
    - `CRON_SECRET` = rastgele uzun bir değer (Vercel Cron bunu otomatik `Authorization` başlığıyla gönderir)
    - Zamanlama `vercel.json` içinde: `0 5 * * *` (UTC) = her gün 08:00 İstanbul (`30 4 * * *` = 07:30 sabah düşünmesi)
-5. LabIQ ajanı için (canlı LabIQ'ya giriş): `LABIQ_EMAIL`, `LABIQ_PASSWORD`, `LABIQ_USER_ID`. Şifre asla koda
-   yazılmaz; yalnızca Vercel ortam değişkeninde durur. `ANTHROPIC_MODEL` boş bırakılırsa `claude-haiku-5-5` kullanılır.
+5. LabIQ ajanı için (canlı LabIQ'ya giriş): `LABIQ_EMAIL`, `LABIQ_PASSWORD`. Şifre asla koda yazılmaz; yalnızca
+   Vercel ortam değişkeninde durur (kullanıcı kimliği girişten sonra sayfadan okunur). `ANTHROPIC_MODEL` boş bırakılırsa `claude-haiku-5-5` kullanılır.
 6. Google Workspace bağlantısı (bir kerelik):
    - console.cloud.google.com → şirket hesabıyla yeni proje
    - **APIs & Services → Library**: Gmail API, Google Calendar API, Google Chat API, Google Meet REST API, People API, Google Drive API → Enable

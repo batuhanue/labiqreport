@@ -6,6 +6,8 @@ const nextConfig: NextConfig = {
     "/api/export": ["./templates/**"],
     "/api/assistant": ["./knowledge/**"],
     "/api/assistant/knowledge": ["./knowledge/**"],
+    // beyin, eğitim ve LabIQ ajanı da bilgi dosyalarını okur
+    "/api/**": ["./knowledge/**"],
   },
 };
 
