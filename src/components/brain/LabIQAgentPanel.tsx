@@ -92,8 +92,10 @@ export default function LabIQAgentPanel() {
   const fetchStatus = async () => {
     try {
       const res = await fetch("/api/labiq");
-      const data = await res.json();
-      if (data.status) {
+      const text = await res.text();
+      let data: any = {};
+      try { data = JSON.parse(text); } catch {}
+      if (data?.status) {
         setStatus(data.status);
         setSelectedHospital(data.status.companyKey);
       }
@@ -123,8 +125,10 @@ export default function LabIQAgentPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "switch", company: target }),
       });
-      const data = await res.json();
-      if (data.ok) {
+      const text = await res.text();
+      let data: any = {};
+      try { data = JSON.parse(text); } catch {}
+      if (res.ok && data.ok) {
         setStatus(data.status);
         setSelectedHospital(target);
         addLog(`Şirket başarıyla değiştirildi: ${data.company}`, "success");
@@ -180,7 +184,20 @@ export default function LabIQAgentPanel() {
         }),
       });
 
-      const data = await res.json();
+      const textResponse = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(textResponse);
+      } catch {
+        if (res.status === 504) {
+          throw new Error("Sunucu yanıt süresi aşıldı (504 Gateway Timeout). Lütfen tekrar deneyin.");
+        }
+        throw new Error(`Sunucu yanıtı geçersiz (${res.status}): ${textResponse.slice(0, 100)}`);
+      }
+
+      if (!res.ok && !data?.reply) {
+        throw new Error(data?.error || `Sunucu hatası (${res.status})`);
+      }
 
       if (data.logs && Array.isArray(data.logs)) {
         for (const l of data.logs) addLog(l.text, l.type);
@@ -249,8 +266,18 @@ export default function LabIQAgentPanel() {
         }),
       });
 
-      const data = await res.json();
-      if (data.ok && data.downloadUrl) {
+      const text = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        if (res.status === 504) {
+          throw new Error("Sunucu yanıt süresi aşıldı (504 Gateway Timeout). Lütfen tekrar deneyin.");
+        }
+        throw new Error(`Sunucu yanıtı geçersiz (${res.status}): ${text.slice(0, 100)}`);
+      }
+
+      if (data && data.ok && data.downloadUrl) {
         const item: ExportResult = {
           fileName: data.fileName,
           downloadUrl: data.downloadUrl,

@@ -6,14 +6,17 @@ import { store } from "./db";
  * Asistanın model katmanı: Anthropic Claude (Messages API, resmi TypeScript SDK).
  * Model ANTHROPIC_MODEL ile değiştirilebilir (varsayılan Claude Haiku 5.5); ileride daha güçlü modele geçmek tek ayar.
  */
-export const ASSISTANT_MODEL = process.env.ANTHROPIC_MODEL?.trim() || "claude-haiku-5-5";
+export const ASSISTANT_MODEL =
+  process.env.ANTHROPIC_MODEL?.trim() && process.env.ANTHROPIC_MODEL.trim() !== "claude-haiku-5-5"
+    ? process.env.ANTHROPIC_MODEL.trim()
+    : "claude-3-5-haiku-20241022";
 
 export const claudeConfigured = () => !!process.env.ANTHROPIC_API_KEY?.trim();
 
 let client: Anthropic | null = null;
-/** SDK 429/529/5xx ve bağlantı hatalarını üstel beklemeyle kendisi yeniden dener. */
+/** SDK 429/529/5xx ve bağlantı hatalarını kontrollü olarak dener, Vercel süre aşımını engeller. */
 export function claude() {
-  client ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.trim(), maxRetries: 3, timeout: 50_000 });
+  client ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.trim(), maxRetries: 1, timeout: 12_000 });
   return client;
 }
 
@@ -47,8 +50,10 @@ export function friendlyError(e: unknown) {
 
 // ------------------------------------------------------------------ fiyat (USD / 1M token, Anthropic birinci taraf API)
 const PRICES: Record<string, { in: number; out: number; read: number }> = {
+  "claude-3-5-haiku-20241022": { in: 0.8, out: 4.0, read: 0.08 },
   "claude-haiku-5-5": { in: 0.1, out: 0.5, read: 0.1 },
   "claude-sonnet-5-5": { in: 2, out: 10, read: 0.1 },
+  "claude-3-5-sonnet-20241022": { in: 3, out: 15, read: 0.3 },
   "claude-opus-5-5": { in: 4, out: 20, read: 0.05 },
   "claude-fable-5-1": { in: 10, out: 50, read: 0.025 },
 };

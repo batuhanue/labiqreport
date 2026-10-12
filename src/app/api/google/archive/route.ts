@@ -36,9 +36,9 @@ export async function GET(req: Request) {
   return handle(progress);
 }
 
-/** Geçmişten bir parça daha indirir (≈40 sn). */
+/** Geçmişten bir parça daha indirir (≈7 sn içinde tamamlar, Vercel 504 zaman aşımını engeller). */
 export async function POST() {
-  return handle(() => archiveStep({ budgetMs: 40000 }));
+  return handle(() => archiveStep({ budgetMs: 7000 }));
 }
 
 /** Arşivi tamamen siler (bağlantı kalır; sonraki adımlar baştan indirir). */

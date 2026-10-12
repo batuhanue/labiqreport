@@ -1,5 +1,6 @@
 import "server-only";
 import { Buffer } from "node:buffer";
+import { store } from "./db";
 
 /**
  * LabIQ Canlı Entegrasyon & AI Ajan Modülü
@@ -15,6 +16,7 @@ const WS_BASE = "wss://labiq.ivdiq.com/cable";
 const EMAIL = "batuhanb@diacore.com.tr";
 const PASSWORD = "Fb140228.";
 const USER_ID = "17259";
+const SESSION_KV = "labiq-session";
 
 export const COMPANIES = [
   { id: "bursa", companyId: "226", label: "Diacore Diagnostik - Bursa PPP", short: "Bursa PPP" },
@@ -154,6 +156,11 @@ export async function labiqLogin(): Promise<{ ok: boolean; company?: string; err
       lastUsed: Date.now(),
     };
 
+    // Oturumu veritabanına kaydet (lambdalar arası paylaşım için)
+    try {
+      await store().setKV(SESSION_KV, session);
+    } catch {}
+
     return { ok: true, company: session.companyLabel };
   } catch (e) {
     return { ok: false, error: `Labiq bağlantı hatası: ${(e as Error).message}` };
@@ -161,14 +168,26 @@ export async function labiqLogin(): Promise<{ ok: boolean; company?: string; err
 }
 
 /**
- * Oturumun güncel olduğunu garanti eder
+ * Oturumun güncel olduğunu garanti eder (bellek → Neon KV → yeniden giriş)
  */
 export async function ensureSession(): Promise<{ ok: boolean; error?: string }> {
-  if (!session.loggedIn || Date.now() - session.lastUsed > 20 * 60_000) {
-    return labiqLogin();
+  // 1) Bellek kontrolü (aynı lambda içindeki çağrılar)
+  if (session.loggedIn && Date.now() - session.lastUsed < 45 * 60_000) {
+    session.lastUsed = Date.now();
+    return { ok: true };
   }
-  session.lastUsed = Date.now();
-  return { ok: true };
+
+  // 2) Veritabanı KV kontrolü (farklı lambdalar arası oturum paylaşımı)
+  try {
+    const saved = await store().getKV<LabiqSession>(SESSION_KV);
+    if (saved && saved.loggedIn && saved.cookies?.length && Date.now() - (saved.lastUsed || 0) < 45 * 60_000) {
+      session = { ...saved, lastUsed: Date.now() };
+      return { ok: true };
+    }
+  } catch {}
+
+  // 3) Oturum yok veya süresi dolmuşsa giriş yap
+  return labiqLogin();
 }
 
 /**
@@ -222,9 +241,47 @@ export async function switchCompany(target: CompanyKey | "226" | "259"): Promise
     session.exportStreamName = extractExportStreamName(dashHtml);
     session.lastUsed = Date.now();
 
+    try {
+      await store().setKV(SESSION_KV, session);
+    } catch {}
+
     return { ok: true, company: session.companyLabel };
   } catch (e) {
     return { ok: false, error: `Şirket değiştirme hatası: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * LabIQ'dan bir sayfanın HTML içeriğini ve tablosunu çeker
+ */
+export async function fetchPageData(path: string): Promise<{ ok: boolean; title?: string; rows?: string[][]; error?: string }> {
+  const s = await ensureSession();
+  if (!s.ok) return { ok: false, error: s.error };
+
+  try {
+    const url = path.startsWith("http") ? path : `${BASE}${path}`;
+    const res = await fetch(url, {
+      headers: {
+        Cookie: cookieHeader(session.cookies),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LabIQ-Agent/1.0",
+      },
+    });
+
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const html = await res.text();
+
+    const titleMatch = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i) || html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, "").trim() : "";
+
+    const trMatches = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
+    const rows = trMatches.slice(0, 20).map((tr) => {
+      const cells = [...tr[1].matchAll(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)];
+      return cells.map((c) => c[1].replace(/<[^>]+>/g, "").trim());
+    }).filter((r) => r.length > 0);
+
+    return { ok: true, title, rows };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
   }
 }
 
