@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { Icon } from "@/components/ui";
+import { renderMd } from "@/lib/markdown";
 
 interface LogItem {
   text: string;
@@ -18,32 +18,65 @@ interface ExportResult {
   timestamp: string;
 }
 
+interface ToolCallRecord {
+  name: string;
+  input: Record<string, unknown>;
+  result: Record<string, unknown>;
+}
+
+interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  time: string;
+  toolCalls?: ToolCallRecord[];
+  exportResult?: ExportResult;
+}
+
 export default function LabIQAgentPanel() {
   const [status, setStatus] = useState<{
     loggedIn: boolean;
     companyKey: "bursa" | "basaksehir";
+    companyId: string;
     companyLabel: string;
     user: string;
   } | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
-  const [command, setCommand] = useState("");
-  const [logs, setLogs] = useState<LogItem[]>([]);
-  const [lastExport, setLastExport] = useState<ExportResult | null>(null);
-  const [history, setHistory] = useState<ExportResult[]>([]);
+  const [inputMessage, setInputMessage] = useState("");
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: "welcome",
+      role: "assistant",
+      content: `Merhaba Batuhan Bey! 👋\n\nBen **LabIQ Canlı AI Ajanı**yım. Claude Haiku bağlamı ve 56 ekranlık teknik eğitim atlası (**R01–R12**) ile doğrudan LabIQ oturumunuza bağlıyım.\n\n### ⚡ Neler Yapabilirim?
+- **Tüketim İndirme:** *"1 temmuz 1 eylül arasındaki tüketimleri indir"* veya *"Başakşehir için son ay tüketimlerini çek"*
+- **Hastane Değişimi:** Bursa PPP (226) ve Başakşehir PPP (259) arasında anında geçiş
+- **Süreç & Rapor Rehberliği:** Stok Gözlem (R02), Miadı Yaklaşanlar (R03), Test Verimliliği (R08), Cihaz Performansı (R07) ve Maliyet Anomali (R09) dökümleri
+- **Doğrudan İndirme:** Rapor üretildiği an dosyayı bilgisayarınıza otomatik indiririm.\n\nNasıl yardımcı olabilirim?`,
+      time: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
+    },
+  ]);
 
-  // Form tabanlı doğrudan filtreleme için
+  const [logs, setLogs] = useState<LogItem[]>([]);
+  const [history, setHistory] = useState<ExportResult[]>([]);
+  const [activeTab, setActiveTab] = useState<"chat" | "downloads" | "manual">("chat");
+
+  // Manuel doğrudan indirme parametreleri
   const [startDate, setStartDate] = useState("2026-07-01");
   const [endDate, setEndDate] = useState("2026-09-01");
   const [selectedHospital, setSelectedHospital] = useState<"bursa" | "basaksehir">("bursa");
 
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
-  // İlk yüklemede durum kontrolü
   useEffect(() => {
     fetchStatus();
   }, []);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -51,7 +84,7 @@ export default function LabIQAgentPanel() {
 
   const addLog = (text: string, type: "info" | "success" | "warn" = "info") => {
     setLogs((prev) => [
-      ...prev,
+      ...prev.slice(-40),
       { text, time: new Date().toLocaleTimeString("tr-TR"), type },
     ]);
   };
@@ -69,10 +102,20 @@ export default function LabIQAgentPanel() {
     }
   };
 
+  const triggerBrowserDownload = (downloadUrl: string, fileName: string) => {
+    const proxyUrl = `/api/labiq/download?url=${encodeURIComponent(downloadUrl)}&name=${encodeURIComponent(fileName)}`;
+    const a = document.createElement("a");
+    a.href = proxyUrl;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   const handleSwitchCompany = async (target: "bursa" | "basaksehir") => {
     if (switching || status?.companyKey === target) return;
     setSwitching(true);
-    addLog(`${target === "bursa" ? "Bursa PPP" : "Başakşehir PPP"} hastanesine geçiş yapılıyor...`, "info");
+    addLog(`${target === "bursa" ? "Bursa PPP" : "Başakşehir PPP"} hastanesine geçiliyor...`, "info");
 
     try {
       const res = await fetch("/api/labiq", {
@@ -85,6 +128,15 @@ export default function LabIQAgentPanel() {
         setStatus(data.status);
         setSelectedHospital(target);
         addLog(`Şirket başarıyla değiştirildi: ${data.company}`, "success");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: String(Date.now()),
+            role: "assistant",
+            content: `🏥 Aktif hastane başarıyla **${data.company}** olarak güncellendi.`,
+            time: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
+          },
+        ]);
       } else {
         addLog(`Şirket değiştirilemedi: ${data.error}`, "warn");
       }
@@ -95,37 +147,43 @@ export default function LabIQAgentPanel() {
     }
   };
 
-  const triggerBrowserDownload = (downloadUrl: string, fileName: string) => {
-    const proxyUrl = `/api/labiq/download?url=${encodeURIComponent(downloadUrl)}&name=${encodeURIComponent(fileName)}`;
-    const a = document.createElement("a");
-    a.href = proxyUrl;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
+  const sendMessage = async (textToSend?: string) => {
+    const text = (textToSend ?? inputMessage).trim();
+    if (!text || loading) return;
 
-  const runCommand = async (cmdText?: string) => {
-    const cmdToRun = (cmdText ?? command).trim();
-    if (!cmdToRun || loading) return;
+    const userMsgId = String(Date.now());
+    const userMsg: Message = {
+      id: userMsgId,
+      role: "user",
+      content: text,
+      time: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
+    };
 
+    setMessages((prev) => [...prev, userMsg]);
+    setInputMessage("");
     setLoading(true);
-    setCommand("");
-    addLog(`💬 Komut: "${cmdToRun}"`, "info");
+    addLog(`Kullanıcı mesajı: "${text}"`, "info");
 
     try {
-      const res = await fetch("/api/labiq", {
+      const historyPayload = messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      const res = await fetch("/api/labiq/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "command", command: cmdToRun }),
+        body: JSON.stringify({
+          message: text,
+          history: historyPayload,
+          company: status?.companyKey,
+        }),
       });
 
       const data = await res.json();
 
       if (data.logs && Array.isArray(data.logs)) {
-        for (const l of data.logs) {
-          addLog(l.text, l.type);
-        }
+        for (const l of data.logs) addLog(l.text, l.type);
       }
 
       if (data.status) {
@@ -133,34 +191,51 @@ export default function LabIQAgentPanel() {
         setSelectedHospital(data.status.companyKey);
       }
 
-      if (data.ok && data.action === "export_consumption" && data.downloadUrl) {
-        const exportItem: ExportResult = {
-          fileName: data.fileName,
-          downloadUrl: data.downloadUrl,
-          company: data.company,
-          range: data.range,
+      let exportItem: ExportResult | undefined;
+      if (data.exportResult && data.exportResult.ok && data.exportResult.downloadUrl) {
+        exportItem = {
+          fileName: data.exportResult.fileName,
+          downloadUrl: data.exportResult.downloadUrl,
+          company: data.exportResult.company,
+          range: data.exportResult.range,
           timestamp: new Date().toLocaleTimeString("tr-TR"),
         };
-        setLastExport(exportItem);
-        setHistory((prev) => [exportItem, ...prev]);
-
-        // Otomatik indirme başlat
-        addLog(`🚀 Dosya bilgisayarınıza indiriliyor...`, "success");
-        triggerBrowserDownload(data.downloadUrl, data.fileName);
-      } else if (!data.ok) {
-        addLog(`Ajan bildirimi: ${data.error || "İşlem tamamlanamadı"}`, "warn");
+        setHistory((prev) => [exportItem!, ...prev]);
+        addLog(`🚀 Otomatik indirme tetiklendi: ${exportItem.fileName}`, "success");
+        triggerBrowserDownload(exportItem.downloadUrl, exportItem.fileName);
       }
+
+      const botMsg: Message = {
+        id: String(Date.now() + 1),
+        role: "assistant",
+        content: data.reply || (data.ok ? "İşlem başarıyla tamamlandı." : data.error || "Yanıt alınamadı."),
+        time: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
+        toolCalls: data.toolCalls,
+        exportResult: exportItem,
+      };
+
+      setMessages((prev) => [...prev, botMsg]);
     } catch (e) {
-      addLog(`Hata: ${(e as Error).message}`, "warn");
+      const errText = (e as Error).message;
+      addLog(`Hata: ${errText}`, "warn");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: String(Date.now() + 1),
+          role: "assistant",
+          content: `⚠️ Bağlantı hatası oluştu: ${errText}`,
+          time: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDirectExport = async () => {
+  const handleManualExport = async () => {
     if (loading) return;
     setLoading(true);
-    addLog(`Doğrudan indirme başlatıldı: ${selectedHospital.toUpperCase()} (${startDate} → ${endDate})`, "info");
+    addLog(`Manuel indirme başlatıldı: ${selectedHospital.toUpperCase()} (${startDate} → ${endDate})`, "info");
 
     try {
       const res = await fetch("/api/labiq", {
@@ -175,19 +250,29 @@ export default function LabIQAgentPanel() {
       });
 
       const data = await res.json();
-
       if (data.ok && data.downloadUrl) {
-        addLog(`Dosya hazırlandı: ${data.fileName}`, "success");
-        const exportItem: ExportResult = {
+        const item: ExportResult = {
           fileName: data.fileName,
           downloadUrl: data.downloadUrl,
           company: data.company,
           range: data.range,
           timestamp: new Date().toLocaleTimeString("tr-TR"),
         };
-        setLastExport(exportItem);
-        setHistory((prev) => [exportItem, ...prev]);
+        setHistory((prev) => [item, ...prev]);
         triggerBrowserDownload(data.downloadUrl, data.fileName);
+        addLog(`Dosya hazırlandı ve indirildi: ${data.fileName}`, "success");
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: String(Date.now()),
+            role: "assistant",
+            content: `✅ **Tüketim Raporu İndirildi**\n\n- **Dosya:** \`${data.fileName}\`\n- **Hastane:** ${data.company}\n- **Dönem:** ${data.range}`,
+            time: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
+            exportResult: item,
+          },
+        ]);
+        setActiveTab("chat");
       } else {
         addLog(`İndirme başarısız: ${data.error}`, "warn");
       }
@@ -198,57 +283,62 @@ export default function LabIQAgentPanel() {
     }
   };
 
-  const chips = [
+  const quickPrompts = [
     "1 temmuz 1 eylül arasındaki tüketimleri indir",
     "Başakşehir PPP için temmuz ayı tüketimlerini indir",
-    "Bursa PPP 1 temmuz 1 eylül tüketimleri",
     "Başakşehir hastanesine geç",
     "Bursa hastanesine geç",
+    "Stok Gözlem ve Ekstre süreci nedir? (R02)",
+    "Miadı yaklaşan ürünler ve riskli stok analizi (R03 & R06)",
+    "Laboratuvar test verimlilik raporu tarifi (R08)",
   ];
 
   return (
-    <div className="space-y-5">
-      {/* ── ÜST BAŞLIK & DURUM PANELİ ── */}
-      <div className="clay flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6 rounded-[28px] bg-gradient-to-br from-[#0c1020]/90 via-[#0e1630]/70 to-[#080b16]/90 border border-blue/20 shadow-2xl backdrop-blur-xl">
+    <div className="space-y-4">
+      {/* ── ÜST BAŞLIK, CANLI DURUM & HASTANE SEÇİCİ ── */}
+      <div className="clay flex flex-wrap items-center justify-between gap-4 p-5 rounded-[28px] bg-gradient-to-br from-[#0c1020]/95 via-[#0e1630]/85 to-[#080b16]/95 border border-blue/25 shadow-2xl backdrop-blur-xl">
         <div className="flex items-center gap-4">
-          <div className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-blue/15 text-2xl border border-blue/30 shadow-[0_0_30px_rgba(59,130,246,0.3)]">
-            <span className="relative">⚡</span>
-            <span className="absolute -top-1 -right-1 flex h-4 w-4">
+          <div className="relative flex h-13 w-13 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue/20 to-purple-500/20 text-2xl border border-blue/40 shadow-[0_0_25px_rgba(59,130,246,0.25)]">
+            <span>⚡</span>
+            <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border-2 border-[#0c1020]"></span>
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border-2 border-[#0c1020]"></span>
             </span>
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-black tracking-tight text-white">LabIQ AI Ajanı</h2>
-              <span className="rounded-full bg-blue/20 px-2.5 py-0.5 text-[11px] font-black uppercase tracking-wider text-blue border border-blue/30">
-                v1 Deneysel
+              <span className="rounded-full bg-purple-500/20 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-purple-300 border border-purple-500/30">
+                Claude Haiku Engine
+              </span>
+              <span className="rounded-full bg-blue/15 px-2 py-0.5 text-[10px] font-bold text-blue border border-blue/20">
+                56 Ekran & R01–R12 Atlası
               </span>
             </div>
-            <p className="text-xs text-ink-3 mt-0.5 flex items-center gap-1.5">
-              <span>Devise & ActionCable Canlı Robotu</span>
+            <p className="text-xs text-ink-3 mt-0.5 flex items-center gap-1.5 font-medium">
+              <span>Devise & ActionCable Canlı Bağlantısı</span>
               <span>•</span>
-              <span className="text-emerald-400 font-medium">batuhanb@diacore.com.tr</span>
+              <span className="text-emerald-400 font-mono">batuhanb@diacore.com.tr</span>
             </p>
           </div>
         </div>
 
-        {/* Şirket Seçici Hapları (Bursa PPP vs Başakşehir PPP) */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-[#050814]/70 p-1.5 rounded-2xl border border-white/5">
-          <span className="text-[11px] font-bold text-ink-3 px-3 sm:px-2">Aktif Hastane:</span>
+        {/* Aktif Hastane Geçiş Hapları */}
+        <div className="flex items-center gap-2 bg-[#050814]/80 p-1.5 rounded-2xl border border-white/10">
+          <span className="text-[11px] font-bold text-ink-3 px-2">Aktif Hastane:</span>
           <div className="flex rounded-xl p-0.5 bg-[#0a0e20]">
             <button
               onClick={() => handleSwitchCompany("bursa")}
               disabled={switching}
               className={`relative flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
                 status?.companyKey === "bursa"
-                  ? "text-white shadow-lg shadow-blue/20"
+                  ? "text-white shadow-lg shadow-blue/25"
                   : "text-ink-2 hover:text-white"
               }`}
             >
               {status?.companyKey === "bursa" && (
                 <motion.span
-                  layoutId="active-hospital"
+                  layoutId="active-hospital-pill"
                   className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue to-indigo-600"
                   transition={{ type: "spring", stiffness: 450, damping: 35 }}
                 />
@@ -262,13 +352,13 @@ export default function LabIQAgentPanel() {
               disabled={switching}
               className={`relative flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
                 status?.companyKey === "basaksehir"
-                  ? "text-white shadow-lg shadow-blue/20"
+                  ? "text-white shadow-lg shadow-blue/25"
                   : "text-ink-2 hover:text-white"
               }`}
             >
               {status?.companyKey === "basaksehir" && (
                 <motion.span
-                  layoutId="active-hospital"
+                  layoutId="active-hospital-pill"
                   className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue to-indigo-600"
                   transition={{ type: "spring", stiffness: 450, damping: 35 }}
                 />
@@ -280,227 +370,349 @@ export default function LabIQAgentPanel() {
         </div>
       </div>
 
-      {/* ── AJAN KOMUT KONSOLU & CANLI ÇALIŞMA ALANI ── */}
-      <div className="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
-        {/* SOL: Komut Kutusu & Canlı Terminal */}
-        <div className="space-y-4">
-          {/* Komut Girişi */}
-          <div className="clay p-5 rounded-[28px] space-y-4 bg-[#090d1e]/80 border border-white/5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold tracking-wider text-ink-3 uppercase flex items-center gap-2">
-                <span>💬</span> Ajan Komut Girişi
-              </span>
-              <span className="text-[11px] text-ink-3">Doğal Türkçe anlayabilir</span>
+      {/* ── İKİLİ PENCERE: SOL SOHBET & SAĞ ÇALIŞMA ALANI ── */}
+      <div className="grid gap-4 lg:grid-cols-[1.65fr_1fr]">
+        {/* SOL: AI SOHBET PENCERESİ */}
+        <div className="clay flex flex-col rounded-[28px] bg-[#080b18]/90 border border-white/10 overflow-hidden shadow-2xl h-[680px]">
+          {/* Sohbet Üst Çubuğu */}
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/10 bg-[#050814]/80">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+              <span className="text-xs font-bold text-white uppercase tracking-wider">Ajan Sohbeti</span>
+              <span className="text-[10px] text-ink-3">({messages.length} mesaj)</span>
             </div>
-
-            <div className="relative">
-              <textarea
-                value={command}
-                onChange={(e) => setCommand(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    runCommand();
-                  }
-                }}
-                rows={2}
-                placeholder="Örnek: 1 temmuz 1 eylül arasındaki tüketimleri indir..."
-                className="w-full resize-none rounded-2xl bg-[#050814]/90 p-4 pr-24 text-sm text-white placeholder-ink-3 border border-white/10 outline-none focus:border-blue/50 focus:ring-2 focus:ring-blue/20 transition-all font-medium"
-              />
+            <div className="flex items-center gap-1">
               <button
-                onClick={() => runCommand()}
-                disabled={loading || !command.trim()}
-                className="absolute right-3 bottom-3 flex items-center gap-1.5 rounded-xl bg-blue px-4 py-2 text-xs font-black text-white hover:bg-blue/90 disabled:opacity-40 transition-all shadow-md shadow-blue/30"
+                onClick={() =>
+                  setMessages([
+                    {
+                      id: "welcome",
+                      role: "assistant",
+                      content: `Sohbet temizlendi. LabIQ üzerinde ne yapmak istersiniz?`,
+                      time: new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
+                    },
+                  ])
+                }
+                className="text-[11px] text-ink-3 hover:text-white px-2.5 py-1 rounded-lg hover:bg-white/5 transition-colors"
               >
-                {loading ? (
-                  <>
-                    <motion.span
-                      animate={{ rotate: 360 }}
-                      transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                      className="inline-block h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent"
-                    />
-                    <span>İşleniyor</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Çalıştır</span>
-                    <span>→</span>
-                  </>
-                )}
+                Sohbeti Temizle
               </button>
-            </div>
-
-            {/* Hızlı Komut Çipleri */}
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <span className="text-[11px] font-bold text-ink-3">Örnekler:</span>
-              {chips.map((chip, i) => (
-                <button
-                  key={i}
-                  onClick={() => runCommand(chip)}
-                  disabled={loading}
-                  className="rounded-full bg-white/5 hover:bg-blue/15 hover:border-blue/30 border border-white/10 px-3 py-1 text-[11px] font-medium text-ink-2 hover:text-white transition-all disabled:opacity-50"
-                >
-                  {chip}
-                </button>
-              ))}
             </div>
           </div>
 
-          {/* Canlı Ajan Adım Günlüğü (Terminal Görünümü) */}
-          <div className="clay p-5 rounded-[28px] bg-[#050711] border border-white/10 space-y-3 font-mono">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
-                <span className="text-xs font-bold text-ink-2 uppercase tracking-widest font-sans">Ajan Terminali</span>
-              </div>
-              <button
-                onClick={() => setLogs([])}
-                className="text-[10px] text-ink-3 hover:text-white transition-colors font-sans"
+          {/* Mesaj Listesi */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-4 text-sm">
+            {messages.map((m) => (
+              <motion.div
+                key={m.id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}
               >
-                Temizle
-              </button>
-            </div>
-
-            <div className="h-56 overflow-y-auto space-y-2 pr-1 text-xs">
-              {logs.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-ink-3 space-y-1 font-sans">
-                  <span>Ajan hazır durumda bekliyor.</span>
-                  <span className="text-[11px] opacity-70">Yukarıdaki önerilerden birine tıklayın veya komut yazın.</span>
+                <div className="flex items-center gap-1.5 text-[10px] text-ink-3 mb-1 px-1">
+                  <span>{m.role === "user" ? "Siz" : "⚡ LabIQ Ajanı"}</span>
+                  <span>•</span>
+                  <span>{m.time}</span>
                 </div>
-              ) : (
-                logs.map((log, index) => (
-                  <motion.div
-                    key={index}
-                    initial={{ opacity: 0, x: -6 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className={`flex items-start gap-2.5 leading-relaxed ${
-                      log.type === "success"
-                        ? "text-emerald-400"
-                        : log.type === "warn"
-                        ? "text-rose-400"
-                        : "text-slate-300"
-                    }`}
-                  >
-                    <span className="text-[10px] text-ink-3 shrink-0 pt-0.5">[{log.time}]</span>
-                    <span className="break-all">{log.text}</span>
-                  </motion.div>
-                ))
-              )}
-              <div ref={terminalEndRef} />
-            </div>
+
+                <div
+                  className={`max-w-[92%] rounded-2xl p-4 leading-relaxed ${
+                    m.role === "user"
+                      ? "bg-blue text-white shadow-md shadow-blue/20 rounded-br-xs font-medium"
+                      : "bg-[#0f1426] text-slate-100 border border-white/10 shadow-lg rounded-bl-xs"
+                  }`}
+                >
+                  {/* Araç Çalıştırma Rozetleri */}
+                  {m.toolCalls && m.toolCalls.length > 0 && (
+                    <div className="mb-3 space-y-1.5 pb-2.5 border-b border-white/10">
+                      {m.toolCalls.map((tc, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center gap-2 text-[11px] bg-black/30 px-2.5 py-1 rounded-lg text-emerald-400 font-mono"
+                        >
+                          <span>🔧</span>
+                          <span>
+                            {tc.name === "labiq_download_consumption"
+                              ? `Tüketim Raporu İndirildi (${String(tc.input.startDate)} → ${String(tc.input.endDate)})`
+                              : tc.name === "labiq_switch_company"
+                              ? `Hastane Değiştirildi (${String(tc.input.company).toUpperCase()})`
+                              : `Araç: ${tc.name}`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Mesaj Metni (Markdown) */}
+                  <div
+                    className="prose prose-invert prose-sm max-w-none space-y-2 [&>p]:leading-relaxed [&>ul]:list-disc [&>ul]:pl-4 [&>ol]:list-decimal [&>ol]:pl-4 [&>h3]:text-white [&>h3]:font-bold [&>h3]:text-sm [&>h3]:mt-2"
+                    dangerouslySetInnerHTML={{ __html: renderMd(m.content) }}
+                  />
+
+                  {/* İndirilen Dosya Kartı (Eğer Mesajla Geldiyse) */}
+                  {m.exportResult && (
+                    <div className="mt-3.5 pt-3 border-t border-white/15 flex items-center justify-between gap-3 bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/30">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="text-xl">📊</span>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-white truncate">{m.exportResult.fileName}</p>
+                          <p className="text-[10px] text-emerald-300">{m.exportResult.range} • {m.exportResult.company}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => triggerBrowserDownload(m.exportResult!.downloadUrl, m.exportResult!.fileName)}
+                        className="shrink-0 flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-md transition-all"
+                      >
+                        <span>⬇️ İndir</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            ))}
+
+            {loading && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-start gap-2 text-ink-3 text-xs pl-1">
+                <motion.span
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                  className="inline-block h-4 w-4 rounded-full border-2 border-blue border-t-transparent mt-0.5"
+                />
+                <span>LabIQ ve Claude Haiku sorguyu yürütüyor...</span>
+              </motion.div>
+            )}
+
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Hızlı Öneri Çipleri */}
+          <div className="px-4 py-2 border-t border-white/5 bg-[#050814]/60 flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <span className="text-[10px] font-bold text-ink-3 shrink-0">Hızlı:</span>
+            {quickPrompts.map((p, i) => (
+              <button
+                key={i}
+                onClick={() => sendMessage(p)}
+                disabled={loading}
+                className="shrink-0 rounded-full bg-white/5 hover:bg-blue/15 hover:border-blue/30 border border-white/10 px-3 py-1 text-[11px] font-medium text-ink-2 hover:text-white transition-all disabled:opacity-50"
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+
+          {/* Mesaj Giriş Barı */}
+          <div className="p-3.5 border-t border-white/10 bg-[#060918]">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                sendMessage();
+              }}
+              className="flex items-center gap-2"
+            >
+              <input
+                type="text"
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                placeholder="Örnek: 1 temmuz 1 eylül arasındaki tüketimleri indir..."
+                className="flex-1 rounded-xl bg-[#090d22] px-4 py-3 text-sm text-white placeholder-ink-3 border border-white/10 outline-none focus:border-blue/50 focus:ring-2 focus:ring-blue/20 transition-all font-medium"
+              />
+              <button
+                type="submit"
+                disabled={loading || !inputMessage.trim()}
+                className="flex items-center gap-1.5 rounded-xl bg-blue hover:bg-blue/90 disabled:opacity-40 px-5 py-3 text-xs font-black text-white transition-all shadow-md shadow-blue/30"
+              >
+                <span>Gönder</span>
+                <span>→</span>
+              </button>
+            </form>
           </div>
         </div>
 
-        {/* SAĞ: Son İndirilen Dosya Kartı & Doğrudan Filtre Kontrolü */}
+        {/* SAĞ: ÇALIŞMA ALANI (Sekmeli: Terminal, İndirilenler, Manuel) */}
         <div className="space-y-4">
-          {/* Son İndirilen Dosya Kartı */}
-          <div className="clay p-5 rounded-[28px] bg-gradient-to-b from-[#0e1630]/90 to-[#090d1e]/90 border border-blue/30 space-y-4 shadow-xl">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
-                <span>📁</span> Hazır Rapor
-              </span>
-              {lastExport && (
-                <span className="text-[10px] rounded-full bg-emerald-500/20 text-emerald-400 px-2 py-0.5 font-bold">
-                  {lastExport.timestamp}
-                </span>
-              )}
-            </div>
-
-            {lastExport ? (
-              <div className="rounded-2xl bg-[#060814]/80 p-4 border border-white/10 space-y-3">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-2xl border border-emerald-500/30">
-                    📊
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-extrabold text-white truncate" title={lastExport.fileName}>
-                      {lastExport.fileName}
-                    </p>
-                    <p className="text-[11px] text-ink-3 mt-0.5">{lastExport.company}</p>
-                    <span className="inline-block mt-1 text-[10px] font-bold text-blue bg-blue/15 px-2 py-0.5 rounded-md">
-                      {lastExport.range}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="pt-2 flex gap-2">
-                  <button
-                    onClick={() => triggerBrowserDownload(lastExport.downloadUrl, lastExport.fileName)}
-                    className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2.5 text-xs font-bold text-white hover:from-emerald-500 hover:to-teal-500 transition-all shadow-lg shadow-emerald-900/30"
-                  >
-                    <span>⬇️ Tekrar İndir</span>
-                  </button>
-                  <a
-                    href={lastExport.downloadUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center justify-center px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-ink-2"
-                    title="Doğrudan S3 Linki"
-                  >
-                    🔗
-                  </a>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-dashed border-white/10 p-6 text-center space-y-2">
-                <span className="text-3xl opacity-40">📊</span>
-                <p className="text-xs text-ink-3">Henüz bu oturumda indirilmiş rapor yok.</p>
-                <p className="text-[11px] text-ink-3/70">Ajan komutunu çalıştırdığınızda dosya otomatik burada belirecektir.</p>
-              </div>
-            )}
+          {/* Sekme Butonları */}
+          <div className="clay-pressed flex rounded-2xl p-1 bg-[#050814]">
+            <button
+              onClick={() => setActiveTab("chat")}
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === "chat" ? "bg-blue text-white shadow" : "text-ink-2 hover:text-white"
+              }`}
+            >
+              📟 Terminal
+            </button>
+            <button
+              onClick={() => setActiveTab("downloads")}
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === "downloads" ? "bg-blue text-white shadow" : "text-ink-2 hover:text-white"
+              }`}
+            >
+              📁 Dosyalar ({history.length})
+            </button>
+            <button
+              onClick={() => setActiveTab("manual")}
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === "manual" ? "bg-blue text-white shadow" : "text-ink-2 hover:text-white"
+              }`}
+            >
+              ⚙️ Parametre
+            </button>
           </div>
 
-          {/* Doğrudan İndirme Paneli (Manuel Yedek Kontrol) */}
-          <div className="clay p-5 rounded-[28px] bg-[#090d1e]/80 border border-white/5 space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold tracking-wider text-ink-3 uppercase">
-                ⚙️ Doğrudan Parametreli İndirme
-              </span>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="text-[11px] font-bold text-ink-3 mb-1 block">Hastane</label>
-                <select
-                  value={selectedHospital}
-                  onChange={(e) => setSelectedHospital(e.target.value as "bursa" | "basaksehir")}
-                  className="w-full rounded-xl bg-[#050814] p-2.5 text-white border border-white/10 outline-none focus:border-blue/50"
+          {/* TAB 1: Canlı Ajan Terminali */}
+          {activeTab === "chat" && (
+            <div className="clay p-5 rounded-[28px] bg-[#050711] border border-white/10 space-y-3 font-mono h-[610px] flex flex-col">
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+                  <span className="text-xs font-bold text-ink-2 uppercase tracking-widest font-sans">
+                    Canlı İşlem Konsolu
+                  </span>
+                </div>
+                <button
+                  onClick={() => setLogs([])}
+                  className="text-[10px] text-ink-3 hover:text-white transition-colors font-sans"
                 >
-                  <option value="bursa">Diacore Diagnostik - Bursa PPP (226)</option>
-                  <option value="basaksehir">Diacore Diagnostik - Başakşehir PPP (259)</option>
-                </select>
+                  Temizle
+                </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[11px] font-bold text-ink-3 mb-1 block">Başlangıç Tarihi</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full rounded-xl bg-[#050814] p-2.5 text-white border border-white/10 outline-none focus:border-blue/50"
-                  />
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1 text-xs">
+                {logs.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-ink-3 space-y-1 font-sans">
+                    <span>Konsol boş.</span>
+                    <span className="text-[11px] opacity-70">Sohbette komut verdiğinizde tüm adımlar burada akar.</span>
+                  </div>
+                ) : (
+                  logs.map((log, index) => (
+                    <motion.div
+                      key={index}
+                      initial={{ opacity: 0, x: -6 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className={`flex items-start gap-2.5 leading-relaxed ${
+                        log.type === "success"
+                          ? "text-emerald-400"
+                          : log.type === "warn"
+                          ? "text-rose-400"
+                          : "text-slate-300"
+                      }`}
+                    >
+                      <span className="text-[10px] text-ink-3 shrink-0 pt-0.5">[{log.time}]</span>
+                      <span className="break-all">{log.text}</span>
+                    </motion.div>
+                  ))
+                )}
+                <div ref={terminalEndRef} />
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: İndirilen Dosyalar */}
+          {activeTab === "downloads" && (
+            <div className="clay p-5 rounded-[28px] bg-[#080b18]/90 border border-white/10 h-[610px] flex flex-col">
+              <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-4">
+                <span className="text-xs font-bold text-white uppercase tracking-wider">İndirilen Raporlar</span>
+                <span className="text-[10px] text-ink-3">Son oturum</span>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-3">
+                {history.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-ink-3 space-y-2">
+                    <span className="text-3xl opacity-40">📁</span>
+                    <p className="text-xs">Henüz indirilmiş rapor yok.</p>
+                  </div>
+                ) : (
+                  history.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-2xl bg-[#0c1024] p-3.5 border border-white/10 space-y-2"
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <span className="text-xl">📊</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold text-white truncate">{item.fileName}</p>
+                          <p className="text-[11px] text-ink-3">{item.company}</p>
+                          <p className="text-[10px] text-blue font-mono mt-0.5">{item.range}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          onClick={() => triggerBrowserDownload(item.downloadUrl, item.fileName)}
+                          className="flex-1 bg-emerald-600/80 hover:bg-emerald-500 text-white text-xs font-bold py-1.5 rounded-lg transition-all"
+                        >
+                          ⬇️ Tekrar İndir
+                        </button>
+                        <a
+                          href={item.downloadUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs text-ink-2"
+                          title="S3 Doğrudan Linki"
+                        >
+                          🔗
+                        </a>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: Manuel Parametre Formu */}
+          {activeTab === "manual" && (
+            <div className="clay p-5 rounded-[28px] bg-[#080b18]/90 border border-white/10 h-[610px] flex flex-col justify-between">
+              <div className="space-y-4">
+                <div className="border-b border-white/10 pb-3">
+                  <span className="text-xs font-bold text-white uppercase tracking-wider">
+                    Manuel İndirme Parametreleri
+                  </span>
+                  <p className="text-[11px] text-ink-3 mt-0.5">Sohbet haricinde doğrudan parametreyle indirin.</p>
                 </div>
-                <div>
-                  <label className="text-[11px] font-bold text-ink-3 mb-1 block">Bitiş Tarihi</label>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full rounded-xl bg-[#050814] p-2.5 text-white border border-white/10 outline-none focus:border-blue/50"
-                  />
+
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="text-[11px] font-bold text-ink-3 mb-1 block">Hedef Hastane</label>
+                    <select
+                      value={selectedHospital}
+                      onChange={(e) => setSelectedHospital(e.target.value as "bursa" | "basaksehir")}
+                      className="w-full rounded-xl bg-[#050814] p-3 text-white border border-white/10 outline-none focus:border-blue/50"
+                    >
+                      <option value="bursa">Diacore Diagnostik - Bursa PPP (226)</option>
+                      <option value="basaksehir">Diacore Diagnostik - Başakşehir PPP (259)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-ink-3 mb-1 block">Başlangıç Tarihi</label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-full rounded-xl bg-[#050814] p-3 text-white border border-white/10 outline-none focus:border-blue/50"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-ink-3 mb-1 block">Bitiş Tarihi</label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="w-full rounded-xl bg-[#050814] p-3 text-white border border-white/10 outline-none focus:border-blue/50"
+                    />
+                  </div>
                 </div>
               </div>
 
               <button
-                onClick={handleDirectExport}
+                onClick={handleManualExport}
                 disabled={loading}
-                className="w-full mt-2 rounded-xl bg-blue/20 hover:bg-blue/30 border border-blue/40 p-2.5 text-xs font-black text-blue hover:text-white transition-all disabled:opacity-50"
+                className="w-full rounded-xl bg-gradient-to-r from-blue to-indigo-600 hover:from-blue/90 hover:to-indigo-500 p-3.5 text-xs font-black text-white transition-all shadow-lg shadow-blue/20 disabled:opacity-50"
               >
-                {loading ? "İndiriliyor..." : "Tüketim Excel Dosyasını Doğrudan İndir"}
+                {loading ? "İndirme Hazırlanıyor..." : "Tüketim Excel Dosyasını Doğrudan İndir ⬇️"}
               </button>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
