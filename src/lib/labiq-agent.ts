@@ -1,6 +1,6 @@
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
-import { claude, claudeConfigured, costUsd, friendlyError, recordUsage } from "./claude";
+import { ASSISTANT_MODEL, claude, claudeConfigured, costUsd, friendlyError, recordUsage } from "./claude";
 import { store } from "./db";
 import {
   COMPANIES,
@@ -146,9 +146,7 @@ export interface AgentExecutionResult {
  * Model adını güvenli bir Anthropic model tanıtıcısına eşler
  */
 function resolveModel(): string {
-  const envModel = process.env.ANTHROPIC_MODEL?.trim();
-  if (envModel && envModel !== "claude-haiku-5-5") return envModel;
-  return "claude-3-5-haiku-20241022";
+  return process.env.ANTHROPIC_MODEL?.trim() || ASSISTANT_MODEL;
 }
 
 /**

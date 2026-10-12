@@ -6,10 +6,7 @@ import { store } from "./db";
  * Asistanın model katmanı: Anthropic Claude (Messages API, resmi TypeScript SDK).
  * Model ANTHROPIC_MODEL ile değiştirilebilir (varsayılan Claude Haiku 5.5); ileride daha güçlü modele geçmek tek ayar.
  */
-export const ASSISTANT_MODEL =
-  process.env.ANTHROPIC_MODEL?.trim() && process.env.ANTHROPIC_MODEL.trim() !== "claude-haiku-5-5"
-    ? process.env.ANTHROPIC_MODEL.trim()
-    : "claude-3-5-haiku-20241022";
+export const ASSISTANT_MODEL = process.env.ANTHROPIC_MODEL?.trim() || "claude-haiku-5-5";
 
 export const claudeConfigured = () => !!process.env.ANTHROPIC_API_KEY?.trim();
 
