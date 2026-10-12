@@ -138,7 +138,8 @@ export async function exportReport(input: { page?: string; exportUrl?: string; p
   if (!r.ok) return { ok: false, error: r.error };
   let buf: Buffer;
   let type = "";
-  let name = r.fileName ?? "labiq-rapor.xlsx";
+  let name = r.fileName ?? (r.downloadUrl ? decodeURIComponent(r.downloadUrl.split("?")[0].split("/").pop() ?? "") : "") ?? "";
+  if (!/\.(xlsx|csv|tsv|pdf)$/i.test(name)) name = "labiq-rapor.xlsx";
   if (r.file) ({ buf, type, name } = r.file);
   else if (r.downloadUrl) ({ buf, type } = await fetchFile(r.downloadUrl));
   else return { ok: false, error: "Dosya alınamadı" };

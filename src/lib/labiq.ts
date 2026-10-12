@@ -649,8 +649,27 @@ export async function exportViaCable(exportUrl: string, timeoutMs = 25000): Prom
     session.exportStreamName = extractExportStreamName(await dash.text());
   }
   const trigger = async () => {
-    const res = await labiqFetch(exportUrl, { headers: { Accept: "text/vnd.turbo-stream.html, text/html, application/octet-stream, */*" } });
-    if (!res.ok) return { error: `LabIQ dışa aktarma isteği reddedildi: HTTP ${res.status}` };
+    // Rails, sonu "*/*" ile biten Accept başlığını "tarayıcı" sayıp yok sayar → yalnızca turbo_stream yanıtlayan
+    // dışa aktarma 406 döner. Bu yüzden önce yalnız Turbo Stream (eski çalışan yol), sonra düz GET, sonra POST denenir.
+    const tries: RequestInit[] = [
+      { headers: { Accept: "text/vnd.turbo-stream.html" } },
+      { headers: { Accept: "text/vnd.turbo-stream.html, text/html, application/xhtml+xml" } },
+      { headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } },
+      { method: "POST", headers: { Accept: "text/vnd.turbo-stream.html", "X-CSRF-Token": session.csrfToken, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ authenticity_token: session.csrfToken }).toString() },
+    ];
+    let res: Response | null = null;
+    const fails: string[] = [];
+    for (const t of tries) {
+      const r = await labiqFetch(exportUrl, t);
+      if (r.ok) {
+        res = r;
+        break;
+      }
+      const snippet = (await r.text().catch(() => "")).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
+      fails.push(`${t.method ?? "GET"} ${String((t.headers as Record<string, string>).Accept).split(",")[0]} → HTTP ${r.status}${snippet ? ` (${snippet})` : ""}`);
+      if (![404, 405, 406, 415, 422].includes(r.status)) break;
+    }
+    if (!res) return { error: `LabIQ dışa aktarma isteği reddedildi — ${exportUrl.split("?")[0]}: ${fails.join(" · ")}` };
     const type = res.headers.get("content-type") ?? "";
     const disp = res.headers.get("content-disposition") ?? "";
     if (/spreadsheet|excel|csv|octet-stream|pdf/i.test(type) || /attachment/i.test(disp)) {
