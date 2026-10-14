@@ -2,7 +2,8 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { KURUM_HOSPITALS, folderText, periodText, unitKey, type KurumCategory, type KurumFile, type KurumUnit } from "@/lib/kurum-types";
+import { KURUM_HOSPITALS, MAX_RANGE_MONTHS, coverageInfo, folderText, makePeriod, periodMonths, periodRange, periodText, rangeMonths, unitKey, validPeriod, type KurumCategory, type KurumFile, type KurumUnit } from "@/lib/kurum-types";
+import { MONTHS } from "@/lib/period";
 import { usePeriod } from "../PeriodProvider";
 import { Icon, Menu, Sheet, Tabs } from "../ui";
 
@@ -28,6 +29,13 @@ const SUGGEST = ["Arıza", "Sayım", "Tüketim", "Hakediş", "Fatura", "Prosedü
 const kb = (n: number) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const dayText = (iso?: string) => (iso ? new Date(iso).toLocaleDateString("tr-TR", { day: "numeric", month: "short" }) : "");
 const thisMonth = () => new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 7);
+const EXTRA_KEY = "lq:kurum-periods";
+/** en yeni bitişten eskiye; aynı bitişte kısa dönem önce */
+const byRecent = (a: string, b: string) => {
+  const ra = periodRange(a);
+  const rb = periodRange(b);
+  return (rb?.to ?? "").localeCompare(ra?.to ?? "") || (rb?.from ?? "").localeCompare(ra?.from ?? "");
+};
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, { cache: "no-store", ...init });
@@ -66,7 +74,22 @@ export default function CompanyData({ onChange }: { onChange?: () => void }) {
   }, [toast]);
   useEffect(() => {
     load();
+    try {
+      const x = JSON.parse(localStorage.getItem(EXTRA_KEY) ?? "[]");
+      if (Array.isArray(x)) setExtra(x.filter((p) => typeof p === "string" && validPeriod(p)));
+    } catch {}
   }, [load]);
+  const [adding, setAdding] = useState(false);
+  const addPeriod = (p: string) => {
+    const next = [...new Set([...extra, p])];
+    setExtra(next);
+    try {
+      localStorage.setItem(EXTRA_KEY, JSON.stringify(next.slice(-24)));
+    } catch {}
+    setPeriod(p);
+    setCategory(null);
+    setAdding(false);
+  };
   useEffect(() => {
     if (!period) setPeriod(activePeriod ?? thisMonth());
   }, [activePeriod, period]);
@@ -78,7 +101,7 @@ export default function CompanyData({ onChange }: { onChange?: () => void }) {
   // dönemler: dosyası olanlar + aktif dönem + eklenenler; dönemsiz en sonda
   const periods = useMemo(() => {
     const s = new Set<string>([activePeriod ?? thisMonth(), ...extra, ...files.filter((f) => f.hospital === hospital).map((f) => f.period)]);
-    const list = [...s].filter(Boolean).sort((a, b) => b.localeCompare(a));
+    const list = [...s].filter(Boolean).sort(byRecent);
     return [...list, ""];
   }, [files, hospital, activePeriod, extra]);
 
@@ -87,6 +110,13 @@ export default function CompanyData({ onChange }: { onChange?: () => void }) {
 
   // ------------------------------------------------------------------ yükleme
   const upload = async (list: FileList | File[], target: { hospital: string; period: string; category: string }) => {
+    const tell = (file?: KurumFile) => {
+      const c = file?.coverage;
+      if (!file || !c) return;
+      const info = coverageInfo(c.months, target.period);
+      if (!c.dated || !info) return toast(`${file.name}: ${c.rows.toLocaleString("tr-TR")} satır okundu · tarih sütunu bulunamadı, aylar ayrılamadı`);
+      toast(`${file.name}: ${info.span} verisi okundu (${c.rows.toLocaleString("tr-TR")} satır)${info.missing.length ? ` · eksik: ${info.missing.map(periodText).join(", ")}` : ""}${info.outside.length ? ` · dönem dışı: ${info.outside.map(periodText).join(", ")}` : ""}`);
+    };
     for (const f of Array.from(list)) {
       const ext = f.name.toLowerCase().split(".").pop() ?? "";
       setBusy(f.name);
@@ -104,11 +134,13 @@ export default function CompanyData({ onChange }: { onChange?: () => void }) {
             id = r.file.id;
             i = j;
           }
+          if (id && (ext === "csv" || ext === "tsv")) tell((await post<{ file: KurumFile }>({ action: "profile", id }).catch(() => null))?.file);
         } else if (BIN_EXT.includes(ext)) {
           if (f.size > MAX_BYTES) throw new Error(`${f.name} 4 MB'tan büyük — Google Drive'a koy (arşiv okur) ya da Excel'i CSV olarak kaydet`);
           const q = new URLSearchParams({ name: f.name, ...target });
           const r = await api<{ file: KurumFile }>(`/api/kurum?${q}`, { method: "PUT", body: f });
           if (r.file.partial) toast(`${f.name}: PDF uzun; okunabilen kısmı kaydedildi`);
+          tell(r.file);
         } else throw new Error(`${f.name}: .${ext} desteklenmiyor (${[...TEXT_EXT, ...BIN_EXT].join(", ")})`);
       } catch (e) {
         toast((e as Error).message);
@@ -186,21 +218,17 @@ export default function CompanyData({ onChange }: { onChange?: () => void }) {
         <div>
           <div className="mb-1.5 flex items-center justify-between px-1 text-[11px] font-bold uppercase tracking-wide text-ink-3">
             Dönemler
-            <label className="cursor-pointer rounded-full px-2 py-0.5 normal-case tracking-normal text-blue hover:bg-track">
-              + Dönem
-              <input
-                type="month"
-                className="sr-only"
-                onChange={(e) => {
-                  const p = e.target.value;
-                  if (!p) return;
-                  setExtra((x) => [...new Set([...x, p])]);
-                  setPeriod(p);
-                  setCategory(null);
-                }}
-              />
-            </label>
+            <button onClick={() => setAdding((x) => !x)} className="rounded-full px-2 py-0.5 normal-case tracking-normal text-blue hover:bg-track">
+              {adding ? "Vazgeç" : "+ Dönem"}
+            </button>
           </div>
+          <AnimatePresence initial={false}>
+            {adding && (
+              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                <PeriodPicker start={period || thisMonth()} onPick={addPeriod} onCancel={() => setAdding(false)} />
+              </motion.div>
+            )}
+          </AnimatePresence>
           <div className="flex gap-1.5 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible">
             {periods.map((p) => {
               const us = periodUnits(p);
@@ -268,6 +296,11 @@ export default function CompanyData({ onChange }: { onChange?: () => void }) {
             </div>
           </div>
 
+          {rangeMonths(period) > 0 && (
+            <div className="mb-2.5 rounded-2xl bg-blue/10 px-3 py-2 text-xs font-semibold leading-relaxed text-ink-2">
+              📅 Bu dönem {periodText(period)} ({rangeMonths(period)} ay) kapsar. Tek dosyada birden çok ayın verisi olabilir; beyin tarih sütunlarından ayları ayırıp ay ay okur, eksik ayı söyler.
+            </div>
+          )}
           <AnimatePresence mode="popLayout" initial={false}>
             {category == null ? (
               <motion.div key="cats" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 2xl:grid-cols-3">
@@ -290,6 +323,7 @@ export default function CompanyData({ onChange }: { onChange?: () => void }) {
               <motion.div key={`f-${category}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
                 <Folder
                   files={folderFiles}
+                  period={period}
                   u={unit(hospital, period, category)}
                   busy={busy}
                   onUpload={(fl) => upload(fl, { hospital, period, category })}
@@ -367,6 +401,7 @@ function CategoryCard({ c, count, u, training, onOpen, onDrop }: { c: KurumCateg
 
 function Folder({
   files,
+  period,
   u,
   busy,
   disabled,
@@ -377,6 +412,7 @@ function Folder({
   onRelearn,
 }: {
   files: KurumFile[];
+  period: string;
   u?: KurumUnit;
   busy: string | null;
   disabled: boolean;
@@ -436,6 +472,7 @@ function Folder({
                   {kb(f.size)} · {f.parts} parça · {dayText(f.uploadedAt)}
                   {f.partial ? " · yarım okundu" : ""}
                 </div>
+                <Coverage f={f} period={period} />
               </div>
               <Menu
                 items={[
@@ -545,7 +582,9 @@ function MoveSheet({ file, categories, periods, onClose, onMoved }: { file: Kuru
   const [h, setH] = useState("");
   const [p, setP] = useState("");
   const [c, setC] = useState("");
+  const [picking, setPicking] = useState(false);
   useEffect(() => {
+    setPicking(false);
     if (file) {
       setH(file.hospital);
       setP(file.period);
@@ -580,14 +619,26 @@ function MoveSheet({ file, categories, periods, onClose, onMoved }: { file: Kuru
           </label>
           <label className="block text-xs font-bold text-ink-3">
             Dönem
-            <div className="mt-1 flex gap-2">
-              <input type="month" value={p} onChange={(e) => setP(e.target.value)} className={sel} />
-              <button onClick={() => setP("")} className={`shrink-0 rounded-full px-3 text-xs font-bold ${p ? "bg-track text-ink-2" : "bg-blue text-white"}`}>
-                Dönemsiz
-              </button>
-            </div>
-            {periods.length > 1 && <span className="mt-1 block font-semibold">Var olanlar: {periods.filter(Boolean).slice(0, 4).map(periodText).join(", ")}</span>}
+            <select value={periods.includes(p) ? p : "__new"} onChange={(e) => (e.target.value === "__new" ? setPicking(true) : (setP(e.target.value), setPicking(false)))} className={`mt-1 ${sel}`}>
+              {periods.map((x) => (
+                <option key={x || "none"} value={x}>
+                  {periodText(x)}
+                </option>
+              ))}
+              <option value="__new">Başka dönem…</option>
+            </select>
+            {!periods.includes(p) && <span className="mt-1 block font-semibold text-blue">Seçilen: {periodText(p)}</span>}
           </label>
+          {picking && (
+            <PeriodPicker
+              start={p || thisMonth()}
+              onPick={(x) => {
+                setP(x);
+                setPicking(false);
+              }}
+              onCancel={() => setPicking(false)}
+            />
+          )}
           <label className="block text-xs font-bold text-ink-3">
             Kategori
             <select value={c} onChange={(e) => setC(e.target.value)} className={`mt-1 ${sel}`}>
@@ -605,5 +656,110 @@ function MoveSheet({ file, categories, periods, onClose, onMoved }: { file: Kuru
         </div>
       )}
     </Sheet>
+  );
+}
+
+/* ------------------------------------------------------------------ dönem seçici */
+const PICK_SEL = "clay-pressed min-w-0 flex-1 rounded-full bg-transparent px-3 py-2 text-sm font-bold outline-none";
+function MonthYear({ v, set, label, years }: { v: string; set: (x: string) => void; label: string; years: number[] }) {
+  return (
+    <div>
+      <div className="mb-1 px-1 text-[11px] font-bold text-ink-3">{label}</div>
+      <div className="flex gap-1.5">
+        <select aria-label={`${label} ayı`} value={Number(v.slice(5))} onChange={(e) => set(`${v.slice(0, 4)}-${String(e.target.value).padStart(2, "0")}`)} className={PICK_SEL}>
+          {MONTHS.map((m, i) => (
+            <option key={m} value={i + 1}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <select aria-label={`${label} yılı`} value={Number(v.slice(0, 4))} onChange={(e) => set(`${e.target.value}-${v.slice(5)}`)} className={`${PICK_SEL} max-w-[92px]`}>
+          {[...new Set([...years, Number(v.slice(0, 4))])]
+            .sort((a, b) => b - a)
+            .map((x) => (
+              <option key={x} value={x}>
+                {x}
+              </option>
+            ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+/** Tek ay ya da çok aylı aralık (ör. Ocak–Temmuz: tek dosyada yedi ayın verisi). Her tarayıcıda çalışır (ay/yıl listeleri). */
+function PeriodPicker({ start, onPick, onCancel }: { start: string; onPick: (p: string) => void; onCancel: () => void }) {
+  const r0 = periodRange(start) ?? periodRange(thisMonth())!;
+  const [range, setRange] = useState(r0.from !== r0.to);
+  const [from, setFrom] = useState(r0.from);
+  const [to, setTo] = useState(r0.to);
+  const y = Number(thisMonth().slice(0, 4));
+  const years = Array.from({ length: 7 }, (_, i) => y + 1 - i);
+  const value = range ? makePeriod(from, to) : from;
+  const n = periodMonths(value).length;
+  const ok = validPeriod(value) && (!range || value.includes(".."));
+  const quick = (label: string, p: string) => (
+    <button key={label} onClick={() => (setRange(true), setFrom(periodRange(p)!.from), setTo(periodRange(p)!.to))} className="rounded-full bg-track px-2.5 py-1 text-[11px] font-bold text-ink-2 hover:text-ink">
+      {label}
+    </button>
+  );
+  const now = thisMonth();
+  const back = (k: number) => {
+    const [yy, mm] = now.split("-").map(Number);
+    const d = new Date(Date.UTC(yy, mm - 1 - k, 1));
+    return d.toISOString().slice(0, 7);
+  };
+  return (
+    <div className="mb-2 space-y-2.5 rounded-2xl border border-line bg-card p-3">
+      <div className="flex rounded-full bg-track p-0.5 text-xs font-bold">
+        {[
+          [false, "Tek ay"],
+          [true, "Birden çok ay"],
+        ].map(([v, l]) => (
+          <button key={String(v)} onClick={() => setRange(v as boolean)} className={`flex-1 rounded-full py-1.5 ${range === v ? "bg-card text-ink shadow-sm" : "text-ink-3"}`}>
+            {l as string}
+          </button>
+        ))}
+      </div>
+      <MonthYear v={from} set={setFrom} label={range ? "Başlangıç" : "Ay"} years={years} />
+      {range && (
+        <>
+          <MonthYear v={to} set={setTo} label="Bitiş" years={years} />
+          <div className="flex flex-wrap gap-1.5">
+            {quick("Yılbaşından bu aya", makePeriod(`${now.slice(0, 4)}-01`, now) || now)}
+            {quick("Son 3 ay", makePeriod(back(2), now))}
+            {quick("Son 6 ay", makePeriod(back(5), now))}
+          </div>
+        </>
+      )}
+      <div className={`px-1 text-xs font-bold ${ok ? "text-ink-2" : "text-fail"}`}>
+        {ok ? `${periodText(value)}${n > 1 ? ` · ${n} ay` : ""}` : range && !value.includes("..") ? "Başlangıç ve bitiş farklı ay olmalı" : `En çok ${MAX_RANGE_MONTHS} ay seçilebilir`}
+      </div>
+      <div className="flex gap-2">
+        <button disabled={!ok} onClick={() => onPick(value)} className="clay-dark flex-1 rounded-full py-2 text-sm font-extrabold disabled:opacity-40">
+          Ekle
+        </button>
+        <button onClick={onCancel} className="rounded-full px-3 text-xs font-bold text-ink-3 hover:text-ink">
+          Vazgeç
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Dosyada hangi ayların olduğu (kodla sayıldı); aralıklı dönemde eksik/dışarıda kalan aylar */
+function Coverage({ f, period }: { f: KurumFile; period: string }) {
+  const c = f.coverage;
+  if (!c) return null;
+  const info = coverageInfo(c.months, period);
+  if (!c.dated || !info) return <div className="text-[11px] font-semibold text-ink-3">{c.rows.toLocaleString("tr-TR")} satır · tarih sütunu yok</div>;
+  return (
+    <div className="text-[11px] font-semibold">
+      <span className="text-ink-2">
+        📅 {info.span} · {c.rows.toLocaleString("tr-TR")} satır
+      </span>
+      {info.missing.length > 0 && <span className="text-[#d9770f]"> · eksik: {info.missing.map(periodText).join(", ")}</span>}
+      {info.outside.length > 0 && <span className="text-ink-3"> · dönem dışı: {info.outside.map(periodText).join(", ")}</span>}
+    </div>
   );
 }

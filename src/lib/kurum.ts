@@ -5,9 +5,9 @@ import { addUsage, ASSISTANT_MODEL, claude, claudeConfigured, logUsage, newUsage
 import { UserError } from "./api";
 import { store } from "./db";
 import type { ArchiveItem } from "./google-types";
-import { KURUM_HOSPITALS, folderText, hospitalLabel, periodText, unitKey, type KurumCategory, type KurumFile, type KurumUnit } from "./kurum-types";
+import { coverageOf } from "./tables";
+import { KURUM_HOSPITALS, coverageInfo, folderText, hospitalLabel, periodText, unitKey, validPeriod, type KurumCategory, type KurumFile, type KurumUnit } from "./kurum-types";
 import { officeText } from "./officetext";
-import { PERIOD_RE } from "./period";
 
 /*
  * Şirket verisi — dosya yöneticisi: Batuhan'ın izinli olarak yüklediği dosyalar hastane → dönem → kategori
@@ -33,6 +33,8 @@ export interface UnitNotes {
   summary: string;
   facts: string[];
   risks: string[];
+  /** çok aylı dönemde ay ay notlar */
+  months?: { month: string; note: string }[];
   partial?: boolean;
 }
 export interface KurumNotes {
@@ -57,7 +59,7 @@ function checkFolder(o: { hospital?: string; period?: string; category?: string 
   const hospital = o.hospital || "genel";
   if (!KURUM_HOSPITALS.some((h) => h.id === hospital)) throw new UserError("Geçersiz hastane");
   const period = o.period ?? "";
-  if (period && !PERIOD_RE.test(period)) throw new UserError("Dönem YYYY-AA biçiminde olmalı");
+  if (!validPeriod(period)) throw new UserError("Dönem YYYY-AA ya da YYYY-AA..YYYY-AA (en çok 36 ay) olmalı");
   const category = o.category ?? "";
   if (category && !cats.some((c) => c.id === category)) throw new UserError("Kategori bulunamadı");
   return { hospital, period, category };
@@ -108,6 +110,7 @@ export async function writeDataFile() {
     "# Şirket verisi (otomatik)",
     "",
     "> Batuhan'ın yüklediği şirket dosyaları hastane → dönem → kategori klasörlerinde. Bir dosyanın ne olduğunu klasörünün kategorisinden anla.",
+    "> Dönem \"Ocak–Temmuz 2026\" gibi çok aylıysa klasördeki dosya o ayların hepsini birlikte içerir: tek bir ay sorulduğunda o klasörün \"Ay ay\" notlarına bak, arşivde ararken satırların tarih sütununa göre o ayı ayır; dönem toplamını tek aya yazma. \"EKSİK\" yazan ayın verisi yüklenmemiştir.",
     '> İçerik için search_archive(source="kurum", query="<hastane> <dönem> <kategori> <konu>") kullan; kayıtların "kim" alanında klasör yazar.',
     "",
     "## Kategoriler",
@@ -118,7 +121,9 @@ export async function writeDataFile() {
       ? units.map((u) => {
           const fs = files.filter((f) => unitKey(f.hospital, f.period, f.category) === u.key);
           const names = fs.slice(0, 6).map((f) => f.name).join(", ") + (fs.length > 6 ? ` +${fs.length - 6}` : "");
-          return `- ${folderText(u.hospital, u.period, catName(cats, u.category))}: ${u.files} dosya (${names}) — ${u.trainedAt ? (u.stale ? "öğrenildi, sonra değişti" : `öğrenildi ${u.trainedAt.slice(0, 10)}`) : "henüz öğrenilmedi"}`;
+          const cov = coverageInfo([...new Set(fs.flatMap((f) => f.coverage?.months ?? []))].sort(), u.period);
+          const covText = cov ? ` · veride bulunan aylar: ${cov.span}${cov.missing.length ? ` (EKSİK: ${cov.missing.map(periodText).join(", ")})` : ""}${cov.outside.length ? ` (dönem dışı: ${cov.outside.map(periodText).join(", ")})` : ""}` : "";
+          return `- ${folderText(u.hospital, u.period, catName(cats, u.category))}: ${u.files} dosya (${names})${covText} — ${u.trainedAt ? (u.stale ? "öğrenildi, sonra değişti" : `öğrenildi ${u.trainedAt.slice(0, 10)}`) : "henüz öğrenilmedi"}`;
         })
       : ["- (dosya yok)"]),
   ];
@@ -128,7 +133,7 @@ export async function writeDataFile() {
     let budget = 30000;
     for (const u of learned.sort((a, b) => (b.trainedAt ?? "").localeCompare(a.trainedAt ?? ""))) {
       const n = notes.units[u.key];
-      const block = [`### ${folderText(u.hospital, u.period, catName(cats, u.category))}${n.partial ? " (dosyaların bir kısmı okundu)" : ""}`, n.summary, ...n.facts.map((x) => `- ${x}`), ...(n.risks.length ? ["Dikkat:", ...n.risks.map((x) => `- ${x}`)] : [])].join("\n");
+      const block = [`### ${folderText(u.hospital, u.period, catName(cats, u.category))}${n.partial ? " (dosyaların bir kısmı okundu)" : ""}`, n.summary, ...n.facts.map((x) => `- ${x}`), ...(n.months?.length ? ["Ay ay:", ...n.months.map((m) => `- ${periodText(m.month)}: ${m.note}`)] : []), ...(n.risks.length ? ["Dikkat:", ...n.risks.map((x) => `- ${x}`)] : [])].join("\n");
       // dosya çok büyümesin: eski birimlerde yalnızca özet
       const text = budget > block.length ? block : `### ${folderText(u.hospital, u.period, catName(cats, u.category))}\n${n.summary}`;
       budget -= text.length;
@@ -306,6 +311,26 @@ export async function addBinary(name: string, buf: Buffer, folder: Folder, budge
     }
     f.partial = true;
   }
+  if (TABLE_KINDS.includes(kind)) return profileFile(f.id).catch(() => f);
+  return f;
+}
+
+const TABLE_KINDS = ["csv", "tsv", "xlsx"];
+/** Dosyanın arşivdeki tam metni (parçalar sırayla) */
+export async function fileText(f: KurumFile) {
+  const items = (await itemsByPrefix("kurum", `${f.id}#`)).sort((a, b) => Number(a.meta?.part ?? 0) - Number(b.meta?.part ?? 0));
+  return items.map((x) => x.body).join("\n");
+}
+/** Tablo dosyasında hangi ayların olduğunu kodla sayar (yükleme bitince bir kez; klasörde ve beyinde görünür) */
+export async function profileFile(id: string) {
+  const files = await listFiles();
+  const f = files.find((x) => x.id === id);
+  if (!f) throw new UserError("Dosya bulunamadı");
+  if (!TABLE_KINDS.includes(f.kind)) return f;
+  const c = coverageOf(await fileText(f), f.kind, f.name);
+  f.coverage = { months: c.months, rows: c.rows, dated: c.dated };
+  await saveFiles(files);
+  await writeDataFile();
   return f;
 }
 

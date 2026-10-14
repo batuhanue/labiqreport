@@ -1,5 +1,5 @@
 import { bad, handle } from "@/lib/api";
-import { addBinary, addText, deleteCategory, kurumView, moveFile, removeFile, saveCategory } from "@/lib/kurum";
+import { addBinary, addText, deleteCategory, kurumView, moveFile, profileFile, removeFile, saveCategory } from "@/lib/kurum";
 import { forgetKurum, trainKurum } from "@/lib/kurum-training";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export const maxDuration = 60;
  * GET → dosyalar, kategoriler, eğitim birimleri
  * POST { action: "text", name, text, id?, size?, hospital, period, category } — metin (büyükse parça parça, aynı id ile)
  * POST { action: "category", id?, name, description } · { action: "category-delete", id }
- * POST { action: "move", id, hospital?, period?, category? }
+ * POST { action: "move", id, hospital?, period?, category? } · { action: "profile", id } — tablo dosyasının ayları (yükleme bitince)
  * POST { action: "train", hospital, period, category?, force? } — seçilen klasör(ler)i öğren · { action: "forget", key }
  * PUT ?name=&hospital=&period=&category= ham dosya (docx/xlsx/pptx/pdf) · DELETE ?id=
  */
@@ -38,6 +38,7 @@ export async function POST(req: Request) {
     if (!b.hospital || b.period == null) return bad("Hastane ve dönem seçilmeli");
     return handle(() => trainKurum({ hospital: b.hospital!, period: b.period!, category: b.category ?? undefined }, { budgetMs: 50000, force: b.force }));
   }
+  if (action === "profile" && b.id) return handle(async () => ({ file: await profileFile(b.id!) }));
   if (action === "forget" && b.key) return handle(async () => (await forgetKurum(b.key!), { ok: true }));
   return bad("Bilinmeyen işlem");
 }

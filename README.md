@@ -164,13 +164,20 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   yazılı olmayan kurallar → bilgi dosyası `is-bilgisi.md` (her düşünmede okunur). Emin olamadıklarını **sana sorar**;
   cevabın belleğe yazılır ve dosya yeniden yazılır. Uygulama açıkken arka planda ve Pazar sabahı cron'da kendini
   günceller. **Şirket verisi (dosya yöneticisi):** dosyalar **hastane → dönem → kategori** klasörlerinde durur
-  (ör. Başakşehir · Ekim 2026 · Arıza). Kategoriler ad + tanımla oluşturulur ("içinde ne var, hangi sistemden gelir,
+  (ör. Başakşehir · Ekim 2026 · Arıza). **Dönem** "+ Dönem" ile eklenir: tek ay ya da **birden çok ay** (ör.
+  Ocak–Temmuz 2026; en çok 36 ay; "Yılbaşından bu aya", "Son 3/6 ay" kısayolları) — böylece yedi ayın verisi tek dosyada
+  tek klasöre yüklenir (LabIQ'dan çok aylı filtreyle inen dosya da kendiliğinden aralıklı klasöre gider). Kategoriler ad + tanımla oluşturulur ("içinde ne var, hangi sistemden gelir,
   ne için kullanılır"); beyin dosyanın ne olduğunu bu tanımdan anlar. Dosyayı klasör kartının üstüne bırak ya da
   klasörü açıp yükle (Word, Excel, PowerPoint, PDF 4 MB'a kadar; CSV/TXT/MD/JSON sınırsız, satır sınırından
   parçalanır, tablo başlığı her parçada); ⋯ ile başka klasöre taşı. Metin arşivde `kurum` kaynağı olarak tam metin
   aranır, kayıtta klasör bilgisi de vardır; asistan ve ajanlar `search_archive` ile okur (PDF'i Claude okur; dosyanın
   kendisi saklanmaz; Google arşivini temizlemek şirket verisini silmez). **Seçmeli öğrenme:** her şey tek seferde
-  okunmaz — "Bu dönemi öğren" (o hastanenin o dönemindeki tüm kategoriler) ya da "Bu kategoriyi öğren" dersin; beyin
+  okunmaz. **Dikkatli okuma:** Excel'de tarih biçimli hücreler gün.ay.yıl olarak (seri sayı değil), ondalıklar Türkçe
+  okunur; tablolar (CSV/TSV/Excel) için kod tüm satırlardan **ön hesap** çıkarır — tarih sütunu, dosyada hangi aylar
+  var, ay ay satır sayısı ve sayısal sütun toplamları ("Genel toplam" satırları ve kod/barkod sütunları hariç). Yükleme
+  bitince dosyanın kapsadığı aylar klasörde görünür ("📅 Ocak–Haziran 2026 · eksik: Temmuz 2026 · dönem dışı: Aralık
+  2025"). Öğrenirken beyin önce bu ön hesabı, sonra dosyanın baş/orta/son bölümlerini okur; çok aylı dönemde ayları
+  ayırır, her ay için not yazar ("Ay ay"), eksik ayı ve çelişkiyi dikkat notuna ekler. "Bu dönemi öğren" (o hastanenin o dönemindeki tüm kategoriler) ya da "Bu kategoriyi öğren" dersin; beyin
   yalnızca o klasörleri okuyup ne anlattıklarını, bulguları ve dikkat noktalarını çıkarır. Öğrenilen klasör **✓**,
   sonradan dosyası değişen **⟳ güncellenmeli**, kalanı **○ öğrenilmedi**; dönem listesinde öğrenilen/toplam görünür.
   Kategoriler, klasörler ve öğrenilenler bilgi dosyası `sirket-verisi.md`'ye yazılır (her düşünmede okunur); emin

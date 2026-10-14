@@ -1,10 +1,10 @@
 import "server-only";
 import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
-import { itemsByPrefix } from "./archive";
 import { brainBlocks } from "./brain-prompt";
 import { addUsage, ASSISTANT_MODEL, claude, claudeConfigured, logUsage, newUsage, type Usage } from "./claude";
-import { listCategories, listFiles, readNotes, saveNotes, sigOf, writeDataFile, type UnitNotes } from "./kurum";
-import { folderText, unitKey, type KurumCategory, type KurumFile } from "./kurum-types";
+import { fileText, listCategories, listFiles, readNotes, saveNotes, sigOf, writeDataFile, type UnitNotes } from "./kurum";
+import { folderText, periodMonths, periodText, rangeMonths, unitKey, type KurumCategory, type KurumFile } from "./kurum-types";
+import { profileTable, profileText, tablesFromText } from "./tables";
 import { addQuestions } from "./training";
 import { UserError } from "./api";
 
@@ -23,37 +23,65 @@ const UNIT_SCHEMA = {
     summary: { type: "string", description: "bu klasördeki dosyalar ne anlatıyor (2-4 cümle; ne tür kayıt, hangi dönem/hastane, genel tablo)" },
     facts: { type: "array", items: { type: "string" }, description: "Batuhan'ın işine yarayacak somut bulgular, rakamlar, örüntüler, tekrarlayan kalemler (en çok 12)" },
     risks: { type: "array", items: { type: "string" }, description: "dikkat edilmesi gereken sorunlar, sapmalar, eksikler (en çok 6)" },
+    months: {
+      type: "array",
+      description: "ÇOK AYLI dönemde her ay için bir kısa not (o ayın rakamlarıyla; verisi yoksa 'veri yok'). Tek aylık ya da dönemsiz klasörde boş dizi.",
+      items: { type: "object", properties: { month: { type: "string", description: "YYYY-AA" }, note: { type: "string" } }, required: ["month", "note"], additionalProperties: false },
+    },
     questions: {
       type: "array",
       description: "dosyalardan anlaşılamayan, Batuhan'a sorulması gereken önemli noktalar (en çok 2)",
       items: { type: "object", properties: { q: { type: "string" }, why: { type: "string" } }, required: ["q", "why"], additionalProperties: false },
     },
   },
-  required: ["summary", "facts", "risks", "questions"],
+  required: ["summary", "facts", "risks", "months", "questions"],
   additionalProperties: false,
 } as const;
 
-async function corpus(files: KurumFile[]) {
+/** Uzun metinden baş, orta ve son kısımlardan satır sınırında örnek (yalnızca baştan kesmek son ayları hiç göstermez) */
+function spread(text: string, max: number, header?: string) {
+  if (text.length <= max) return { text, cut: false };
+  const k = 4;
+  const w = Math.floor(max / k);
+  const parts: string[] = [];
+  let last = 0;
+  for (let i = 0; i < k; i++) {
+    let a = Math.floor(((text.length - w) * i) / (k - 1));
+    if (i) a = text.indexOf("\n", a) + 1 || a;
+    let b = Math.min(text.length, a + w);
+    if (b < text.length) b = text.lastIndexOf("\n", b) > a ? text.lastIndexOf("\n", b) : b;
+    if (a > last) parts.push(`…(arada ${(a - last).toLocaleString("tr-TR")} karakter atlandı; satır sayısı ve toplamlar ÖN HESAP'ta)…${header && i ? `\n${header}` : ""}`);
+    parts.push(text.slice(a, b));
+    last = b;
+  }
+  if (last < text.length) parts.push(`…(son ${(text.length - last).toLocaleString("tr-TR")} karakter atlandı)…`);
+  return { text: parts.join("\n"), cut: true };
+}
+
+/** Klasörün okunacak metni: önce kodla hesaplanan ÖN HESAP (tablolar), sonra dosyaların metni */
+async function corpus(files: KurumFile[], period: string) {
   const per = Math.max(8000, Math.floor(CORPUS / Math.max(1, files.length)));
+  const expected = periodMonths(period);
   let partial = false;
+  const pre: string[] = [];
   const parts: string[] = [];
   for (const f of files) {
-    const items = (await itemsByPrefix("kurum", `${f.id}#`)).sort((a, b) => Number(a.meta?.part ?? 0) - Number(b.meta?.part ?? 0));
-    let text = items.map((x) => x.body).join("\n");
-    if (text.length > per) {
-      text = `${text.slice(0, per)}\n…(dosyanın devamı okunmadı)`;
-      partial = true;
-    }
-    parts.push(`### DOSYA: ${f.name} (${f.kind}, ${f.chars.toLocaleString("tr-TR")} karakter)\n${text}`);
+    const full = await fileText(f);
+    const tables = tablesFromText(full, f.kind, f.name).slice(0, 8);
+    if (tables.length) pre.push(`### ÖN HESAP — ${f.name}\n${tables.map((t) => profileText(profileTable(t), expected)).join("\n\n")}`);
+    const { text, cut } = spread(full, per, f.kind === "csv" || f.kind === "tsv" ? full.split("\n", 1)[0] : undefined);
+    if (cut) partial = true;
+    parts.push(`### DOSYA: ${f.name} (${f.kind}, ${f.chars.toLocaleString("tr-TR")} karakter${cut ? ", uzun: baş/orta/son bölümleri" : ""})\n${text}`);
   }
-  return { text: parts.join("\n\n"), partial };
+  return { text: [pre.length ? `## ÖN HESAP (kodla tüm satırlardan kesin hesaplandı — satır sayısı, aylar ve toplamlarda buna güven)\n${pre.join("\n\n")}` : "", `## DOSYALAR\n${parts.join("\n\n")}`].filter(Boolean).join("\n\n"), partial };
 }
 
 async function learnUnit(files: KurumFile[], cats: KurumCategory[], u: Usage, timeout: number) {
   const f0 = files[0];
   const cat = cats.find((c) => c.id === f0.category);
   const folder = folderText(f0.hospital, f0.period, cat?.name ?? "");
-  const c = await corpus(files);
+  const c = await corpus(files, f0.period);
+  const n = rangeMonths(f0.period);
   const res = await claude().messages.parse(
     {
       model: ASSISTANT_MODEL,
@@ -65,7 +93,16 @@ async function learnUnit(files: KurumFile[], cats: KurumCategory[], u: Usage, ti
           role: "user",
           content: `ŞU AN: Şirket verisi eğitimi — ${folder}.
 Kategori: ${cat ? `${cat.name}${cat.description ? ` — ${cat.description.replace(/[.\s]+$/, "")}` : ""}` : "kategorisiz"}.
-Aşağıda bu klasördeki ${files.length} dosyanın metni var. Batuhan'ın işi açısından ne anlattıklarını öğren: genel tablo, somut bulgular ve rakamlar, tekrarlayan örüntüler, dikkat edilmesi gereken sapmalar. Kategori tanımını ve bilgi dosyalarını (iş tanımı, kontrol yöntemleri, iş bilgisi) kullanarak yorumla.
+${
+            n
+              ? `DÖNEM ÇOK AYLI: ${periodText(f0.period)} — ${n} ay (${periodMonths(f0.period).join(", ")}). Dosyalar bu ayların verisini BİRLİKTE içerir.
+- Ayları tarih/ay sütunundan ayır (ÖN HESAP'taki ay tablosu hazır); bir rakamı hangi aya ait olduğunu bilmeden tek aya yazma, dönem toplamını tek ay sanma.
+- "months" alanına dönemin HER ayı için bir not yaz (o ayın satır sayısı/toplamları, öne çıkan şey); verisi olmayan ay için "veri yok" yaz ve risks'e ekle.
+- Aylar arası farkı, artış/azalışı ve sıra dışı ayı facts'te belirt.`
+              : `Dönem: ${periodText(f0.period)}.`
+          }
+Aşağıda bu klasördeki ${files.length} dosya var. Batuhan'ın işi açısından ne anlattıklarını öğren: genel tablo, somut bulgular ve rakamlar, tekrarlayan örüntüler, dikkat edilmesi gereken sapmalar. Kategori tanımını ve bilgi dosyalarını (iş tanımı, kontrol yöntemleri, iş bilgisi) kullanarak yorumla.
+DİKKATLİ OKU: önce her dosyanın yapısını anla (sayfalar/sekmeler, başlık satırı, her sütunun anlamı ve birimi, toplam ve ara toplam satırları), sonra rakamlara geç. Toplam satırlarını yeniden toplama; adet, TL, test sayısı gibi birimleri karıştırma; kod/barkod/protokol sütunlarını miktar sanma. Satır sayısı, aylar ve toplamlarda ÖN HESAP'a güven (dosya metninin yalnızca bir kısmını görüyor olabilirsin); ön hesapla dosya metni çelişirse bunu risks'e yaz. Dosyada olmayan ayı ya da rakamı tahmin etme.
 Kurallar: yalnızca dosyada olanı yaz, uydurma; rakamları dosyadaki gibi aktar; kişileri zan altında bırakma; kişisel veri yerine iş bilgisini yaz.
 
 ${c.text}`,
@@ -77,7 +114,8 @@ ${c.text}`,
   addUsage(u, res);
   if (res.stop_reason === "refusal" || !res.parsed_output) return null;
   const o = res.parsed_output;
-  const notes: UnitNotes = { at: new Date().toISOString(), sig: sigOf(files), summary: o.summary.trim(), facts: o.facts.slice(0, 12), risks: o.risks.slice(0, 6), partial: c.partial || undefined };
+  const months = n ? (o.months ?? []).filter((m) => /^\d{4}-\d{2}$/.test(m.month) && m.note.trim()).slice(0, 36) : [];
+  const notes: UnitNotes = { at: new Date().toISOString(), sig: sigOf(files), summary: o.summary.trim(), facts: o.facts.slice(0, 12), risks: o.risks.slice(0, 6), months: months.length ? months : undefined, partial: c.partial || undefined };
   return { notes, questions: o.questions.slice(0, 2), folder };
 }
 

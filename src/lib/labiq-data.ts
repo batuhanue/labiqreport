@@ -1,9 +1,11 @@
 import "server-only";
 import { store } from "./db";
-import { addText, listCategories, saveCategory } from "./kurum";
+import { addText, listCategories, profileFile, saveCategory } from "./kurum";
 import { exportViaCable, fetchFile, getLabiqStatus } from "./labiq";
 import { openPage, withParams, type Params } from "./labiq-browse";
+import { makePeriod, validPeriod } from "./kurum-types";
 import { officeText } from "./officetext";
+import { num, parseCsv, splitHeader } from "./tables";
 import { norm } from "./archive";
 
 /*
@@ -35,42 +37,6 @@ export const listTables = async () => (await store().getKV<TableMeta[]>(INDEX)) 
 export const getTable = (id: string) => store().getKV<StoredTable>(tableKey(id));
 
 // ------------------------------------------------------------------ tabloya çevirme
-function parseCsv(textIn: string): string[][] {
-  const first = textIn.split(/\r?\n/, 1)[0] ?? "";
-  const d = (first.match(/;/g)?.length ?? 0) > (first.match(/,/g)?.length ?? 0) ? ";" : first.includes("\t") ? "\t" : ",";
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cur = "";
-  let q = false;
-  for (let i = 0; i < textIn.length; i++) {
-    const c = textIn[i];
-    if (q) {
-      if (c === '"' && textIn[i + 1] === '"') (cur += '"'), i++;
-      else if (c === '"') q = false;
-      else cur += c;
-    } else if (c === '"') q = true;
-    else if (c === d) row.push(cur), (cur = "");
-    else if (c === "\n" || c === "\r") {
-      if (c === "\r" && textIn[i + 1] === "\n") i++;
-      row.push(cur);
-      rows.push(row);
-      row = [];
-      cur = "";
-    } else cur += c;
-  }
-  if (cur || row.length) row.push(cur), rows.push(row);
-  return rows.filter((r) => r.some((x) => x.trim()));
-}
-
-/** Başlık satırı: ilk 12 satırda en dolu ve ardından benzer genişlikte satırlar gelen satır (rapor başlığı satırlarını atlar) */
-function splitHeader(rows: string[][]) {
-  const width = Math.max(0, ...rows.slice(0, 40).map((r) => r.filter((x) => x.trim()).length));
-  const h = rows.slice(0, 12).findIndex((r) => r.filter((x) => x.trim()).length >= Math.max(2, Math.ceil(width * 0.6)));
-  const at = h < 0 ? 0 : h;
-  const headers = (rows[at] ?? []).map((x, i) => x.trim() || `Sütun ${i + 1}`);
-  return { headers, rows: rows.slice(at + 1).filter((r) => r.some((x) => x.trim())), preamble: rows.slice(0, at).map((r) => r.filter(Boolean).join(" ")).filter(Boolean) };
-}
-
 export function toTables(name: string, buf: Buffer, type: string): { sheet: string; headers: string[]; rows: string[][]; preamble: string[] }[] {
   const ext = name.toLowerCase().split(".").pop() ?? "";
   if (ext === "xlsx" || /spreadsheetml/.test(type)) {
@@ -88,12 +54,16 @@ export function toTables(name: string, buf: Buffer, type: string): { sheet: stri
 
 // ------------------------------------------------------------------ dönem ve klasör
 const MONTH = /(\d{4})-(\d{2})-\d{2}|(\d{2})[./](\d{2})[./](\d{4})/g;
-/** filtredeki tarihlerden dönem: başlangıç ve bitiş aynı aydaysa o ay, değilse başlangıç ayı */
+/** filtredeki tarihlerden dönem: başlangıç ve bitiş aynı aydaysa o ay, değilse çok aylı aralık (ör. 2026-01..2026-07) */
 export function periodFrom(params?: Params) {
   const months = Object.values(params ?? {})
     .flatMap((v) => (Array.isArray(v) ? v : [v]))
-    .flatMap((v) => [...String(v ?? "").matchAll(MONTH)].map((m) => (m[1] ? `${m[1]}-${m[2]}` : `${m[5]}-${m[4]}`)));
-  return months[0] ?? "";
+    .flatMap((v) => [...String(v ?? "").matchAll(MONTH)].map((m) => (m[1] ? `${m[1]}-${m[2]}` : `${m[5]}-${m[4]}`)))
+    .filter((m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(m))
+    .sort();
+  if (!months.length) return "";
+  const p = makePeriod(months[0], months.at(-1));
+  return validPeriod(p) ? p : months[0];
 }
 
 async function categoryFor(title: string) {
@@ -177,6 +147,7 @@ async function ingest(x: { buf: Buffer; type: string; name: string; title?: stri
     const txt = tables.map((t) => `# ${title} — ${t.sheet}\nKaynak: LabIQ ${status.companyLabel}${filt ? ` · filtre: ${filt}` : ""}\n${t.headers.join("\t")}\n${t.rows.map((x) => x.join("\t")).join("\n")}`).join("\n\n");
     const f = await addText(name.replace(/\.(xlsx|csv)$/i, "") + ".tsv", txt, { hospital, period, category: cat.id, size: buf.length });
     kurumFileId = f.id;
+    await profileFile(f.id).catch(() => null);
     folder = `${hospital} · ${period || "dönemsiz"} · ${cat.name}`;
   }
 
@@ -192,18 +163,7 @@ async function ingest(x: { buf: Buffer; type: string; name: string; title?: stri
 }
 
 // ------------------------------------------------------------------ tablo sorgusu
-/** "1.234,56" · "1,234.56" · "%12,5" · "12 adet" → sayı */
-export function num(v: string): number | null {
-  let s = String(v ?? "").replace(/[%\s₺€$]|TL|adet|kutu|test/gi, "");
-  if (!s || !/\d/.test(s)) return null;
-  if (/^-?[\d.]+,\d+$/.test(s)) s = s.replace(/\./g, "").replace(",", ".");
-  else if (/^-?[\d,]+\.\d+$/.test(s)) s = s.replace(/,/g, "");
-  else if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");
-  else if (/^-?\d+,\d+$/.test(s)) s = s.replace(",", ".");
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
-
+export { num };
 export interface QueryInput {
   where?: { column: string; op?: "contains" | "=" | "!=" | ">" | "<" | ">=" | "<=" | "not_contains"; value: string }[];
   groupBy?: string[];
