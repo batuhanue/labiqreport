@@ -4,9 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/ui";
-import { AGENTS, agentById } from "@/lib/brain-types";
-import { ItemSheet } from "@/components/brain/BrainView";
-import { TaskListView } from "@/components/brain/TaskRow";
+import { AGENTS } from "@/lib/brain-types";
 import { useBrainState } from "@/components/brain/useBrain";
 import type { ArchiveProgress, GoogleSnapshot } from "@/lib/google-types";
 import { OFFICE_DARK, OFFICE_LIGHT, type OfficePal } from "./Furniture";
@@ -318,19 +316,10 @@ export default function OfficeView({
                     <Icon name="close" size={16} />
                   </button>
                 </div>
-                {ZONE_AGENT[zone.id] && (() => {
-                  const mine = (brain.st?.items ?? []).filter((x) => x.agent === ZONE_AGENT[zone.id] && x.status !== "done" && x.status !== "dismissed");
-                  return mine.length ? (
-                    <section className="mb-4">
-                      <div className="mb-1 px-1 text-xs font-bold text-ink-3">Beyindeki işler</div>
-                      <TaskListView items={mine} onOpen={brain.setOpen} filters={false} showAgent={false} limit={3} />
-                    </section>
-                  ) : null;
-                })()}
                 <div className="@container">{renderZone(zone.id)}</div>
               </>
             ) : (
-              <TaskStatus brain={brain} />
+              <Overview brain={brain} />
             )}
           </motion.div>
         </AnimatePresence>
@@ -351,7 +340,6 @@ export default function OfficeView({
         )}
         <span className="hidden text-ink-3 lg:inline">· sürükle: döndür · tekerlek: yakınlaştır · pod'a tıkla</span>
       </div>
-      <ItemSheet x={brain.open} onClose={() => brain.setOpen(null)} onPatch={brain.patch} onWork={brain.runWork} onApprove={brain.approveWork} />
     </div>
   );
 }
@@ -370,27 +358,20 @@ const CONNECTORS: { id: string; label: string; icon: string; color: string; to: 
 /* ------------------------------------------------------------------ beyin durumu */
 type BrainHook = ReturnType<typeof useBrainState>;
 
-/** Genel bakış: beynin kısa durumu ve tüm ofisin işleri. */
-function TaskStatus({ brain }: { brain: BrainHook }) {
+/** Genel bakış: burası Google verisinin kendisi; kararlar ve işler tek yerde (Beyin → Bugün). */
+function Overview({ brain }: { brain: BrainHook }) {
   const st = brain.st;
-  const busy = brain.thinking || !!st?.running;
+  const open = st?.items.filter((x) => x.status !== "done" && x.status !== "dismissed").length ?? 0;
   return (
-    <div className="space-y-4">
-      <section className="flex items-center gap-2 px-1">
-        <span className="text-sm font-extrabold">Beyin</span>
-        <span className="truncate text-xs text-ink-3">{st?.lastRun ? `düşünme ${ago(st.lastRun)}` : "henüz düşünmedi"}</span>
-        <button onClick={brain.think} disabled={busy} className="ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold text-ink-2 hover:bg-black/5 disabled:opacity-60 dark:hover:bg-white/10">
-          <Icon name="refresh" size={13} className={busy ? "animate-spin" : ""} />
-          {busy ? "Düşünüyor" : "Düşün"}
-        </button>
-        <Link href="/gorevler" className="rounded-full px-2.5 py-1 text-xs font-bold text-blue hover:bg-black/5 dark:hover:bg-white/10">
-          Aç
-        </Link>
-      </section>
-      <section>
-        <div className="mb-2 px-1 text-sm font-extrabold">İşler</div>
-        {st ? <TaskListView items={st.items} onOpen={brain.setOpen} /> : <div className="py-6 text-center text-xs text-ink-3">Yükleniyor…</div>}
-      </section>
+    <div className="space-y-3 px-1">
+      <div className="text-sm font-extrabold">Google ofisi</div>
+      <p className="text-[13px] leading-relaxed text-ink-2">Bir odaya dokun: e-postalar, sohbetler, takvim, toplantı notları ve Drive dosyaları orada. Beyin hepsini arşivden okur.</p>
+      <Link href="/gorevler" className="flex items-center gap-2 rounded-2xl bg-blue/10 px-3 py-2.5 text-[13px] font-bold text-blue hover:bg-blue/15">
+        <Icon name="brain" size={16} />
+        Senden karar bekleyenler: Beyin → Bugün
+        <span className="ml-auto text-xs font-semibold">{st ? `${open} açık iş` : ""}</span>
+      </Link>
+      <div className="text-[11.5px] text-ink-3">{st?.lastRun ? `Son okuma ${ago(st.lastRun)}` : "Henüz okumadı"}</div>
     </div>
   );
 }

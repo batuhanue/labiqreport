@@ -6,12 +6,12 @@ import { startTransition, useEffect, useState, ViewTransition } from "react";
 import LabIQAgentPanel from "@/components/brain/LabIQAgentPanel";
 import BrainView from "@/components/brain/BrainView";
 import TrainingPanel from "@/components/brain/TrainingPanel";
+import Today from "@/components/brain/Today";
 import TodoBoard from "@/components/todos/TodoBoard";
-import { Segmented } from "@/components/ui";
+import { Menu } from "@/components/ui";
 
-const TAB_KEY = "lq:brain-tab";
-const VIEW_KEY = "lq:brain-view2";
-type View = "net" | "office" | "list" | "train" | "labiq";
+const VIEW_KEY = "lq:brain-view3";
+type View = "today" | "todos" | "train" | "labiq" | "all" | "net" | "office";
 
 /** Beyin ofisi (3B) yalnızca tablet/masaüstünde ve gerektiğinde indirilir. */
 const BrainOffice = dynamic(() => import("@/components/brain/BrainOffice"), {
@@ -32,18 +32,28 @@ const NetworkMap = dynamic(() => import("@/components/brain/NetworkMap"), {
   loading: () => <div className="h-[calc(100dvh-12rem)] min-h-[420px] rounded-[30px] bg-[#06070c]" />,
 });
 
-/** Beyin: asıl çalışma ekibi (ajan departmanları). Kişisel görev listesi beynin bir yan işi olarak ikinci sekmede. */
+const MAIN = [
+  ["today", "Bugün"],
+  ["todos", "Görevlerim"],
+  ["train", "Eğitim"],
+  ["labiq", "LabIQ"],
+] as const;
+const EXTRA: Record<"all" | "net" | "office", string> = { all: "Tüm işler", net: "Ajan ağı", office: "Ofis (3B)" };
+
+/** Beyin: varsayılan "Bugün" (karar bekleyenler + Hazırla). Görevlerim, Eğitim, LabIQ yanında; ayrıntılı görünümler ⋯ altında. */
 export default function BeyinPage() {
-  const [tab, setTab] = useState<"brain" | "todos">("brain");
-  const [view, setView] = useState<View>("net");
+  const [view, setView] = useState<View>("today");
   const [wide, setWide] = useState(false);
   useEffect(() => {
     try {
-      if (localStorage.getItem(TAB_KEY) === "todos" || new URLSearchParams(window.location.search).get("sekme") === "gorevler") setTab("todos");
-      const v = localStorage.getItem(VIEW_KEY);
-      if (v === "office" || v === "list" || v === "train" || v === "labiq") setView(v);
-      if (new URLSearchParams(window.location.search).get("gorunum") === "egitim") setView("train");
-      if (new URLSearchParams(window.location.search).get("gorunum") === "labiq") setView("labiq");
+      const q = new URLSearchParams(window.location.search);
+      // her açılış Bugün'le başlar; yalnızca Görevlerim'de kaldıysan oradan devam eder
+      if (localStorage.getItem(VIEW_KEY) === "todos") setView("todos");
+      if (q.get("sekme") === "gorevler") setView("todos");
+      const g = q.get("gorunum");
+      if (g === "egitim") setView("train");
+      if (g === "labiq") setView("labiq");
+      if (g === "bugun") setView("today");
     } catch {}
     const mq = window.matchMedia("(min-width: 768px)");
     const on = () => setWide(mq.matches);
@@ -52,56 +62,37 @@ export default function BeyinPage() {
     return () => mq.removeEventListener("change", on);
   }, []);
   // görünüm değişimleri geçiş içinde: <ViewTransition> çapraz geçiş yapar
-  const pick = (t: "brain" | "todos") => {
-    startTransition(() => setTab(t));
-    try {
-      localStorage.setItem(TAB_KEY, t);
-    } catch {}
-  };
   const pickView = (v: View) => {
     startTransition(() => setView(v));
     try {
       localStorage.setItem(VIEW_KEY, v);
     } catch {}
   };
-  // ofis 3B'si dar ekranda yok → listeye düş
-  const shown: View = view === "office" && !wide ? "list" : view;
+  // ofis 3B'si dar ekranda yok → tüm işlere düş
+  const shown: View = view === "office" && !wide ? "all" : view;
+  const extra = shown === "all" || shown === "net" || shown === "office" ? shown : null;
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="w-full max-w-sm">
-          <Segmented
-            value={tab}
-            onChange={pick}
-            options={[
-              { value: "brain", label: "🧠 Beyin" },
-              { value: "todos", label: "✅ Görevlerim" },
-            ]}
-          />
+      <div className="flex items-center gap-1">
+        <div className="clay-pressed flex min-w-0 overflow-x-auto rounded-full p-1">
+          {[...MAIN, ...(extra ? ([[extra, EXTRA[extra]]] as const) : [])].map(([v, l]) => (
+            <button key={v} onClick={() => pickView(v)} className={`relative shrink-0 rounded-full px-3.5 py-2 text-sm font-bold sm:px-4 ${shown === v ? "text-white" : "text-ink-2"}`}>
+              {shown === v && <motion.span layoutId="brain-view" className="absolute inset-0 rounded-full bg-blue" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}
+              <span className="relative">{l}</span>
+            </button>
+          ))}
         </div>
-        {tab === "brain" && (
-          <div className="clay-pressed flex rounded-full p-1">
-            {(
-              [
-                ["net", "🕸 Ağ"],
-                ["office", "🏢 Ofis"],
-                ["list", "☰ Liste"],
-                ["train", "🎓 Eğitim"],
-                ["labiq", "⚡ LabIQ"],
-              ] as const
-            )
-              .filter(([v]) => wide || v !== "office")
-              .map(([v, l]) => (
-                <button key={v} onClick={() => pickView(v)} className={`relative rounded-full px-4 py-2 text-sm font-bold ${shown === v ? "text-white" : "text-ink-2"}`}>
-                  {shown === v && <motion.span layoutId="brain-view" className="absolute inset-0 rounded-full bg-blue" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}
-                  <span className="relative">{l}</span>
-                </button>
-              ))}
-          </div>
-        )}
+        <Menu
+          label="Diğer görünümler"
+          items={[
+            { label: "Tüm işler (pano)", icon: "todo", onClick: () => pickView("all") },
+            { label: "Ajan ağı", icon: "brain", onClick: () => pickView("net") },
+            { label: "Ofis (3B)", icon: "home", onClick: () => pickView("office"), hidden: !wide },
+          ]}
+        />
       </div>
       <ViewTransition update="swap" default="none">
-        <div>{tab === "todos" ? <TodoBoard /> : shown === "net" ? <NetworkMap /> : shown === "office" ? <BrainOffice /> : shown === "train" ? <TrainingPanel /> : shown === "labiq" ? <LabIQAgentPanel /> : <BrainView />}</div>
+        <div>{shown === "todos" ? <TodoBoard /> : shown === "today" ? <Today /> : shown === "net" ? <NetworkMap /> : shown === "office" ? <BrainOffice /> : shown === "train" ? <TrainingPanel /> : shown === "labiq" ? <LabIQAgentPanel /> : <BrainView />}</div>
       </ViewTransition>
     </div>
   );

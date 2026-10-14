@@ -19,16 +19,13 @@ import {
   isOverdue,
   newTodo,
   parseQuick,
-  planNoDate,
   PRIORITY,
   RECUR_LABEL,
   startOfDay,
-  suggestions,
   todoStats,
   uid,
   type Priority,
   type Recur,
-  type Suggestion,
   type Todo,
   type View,
 } from "@/lib/todo";
@@ -51,14 +48,13 @@ const EXAMPLES = [
 
 export default function TodoBoard() {
   const { store, loaded, add, mutate, toggle, remove, restore } = useTodos();
-  const { data: period, toast } = usePeriod();
+  const { toast } = usePeriod();
   const [tab, setTab] = useState<"list" | "stats">("list");
   const [view, setView] = useState<View>("today");
   const [editing, setEditing] = useState<Todo | null>(null);
   const [undo, setUndo] = useState<Todo | null>(null);
   const today = startOfDay();
   const stats = useMemo(() => todoStats(store.todos), [store.todos]);
-  const sugg = useMemo(() => suggestions(store, period), [store, period]);
   const counts = useMemo(() => Object.fromEntries(VIEWS.map((x) => [x.v, filterView(store.todos, x.v).length])) as Record<View, number>, [store.todos]);
   const list = useMemo(() => filterView(store.todos, view), [store.todos, view]);
   const groups = useMemo(() => (view === "done" ? [{ key: "done", label: "Tamamlananlar", items: list }] : groupTodos(list)), [list, view]);
@@ -77,29 +73,13 @@ export default function TodoBoard() {
     return () => clearTimeout(t);
   }, [undo]);
 
-  const runSuggestion = (s: Suggestion) => {
-    noteChoice({ where: "gorevler", kind: "suggestion_accept", title: s.title, detail: s.body });
-    if (s.todo) {
-      add(newTodo(s.todo));
-      toast("Görev oluşturuldu");
-    } else if (s.action === "reschedule-overdue") {
-      const t = iso(today);
-      mutate((st) => ({ ...st, todos: st.todos.map((x) => (isOverdue(x, today) ? { ...x, due: t, updatedAt: new Date().toISOString() } : x)) }));
-      toast("Gecikmiş görevler bugüne taşındı");
-      setView("today");
-    } else if (s.action === "plan-nodate") {
-      mutate((st) => ({ ...st, todos: planNoDate(st.todos, today) }));
-      toast("Tarihsiz görevler bu haftaya dağıtıldı");
-      setView("upcoming");
-    }
-  };
-  const dismiss = (key: string) => {
-    const s = sugg.find((x) => x.key === key);
-    if (s) noteChoice({ where: "gorevler", kind: "suggestion_dismiss", title: s.title, detail: s.body });
-    mutate((st) => ({ ...st, dismissed: [...st.dismissed, key] }));
+  const moveOverdue = () => {
+    const t = iso(today);
+    mutate((st) => ({ ...st, todos: st.todos.map((x) => (isOverdue(x, today) ? { ...x, due: t, updatedAt: new Date().toISOString() } : x)) }));
+    toast("Gecikmiş görevler bugüne taşındı");
+    setView("today");
   };
 
-  const focusCount = store.todos.filter((t) => t.focus && !t.done).length;
 
   return (
     <div className="space-y-5">
@@ -125,12 +105,6 @@ export default function TodoBoard() {
             </div>
           </div>
         </div>
-        <div className="relative mt-5 flex flex-wrap gap-2.5">
-          <span className="glass-on-color rounded-full px-3 py-1.5 text-sm font-bold">🔥 {stats.streak} gün seri</span>
-          <span className="glass-on-color rounded-full px-3 py-1.5 text-sm font-bold">⭐ {focusCount} odak</span>
-          <span className="glass-on-color rounded-full px-3 py-1.5 text-sm font-bold">📅 Bu hafta {stats.doneWeek} bitti</span>
-          {stats.onTimeRate != null && <span className="glass-on-color rounded-full px-3 py-1.5 text-sm font-bold">⏱️ %{Math.round(stats.onTimeRate * 100)} zamanında</span>}
-        </div>
       </TiltCard>
 
       {/* ------------------------------------------------ hızlı ekleme */}
@@ -139,45 +113,15 @@ export default function TodoBoard() {
         if (t.due && t.due > iso(today) && view === "today") setView("upcoming");
       }} />
 
-      {/* ------------------------------------------------ asistan önerileri */}
-      <AnimatePresence initial={false}>
-        {sugg.length > 0 && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-            <div className="mb-2 flex items-center gap-2 px-1 text-sm font-extrabold text-ink-2">
-              <motion.span animate={{ rotate: [0, 15, -10, 0] }} transition={{ repeat: Infinity, repeatDelay: 4, duration: 0.8 }}>✨</motion.span>
-              Asistan önerileri
-            </div>
-            <div className="no-scrollbar -mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-3 pt-1 sm:mx-0 sm:px-1">
-              <AnimatePresence initial={false} mode="popLayout">
-                {sugg.map((s, i) => (
-                  <motion.div
-                    key={s.key}
-                    layout
-                    initial={{ opacity: 0, x: 30, scale: 0.95 }}
-                    animate={{ opacity: 1, x: 0, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.8, y: -10 }}
-                    transition={{ ...spring.enter, delay: i * 0.05 }}
-                    className="clay relative flex w-[280px] shrink-0 snap-start flex-col p-4"
-                    style={{ background: s.tone === "alert" ? "var(--color-tint-fail)" : s.tone === "warn" ? "var(--color-tint-warn)" : "var(--color-tint-info)" }}
-                  >
-                    <button onClick={() => dismiss(s.key)} className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-full text-ink-3 hover:bg-track" aria-label="Gizle">
-                      <Icon name="close" size={14} />
-                    </button>
-                    <div className="text-2xl">{s.icon}</div>
-                    <div className="mt-1 pr-6 font-extrabold leading-snug">{s.title}</div>
-                    <div className="mt-1 line-clamp-2 text-sm text-ink-2">{s.body}</div>
-                    {s.cta && (
-                      <motion.button whileTap={{ scale: 0.95 }} onClick={() => runSuggestion(s)} className="clay-dark mt-3 self-start rounded-full px-4 py-2 text-sm font-bold">
-                        {s.cta}
-                      </motion.button>
-                    )}
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* ------------------------------------------------ gecikenler: tek satır, tek tuş */}
+      {stats.overdue > 0 && (
+        <div className="flex items-center gap-2 rounded-2xl bg-fail/10 px-4 py-2.5 text-sm font-bold text-fail">
+          ⚠️ {stats.overdue} gecikmiş görev
+          <button onClick={moveOverdue} className="ml-auto rounded-full bg-fail px-3 py-1 text-xs font-bold text-white">
+            Bugüne taşı
+          </button>
+        </div>
+      )}
 
       {/* ------------------------------------------------ sekmeler */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center">

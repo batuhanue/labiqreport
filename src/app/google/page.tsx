@@ -32,14 +32,15 @@ const OfficeView = dynamic(() => import("@/components/office/OfficeView"), {
   ),
 });
 
-const VIEW_KEY = "lq:google-view";
+const VIEW_KEY = "lq:google-view2";
 /** Görünüm tercihi (Ofis / Liste) ve ekranın tablet+ olup olmadığı. */
 function useGoogleView(): ["office" | "list", (m: "office" | "list") => void, boolean] {
-  const [mode, setModeState] = useState<"office" | "list">("office");
+  // varsayılan sade liste; 3B ofis isteyene
+  const [mode, setModeState] = useState<"office" | "list">("list");
   const [wide, setWide] = useState(false);
   useEffect(() => {
     try {
-      if (localStorage.getItem(VIEW_KEY) === "list") setModeState("list");
+      if (localStorage.getItem(VIEW_KEY) === "office") setModeState("office");
     } catch {}
     const mq = window.matchMedia("(min-width: 768px)");
     const on = () => setWide(mq.matches);
@@ -62,8 +63,8 @@ function ViewToggle({ mode, onChange }: { mode: "office" | "list"; onChange: (m:
       <div className="clay-pressed flex rounded-full p-1">
         {(
           [
-            ["office", "🏢 Ofis"],
             ["list", "☰ Liste"],
+            ["office", "🏢 Ofis (3B)"],
           ] as const
         ).map(([v, l]) => (
           <button key={v} onClick={() => onChange(v)} className={`relative rounded-full px-4 py-2 text-sm font-bold ${mode === v ? "text-white" : "text-ink-2"}`}>

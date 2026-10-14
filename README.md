@@ -34,9 +34,8 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   `yarın 14:00 Tuğrul'u ara #sayım !!`, `cumaya kadar R-05 fire raporu !acil`, `her cuma 11:00 toplantı hazırlığı`,
   `15.10 sunum @Hakan`, `3 gün sonra …`, `ay sonu …`. Akıllı listeler (Bugün/Yaklaşan/Gecikmiş/Tümü/Biten),
   odak yıldızı, alt görevler, tekrar eden görevler, sağa kaydır = tamamla / sola kaydır = sil (geri al), analiz
-  (14 günlük grafik, zamanında tamamlama, seri). Asistan önerileri: termini yaklaşan/geçen rapor alanlarından ve
-  açık aksiyonlardan görev oluşturur, gecikenleri bugüne taşır, tarihsizleri haftaya dağıtır, Cuma toplantısı
-  hazırlığı hatırlatır. Sabah push bildirimine bugünkü/geciken görevler de eklenir. Kısayol: `A` hızlı ekleme.
+  (14 günlük grafik, zamanında tamamlama, seri). Geciken görev varsa tek satırlık uyarı ve "Bugüne taşı" tuşu (öneriler
+  Beyin → Bugün'de tek yerde). Sabah push bildirimine bugünkü/geciken görevler de eklenir. Kısayol: `A` hızlı ekleme.
 - **Aksiyonlar:** `02_Aksiyon_Takip` sayfasının kolonları (bulgu, mali/operasyonel etki, öncelik, sorumlu, termin, durum).
 - **Analiz:** Seçili dönem özeti, alan bazında hastane karşılaştırması, termin takvimi, sorunlu maddeler, dönemler arası trend.
 - **Geçmiş:** Kayıtlı dönemler, Excel indirme, aktif yapma, silme; mevcut Excel formunu **içe aktarma**; form başlık/onay bilgileri.
@@ -76,7 +75,25 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   Telefona gelmiyorsa: zil → "Test gönder"; hata yazıyorsa nedeni oradadır (ör. `BadJwtToken` → `VAPID_SUBJECT`),
   "Gönderildi" diyorsa sorun telefonun bildirim ayarındadır (iPhone: Ayarlar → Bildirimler → LabIQ; Odak/Rahatsız
   Etmeyin kapalı olmalı).
-- **Beyin (Görevler sayfası):** İşini anlayan merkez ve ona bağlı yan ajanlar — asıl çalışma ekibi. Tablet/masaüstünde
+- **Beyin → Bugün (varsayılan ekran):** uygulamayla uğraşmadan yolunu görmen için tek ekran. Üstte sekmeler
+  **Bugün · Görevlerim · Eğitim · LabIQ**; ayrıntılı görünümler (Tüm işler panosu, Ajan ağı, 3B ofis) **⋯** altında.
+  *Senden karar bekleyenler:* her kartın en üstünde **nereden geldiği** yazar (📧 kimin hangi gün e-postası ↗,
+  💬 sohbet, 📅 toplantı, 📋 denetim terimi ya da 🧠 beyin tespiti; ↗ asıl e-postayı/sohbeti açar), altında ne olduğu ve
+  **Önerim**. Üç tuş: ana eylem (Gmail'e taslak koy / Onayla / Yanıtı yaz / Notu hazırla / Ajan yapsın / Tekrar dene),
+  **✓ Bitti** ve **Gerek yok** → *Zaten yaptım · Benim işim değil · Önemsiz · Şimdi değil (3 gün ertele)*; seçimden öğrenir.
+  Hazırlanan iş "Taslağı yazıyorum · 2 dk" diye süresiyle görünür; 5 dakikayı geçen hazırlık "yarıda kaldı" olur ve
+  **Tekrar dene** çıkar (sonsuz "çalışıyorum" yok). *Diğer açık işler* kapalı bir listede (tek dokunuşla ✓ / ✗).
+  **📝 Hazırla:** tek cümle yaz ("Yarın Hakan Bey'le toplantım var; son mailleri, chatleri ve R-05 bulgularını ekleyerek
+  konuşulacakları hazırla") ya da önümüzdeki 48 saatin toplantılarından birine dokun. Beyin toplantı katılımcılarıyla son
+  30 günün yazışmalarını, son 7 günün e-posta ve sohbetlerini (reklamlar hariç), açık işleri, görevleri ve dönemin denetim
+  durumunu toplar; gerekirse arşivde arar ve kaynaklı bir not yazar: Özet · Konuşulacaklar · Benden beklenenler ·
+  Karşı taraftan isteyeceklerim · Riskler · Kaynaklar. Kopyala / .md indir; önceki notlar listede (`/api/prepare`).
+  **Bitenler kendiliğinden kapanır** (gerekçesiyle, *Son kapananlar*'dan "Geri aç"): kaynak e-posta yazışmasına yanıt
+  yazdıysan, kaynak sohbete yazdıysan, hazırlık yapılan toplantı geçtiyse, onayladığın teslimat 3 günü doldurduysa;
+  7 gün dokunulmayan öneri eskir. **Tüm Google verisi:** beyin e-posta ve sohbetleri anlık görüntüden (son 40) değil
+  arşivden okur — son düşünmeden beri gelen her şey (gönderdiklerin, reklam/sosyal/spam hariç; sohbetler sohbet başına
+  son 6 mesajla). Bir turda ajan başına 20'yi aşanlar kaybolmaz, sonraki turda kaldığı yerden okunur.
+- **Beyin (Tüm işler / Ofis):** İşini anlayan merkez ve ona bağlı yan ajanlar — asıl çalışma ekibi. Tablet/masaüstünde
   **Beyin ofisi** (3B, Agents Office düzeni): ortada not ağıyla Beyin, çevresinde her ajan bir departman pod'u; masalarda
   lider (★) ve alt görevler oturur, ajan çalışırken çalışanlar ve ekranlar hareketlenir. Pod kartlarında açık iş, iki
   departman göstergesi (fareyle) ve YAP · SIRA · BİTTİ; üstte bağlı servisler ve departmanlara kablolar (çalışan
@@ -117,15 +134,15 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   kişisel görevler, son seçimlerin ve bellek) ve sana **kararları** sunar: her biri "durum → önerim → tek tuş". Hiçbir
   işin karşılamadığı riskler (termini riskte alan, çakışma, yanıtlanmamış davet) için kendisi iş açar. Kararlar için
   gereken taslak/not/özet **önden hazırlanır** (düşünme başına en fazla 3; öneri yine senin onayında kalır), böylece
-  kart geldiğinde "Gmail'e kaydet" ya da "Onayla" tek dokunuştur. "Evet, hallet" öneriyi üstlenip ajana yaptırır,
-  "Sonra" yarına erteler, "Gerek yok" sebebiyle reddeder (öğrenir). **Bugünün planı:** boş saatlere odak blokları.
+  kart geldiğinde "Gmail'e kaydet" ya da "Onayla" tek dokunuştur. ana tuş öneriyi üstlenip ajana yaptırır,
+  "✓ Bitti" kapatır, "Gerek yok" sebebiyle reddeder ya da erteler (öğrenir). **Bugünün planı:** boş saatlere odak blokları.
   **Takip:** gönderilen e-postalar "yanıt bekleniyor"a geçer; aynı yazışmada yanıt gelince iş kendiliğinden kapanır
   (telefona "↩ yanıt verdi" bildirimi), 2 iş günü içinde gelmezse hatırlatma taslağı hazırlanıp karar olarak gelir.
-  Kararlar adada sağ panelde (telefonda alttan), Beyin ofisinde ve liste görünümünde. **Sana ulaşma:** 07:30'da
+  Kararlar Beyin → Bugün'de ve adada sağ panelde (telefonda alttan). **Sana ulaşma:** 07:30'da
   sabah düşünmesi (`/api/cron/brain`), 08:00'de önden hazırlık + sabah brifingi bildirimi (`/api/cron/notify`); gün
   içinde yeni acil karar çıkarsa bildirim (2 saatte en fazla bir). Ada ya da Beyin açıkken 10 dakikada bir arka planda
   düşünür ve sıradaki taslağı hazırlar.
-  **Ajan ağı (🕸 Ağ görünümü, Beyin'in varsayılanı):** uygulamanın her işlevi bir ajan olarak 6 departmanda (Strateji,
+  **Ajan ağı (Beyin → ⋯ → Ajan ağı):** uygulamanın her işlevi bir ajan olarak 6 departmanda (Strateji,
   İletişim, Takvim & Toplantı, Denetim & Kapanış, Analiz, Görev & Dosya; 35 ajan) çalışır: Claude ile düşünenler
   (şef yardımcısı, yanıt yazarı, öğrenme…), ölçüp uyaranlar (R-01…R-10 analistleri, tahminci, risk analisti…) ve iş
   yapanlar (Gmail taslakçısı, arşivci…). Ortada Bilgi Çekirdeği (bilgi dosyaları, bellek, arşiv); parçacıklar arşiv ve
@@ -196,16 +213,15 @@ telefon, tablet veya bilgisayardan büyük işaretlerle tiklemek ve **orijinal E
   E-Tablolar tablo olarak; Word/Excel/PowerPoint dosyalarının metni de çıkarılır; PDF ve görseller Drive önizlemesiyle
   açılır. Dosya içerikleri arşive de yazılır, asistan "şu tablodaki…/prosedürde ne yazıyor" sorularında Drive'da arar.
   Önceden bağlanmış hesapta Drive için bir kez **yeniden bağlanıp** Drive iznini vermek gerekir.
-  **Sanal ofis (tablet/masaüstü):** Google sayfası varsayılan olarak 3B ofis olarak açılır ("Ofis / Liste" ile eski
-  görünüme dönülür, tercih hatırlanır). Her kaynak ayrı bir oda ve kendi iş mantığıyla çalışır: Planlama (duvar
+  **Sanal ofis (tablet/masaüstü):** Google sayfası sade listeyle açılır; "Ofis (3B)" seçilirse ofis görünümü
+  (tercih hatırlanır). Ofis yalnızca Google verisinin kendisini gösterir; kararlar ve işler tek yerde, Beyin → Bugün'de. Her kaynak ayrı bir oda ve kendi iş mantığıyla çalışır: Planlama (duvar
   panosunda 7 günlük notlar), Posta odası (masalarda okunmamış zarf yığınları, önemliler kırmızı), İletişim (her aktif
   sohbet bir masa, yeni mesajda parlayan konuşma balonu), Toplantı salonu (toplantı sürerken ekran kırmızı yanıp söner,
   transkript kâğıtları), Dosya arşivi (rafta türüne göre renkli klasörler), Hafıza (her kaynak için sunucu dolabı;
   LED'ler indirme durumunu gösterir). Rozetler odanın durumunu (çalışıyor / iş bekliyor / sakin / sorun) gösterir;
   odaya tıklayınca kamera oraya uçar ve sağ panelde o kaynağın içeriği açılır. Görsel olarak cam bölmeli tek kat ofis
-  (koridorda ajan masası, beyin çalışırken yanıp söner) — Beyin sekmesindeki pod düzeninden ayrıdır; her oda kartında açık iş sayısı ve YAP · SIRA · BİTTİ (beyin
-  ajanlarının işleri); üstte bağlı servisler şeridi ve odalara giden kablolar (ajan çalışırken hızlanır); sağda tüm
-  ofisin GÖREV DURUMU listesi (ilerleme yüzdeli).
+  (koridorda ajan masası, beyin çalışırken yanıp söner) — Beyin sekmesindeki pod düzeninden ayrıdır; üstte bağlı servisler şeridi ve odalara giden kablolar (ajan
+  çalışırken hızlanır).
 
 - **Kampüs görünümü (tablet + masaüstü):** Denetim sayfası 3B, "cozy" bir kampüs olarak açılır (React Three Fiber).
   10 rapor alanı = 10 depo binası, her kontrol maddesi = binanın önündeki yükleme rampası. Rampanın önünde iki palet

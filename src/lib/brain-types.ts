@@ -92,6 +92,8 @@ export interface ItemWork {
   ms?: number;
   cost?: number | null;
   error?: string;
+  /** yarıda kalıp yeniden sıraya alınma sayısı */
+  attempts?: number;
   /** ekip olarak yapıldıysa: lider işi parçalara böldü, ajanlar aynı anda çalıştı, lider birleştirdi */
   team?: TeamRun;
   /** onaylanınca Gmail'e yazılan taslak (gönderim Batuhan'da: Gmail'de açıp "Gönder") */
@@ -156,6 +158,8 @@ export interface BrainItem {
   origin?: "strateji";
   /** gönderildi, yanıt bekleniyor */
   followUp?: FollowUp;
+  /** beyin kendiliğinden kapattıysa nedeni (yanıtladın, toplantı geçti, eskidi…) — Batuhan geri açabilir */
+  closed?: { at: string; reason: string };
   createdAt: string;
   updatedAt: string;
 }
@@ -238,6 +242,8 @@ export interface BrainRun {
   autoIds?: string[];
   /** arşivden bağlamla zenginleştirilen sinyal sayısı */
   enriched?: number;
+  /** kendiliğinden kapatılan işler (yanıtladın, toplantı geçti, eskidi) */
+  closed?: string[];
 }
 
 export interface BrainState {
@@ -252,6 +258,8 @@ export interface BrainState {
   learning?: LearningState;
   /** ajanların güven seviyeleri ve onay istatistikleri */
   trust?: Record<AgentId, AgentTrustView>;
+  /** son 3 günde gerek yok denen / eskidiği için kapatılan işler (geri açılabilsin diye) */
+  closedRecent?: BrainItem[];
 }
 
 // ------------------------------------------------------------------ kazanılan güven

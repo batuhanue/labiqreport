@@ -391,7 +391,7 @@ export default function IslandHome() {
               <DecisionDeck bare compact max={4} brain={brainHook} onOpen={brainHook.setOpen} />
               <DayPlan compact plan={brain?.focus?.plan} items={brain?.items ?? []} onOpen={brainHook.setOpen} />
               <Link href="/gorevler" className="block px-1 pb-1 text-xs font-bold text-blue">
-                Beyni aç →
+                Bugün ekranı ve 📝 Hazırla →
               </Link>
             </motion.aside>
           )}

@@ -148,7 +148,10 @@ async function readJson<T>(f: string): Promise<T | null> {
 }
 async function writeJson(f: string, v: unknown) {
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(f, JSON.stringify(v, null, 2));
+  // önce geçici dosyaya, sonra yeniden adlandır: eşzamanlı okuyan yarım dosya görmesin
+  const tmp = `${f}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(v, null, 2));
+  await fs.rename(tmp, f);
 }
 
 const fileStore: Store = {

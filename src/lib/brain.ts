@@ -1,13 +1,14 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
-import { getItem, search } from "./archive";
+import { getItem, rowsIn, search } from "./archive";
 import { TOOLS as ARCHIVE_TOOLS, runTool, statusOf } from "./agent-tools";
 import { listKnowledge, loadKnowledge, loadMemory, memoryPrompt, saveKnowledge } from "./assistant";
 import { AREAS } from "./checklist";
 import { ASSISTANT_MODEL, claude, claudeConfigured, costUsd, recordUsage } from "./claude";
 import { store } from "./db";
 import { getSnapshot } from "./google";
+import type { GMail } from "./google-types";
 import { areaProgress, deadlineInfo, normalizePeriod, overallProgress, periodLabel } from "./period";
 import { addWorkdays, buildPlan, checkFollowUps, daysSince, freeSlots, meetingsOn, ruleDecisions, trDay, trHM } from "./brain-plan";
 import { emptyStore, type TodoStore } from "./todo";
@@ -17,6 +18,7 @@ import { createDraft } from "./gmail-draft";
 import { pushConfigured, sendToAll } from "./push";
 import { buildOrg, orgDigest, type BrainRaw } from "./org";
 import { enrichSignals } from "./insight";
+import { sweepDone, sweepWork } from "./brain-sweep";
 import { readPeople } from "./people";
 import type { NotifyMessage } from "./notify";
 import { applyTrust, reviewTrust, trustView } from "./trust";
@@ -46,6 +48,10 @@ interface Meta {
   captures: Signal[];
   /** son anlık bildirim (seyrek tutulur) */
   lastPush?: string;
+  /** son "bitenleri kapat" taraması */
+  sweptAt?: string;
+  /** bir turda işlenemeyen (ajan başına 20'yi aşan) en eski e-posta/sohbet — sonraki tur buradan devam eder */
+  backlogSince?: string;
 }
 const emptyMeta = (): Meta => ({ seen: {}, focus: null, runs: [], captures: [] });
 
@@ -63,13 +69,40 @@ async function collect(meta: Meta): Promise<Record<AgentId, Signal[]>> {
   const fresh = (s: Signal) => !meta.seen[s.id];
   const now = Date.now();
   // ilk düşünmede son 3 gün; sonra son turdan (1 saat pay) beri
-  const since = meta.lastRun ? Math.max(Date.parse(meta.lastRun) - 3600_000, now - 7 * 86400_000) : now - 3 * 86400_000;
+  // geride kalan (önceki turda sırası gelmeyen) sinyaller varsa onların başından itibaren
+  const since = Math.max(Math.min(meta.lastRun ? Date.parse(meta.lastRun) - 3600_000 : now - 3 * 86400_000, meta.backlogSince ? Date.parse(meta.backlogSince) - 60_000 : Infinity), now - 7 * 86400_000);
   const snap = await getSnapshot().catch(() => null);
 
   if (snap) {
-    // Posta: son gelenler (okunmamış/önemli işaretiyle); gövde arşivden
+    // Posta ve sohbet: arşivden son düşünmeden beri GELEN HER ŞEY (anlık görüntü yalnızca son 40 e-postayı tutar);
+    // arşivin henüz yetişmediği en yeniler anlık görüntüden tamamlanır
+    const me = snap.account?.email?.toLowerCase();
+    const sinceIso = new Date(since).toISOString();
+    const arch = await rowsIn(["gmail", "chat"], sinceIso, undefined, { limit: 1500, bodyChars: 2500 }).catch(() => []);
+    const NOISE = /CATEGORY_PROMOTIONS|CATEGORY_SOCIAL|CATEGORY_FORUMS|SPAM|TRASH/;
+    const seenMail = new Set<string>();
+    for (const r of arch.filter((x) => x.source === "gmail")) {
+      const labels = ((r.meta?.labels as string[] | undefined) ?? []).join(" ");
+      if (r.meta?.sent === true || NOISE.test(labels)) continue;
+      const [from, to] = r.who.split(" → ");
+      const m = from.match(/^(.*?)\s*<([^>]+)>/);
+      if (m?.[2]?.toLowerCase() === me) continue;
+      seenMail.add(r.id);
+      const s: Signal = {
+        id: `gmail:${r.id}`,
+        agent: "posta",
+        ts: r.ts,
+        title: r.title,
+        who: from,
+        text: `${/UNREAD/.test(labels) ? "[OKUNMADI] " : ""}${/IMPORTANT/.test(labels) ? "[Gmail: önemli işaretli] " : ""}${clip(r.body, 2500)}`,
+        link: r.link,
+        ref: { source: "gmail", id: r.id },
+        hint: { email: m?.[2], name: m?.[1], threadId: r.meta?.threadId ? String(r.meta.threadId) : undefined, to, cc: typeof r.meta?.cc === "string" ? r.meta.cc : undefined },
+      };
+      if (fresh(s)) out.posta.push(s);
+    }
     for (const m of snap.gmail.items) {
-      if (Date.parse(m.date) < since) continue;
+      if (Date.parse(m.date) < since || seenMail.has(m.id)) continue;
       const s: Signal = {
         id: `gmail:${m.id}`,
         agent: "posta",
@@ -83,8 +116,31 @@ async function collect(meta: Meta): Promise<Record<AgentId, Signal[]>> {
       };
       if (fresh(s)) out.posta.push(s);
     }
-    // Sohbet: başkalarının son mesajları (sohbet başına bir sinyal; son birkaç mesaj bağlamıyla)
+    out.posta.sort((a, b) => b.ts.localeCompare(a.ts));
+    // Sohbet: sohbet başına bir sinyal (başkalarının son mesajı; o sohbetin son mesajlarıyla)
+    const spaces = new Map<string, typeof arch>();
+    for (const r of arch.filter((x) => x.source === "chat" && x.link)) spaces.set(r.link!, [...(spaces.get(r.link!) ?? []), r]);
+    const seenSpace = new Set<string>();
+    for (const [link, rows] of spaces) {
+      const sorted = rows.sort((a, b) => a.ts.localeCompare(b.ts));
+      const theirs = sorted.filter((x) => x.meta?.mine !== true && x.who !== "Uygulama");
+      if (!theirs.length) continue;
+      const last = theirs.at(-1)!;
+      seenSpace.add(link);
+      const s: Signal = {
+        id: `chat:${last.id}`,
+        agent: "sohbet",
+        ts: last.ts,
+        title: `${last.meta?.kind === "DIRECT_MESSAGE" ? "DM" : "Alan"}: ${last.title}`,
+        who: [...new Set(theirs.map((x) => x.who))].join(", "),
+        text: sorted.slice(-6).map((x) => `${x.meta?.mine === true ? "Batuhan" : x.who} (${trTime(x.ts)}): ${clip(x.body, 600)}`).join("\n"),
+        link,
+        hint: { name: last.who, space: link, dm: last.meta?.kind === "DIRECT_MESSAGE" },
+      };
+      if (fresh(s)) out.sohbet.push(s);
+    }
     for (const sp of snap.chat.items) {
+      if (seenSpace.has(sp.link)) continue;
       const theirs = sp.messages.filter((x) => !x.mine && Date.parse(x.time) >= since);
       if (!theirs.length) continue;
       const last = theirs.at(-1)!;
@@ -131,7 +187,7 @@ async function collect(meta: Meta): Promise<Record<AgentId, Signal[]>> {
 
   // e-posta gövdeleri arşivden (varsa)
   await Promise.all(
-    out.posta.slice(0, 25).map(async (s) => {
+    out.posta.slice(0, 25).filter((s) => !s.hint?.to).map(async (s) => {
       const full = await getItem("gmail", s.ref!.id).catch(() => null);
       if (full?.body) s.text = `${s.text}\n---\n${clip(full.body, 2500)}`;
       if (full && s.hint) {
@@ -722,6 +778,8 @@ export async function think(opts: { trigger: BrainRun["trigger"]; budgetMs?: num
       run.agents.push(ar);
     }
     meta.captures = meta.captures.filter((c) => !meta.seen[c.id]);
+    const rest = [...signals.posta, ...signals.sohbet].filter((s) => !meta.seen[s.id]);
+    meta.backlogSince = rest.length ? rest.reduce((m, s) => (s.ts < m ? s.ts : m), rest[0].ts) : undefined;
     run.createdIds = createdIds;
     // kazanılan güven: seviyesi yeten ajan kendi önerisini onaylar (2'de işi de sıraya koyar)
     const trust = createdIds.length ? await trustView().catch(() => null) : null;
@@ -734,11 +792,25 @@ export async function think(opts: { trigger: BrainRun["trigger"]; budgetMs?: num
 
     // tamamlanan işler 30 gün, reddedilenler 60 gün tutulur
     const keep = items.filter((x) => (x.status === "done" ? Date.now() - Date.parse(x.updatedAt) < 30 * 86400_000 : x.status === "dismissed" ? Date.now() - Date.parse(x.updatedAt) < 60 * 86400_000 : true));
+    // bitenleri kapat, takılanları kurtar (stratejist kapanmış işlere karar üretmesin)
+    const sw = await sweepDone(keep, { budgetMs: Math.min(5000, Math.max(1000, left() - 30000)) }).catch(() => null);
+    if (sw?.closed.length) run.closed = sw.closed.map((c) => c.id);
+    meta.sweptAt = new Date().toISOString();
     await store().setKV(ITEMS_KEY, keep);
 
     // gönderilenlerin yanıt takibi (yanıt geldiyse iş biter; gecikenler hatırlatma adayı)
     const snap = await getSnapshot().catch(() => null);
-    const fu = checkFollowUps(keep, snap?.gmail.items ?? [], snap?.account?.email);
+    // yanıtlar arşivden de aranır (anlık görüntü yalnızca son 40 e-posta)
+    const oldest = keep.filter((x) => x.followUp && !x.followUp.replied).map((x) => x.followUp!.since).sort()[0];
+    const archMails: GMail[] = oldest
+      ? (await rowsIn(["gmail"], oldest, undefined, { limit: 2000, bodyChars: 200 }).catch(() => []))
+          .filter((r) => r.meta?.sent !== true)
+          .map((r) => {
+            const m = r.who.split(" → ")[0].match(/^(.*?)\s*<([^>]+)>/);
+            return { id: r.id, threadId: String(r.meta?.threadId ?? ""), from: m?.[1] ?? r.who, fromEmail: m?.[2] ?? "", subject: r.title, snippet: r.body, date: r.ts, unread: false, important: false, link: r.link ?? "" };
+          })
+      : [];
+    const fu = checkFollowUps(keep, [...(snap?.gmail.items ?? []), ...archMails.filter((x) => !(snap?.gmail.items ?? []).some((y) => y.id === x.id))], snap?.account?.email);
     run.replied = fu.replied.map((x) => x.id);
     // strateji: plan saatle değiştiği için 2 saatte bir de yenilenir
     const stale = !meta.focus?.decisions || meta.focus.day !== istDay() || Date.now() - Date.parse(meta.focus.at) > 2 * 3600_000;
@@ -805,6 +877,7 @@ export async function state(): Promise<BrainState> {
   const [learning, trust] = await Promise.all([learningState().catch(() => undefined), trustView(choices).catch(() => undefined)]);
   // görev listesinde tamamlanan işler beyinde de biter
   const done = new Set((todos?.todos ?? []).filter((t) => t.done).map((t) => t.id));
+  const before = new Map(items.map((x) => [x.id, JSON.stringify(x)]));
   let changed = false;
   for (const it of items) {
     if (it.todoId && done.has(it.todoId) && it.status !== "done") {
@@ -813,11 +886,29 @@ export async function state(): Promise<BrainState> {
       changed = true;
     }
   }
-  if (changed) await store().setKV(ITEMS_KEY, items);
+  // takılı işleri kurtar (her seferinde), bitenleri kanıta göre kapat (10 dakikada bir; düşünme sürerken onu düşünme yapar)
+  const thinking = !!meta.lock && meta.lock > Date.now();
+  const sweepNow = !thinking && (!meta.sweptAt || Date.now() - Date.parse(meta.sweptAt) > 10 * 60_000);
+  const sw = sweepNow ? await sweepDone(items, { budgetMs: 3500 }).catch(() => sweepWork(items)) : sweepWork(items);
+  if (sw.changed) changed = true;
+  if (sweepNow) {
+    meta.sweptAt = new Date().toISOString();
+    // okunamayan kaydın üstüne boş durum yazılmasın
+    const cur = await store().getKV<Meta>(META_KEY).catch(() => null);
+    if (cur) await store().setKV(META_KEY, { ...cur, sweptAt: meta.sweptAt }).catch(() => {});
+  }
+  let list = items;
+  if (changed) {
+    // tarama sürerken (arşiv sorguları) yeni iş eklenmiş olabilir: güncel kaydı okuyup yalnızca burada değişenleri yaz
+    const mine = new Map(items.filter((x) => JSON.stringify(x) !== before.get(x.id)).map((x) => [x.id, x]));
+    const fresh = await readItems();
+    list = fresh.map((x) => mine.get(x.id) ?? x);
+    await store().setKV(ITEMS_KEY, list);
+  }
   const pending: BrainState["pending"] = {};
   if (meta.captures.length) pending.gorev = meta.captures.length;
   return {
-    items: items.filter((x) => x.status !== "dismissed" && (x.status !== "done" || Date.now() - Date.parse(x.updatedAt) < 7 * 86400_000)),
+    items: list.filter((x) => x.status !== "dismissed" && (x.status !== "done" || Date.now() - Date.parse(x.updatedAt) < 7 * 86400_000)),
     focus: meta.focus,
     runs: meta.runs.slice(0, 15),
     lastRun: meta.lastRun,
@@ -825,6 +916,7 @@ export async function state(): Promise<BrainState> {
     pending,
     learning,
     trust,
+    closedRecent: list.filter((x) => x.status === "dismissed" && Date.now() - Date.parse(x.closed?.at ?? x.updatedAt) < 3 * 86400_000).slice(0, 20),
   };
 }
 
@@ -867,7 +959,12 @@ export async function updateItem(id: string, patch: Partial<Pick<BrainItem, "sta
   if (patch.title?.trim() && patch.title.trim() !== it.title) choices.push({ ...base, kind: "rename", detail: `eski: ${it.title} → yeni: ${patch.title.trim()}` });
   if (patch.snoozeUntil && patch.snoozeUntil !== it.snoozeUntil) choices.push({ ...base, kind: "snooze", detail: `${base.detail} · ${patch.snoozeUntil} tarihine` });
 
-  if (patch.status) it.status = patch.status;
+  if (patch.status) {
+    it.status = patch.status;
+    // bitirilen/reddedilen işte sıradaki ya da yarım iş durur; yeniden açılınca "kendiliğinden kapandı" notu kalkar
+    if (!isOpen(it) && it.work && (it.work.status === "queued" || it.work.status === "running")) it.work = it.work.output ? { ...it.work, status: "ready" } : undefined;
+    if (isOpen(it)) it.closed = undefined;
+  }
   if (patch.steps) it.steps = patch.steps.slice(0, 30).map((s) => ({ title: String(s.title).slice(0, 300), done: !!s.done }));
   if (patch.priority && [1, 2, 3, 4].includes(patch.priority)) it.priority = patch.priority;
   if (patch.due !== undefined) it.due = /^\d{4}-\d{2}-\d{2}$/.test(patch.due ?? "") ? patch.due : undefined;
@@ -1170,7 +1267,8 @@ export async function work(id: string, opts: { feedback?: string; budgetMs?: num
     if (cur) {
       cur.work = w;
       // önden hazırlanan öneri, onaylanana dek "öneri"de kalır
-      if (w.status === "waiting_ok" && !(cur.status === "inbox" && cur.prep)) cur.status = "waiting";
+      // iş bu arada bitirildiyse/reddedildiyse yeniden açılmaz
+      if (w.status === "waiting_ok" && isOpen(cur) && !(cur.status === "inbox" && cur.prep)) cur.status = "waiting";
       cur.updatedAt = new Date().toISOString();
       await store().setKV(ITEMS_KEY, items);
     }
